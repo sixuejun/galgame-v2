@@ -10,7 +10,7 @@
     />
 
     <!-- Layer 1: 背景层 - 使用 BackgroundLayer 子组件 -->
-    <BackgroundLayer :background-image="currentBackgroundImage" />
+    <BackgroundLayer :background-image="currentBackgroundImage ?? undefined" />
 
     <!-- Layer 2: 立绘层 - 使用 SpriteLayer 子组件（含 Live2D 接入点） -->
     <SpriteLayer
@@ -114,10 +114,6 @@ function getDanmakuStyle(item: DanmakuItem) {
 }
 
 const currentBackgroundImage = computed(() => {
-  if (store.manualOverrideCardId) {
-    const card = store.imageCardQueue.find(c => c.id === store.manualOverrideCardId && c.type === 'background');
-    if (card) return card.imageData;
-  }
   return store.currentBlock?.sceneImageUrl || store.getCurrentDisplayBackground();
 });
 
@@ -126,10 +122,6 @@ const currentSpriteImage = computed(() => {
 });
 
 const currentCgImage = computed(() => {
-  if (store.manualOverrideCardId) {
-    const card = store.imageCardQueue.find(c => c.id === store.manualOverrideCardId && c.type === 'cg');
-    if (card) return card.imageData;
-  }
   return store.currentBlock?.cgImageUrl || store.getCurrentDisplayCg();
 });
 

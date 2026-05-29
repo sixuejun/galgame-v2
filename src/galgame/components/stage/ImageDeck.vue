@@ -67,7 +67,7 @@
                     :key="card.id"
                     class="deck-card"
                     :class="{
-                      'deck-card-active': card.id === store.manualOverrideCardId,
+                      'deck-card-active': isCardOnStage(card.id),
                       'deck-card-hovered': hoveredCardId === card.id,
                       'deck-card-empty': card.id.startsWith('placeholder-'),
                     }"
@@ -83,7 +83,13 @@
                         <span class="card-label">{{ card.type === 'background' ? 'BG' : 'CG' }}</span>
                       </div>
                       <div class="card-shine" />
-                      <div v-if="card.id === store.manualOverrideCardId" class="card-override-indicator">显示中</div>
+                      <div v-if="isCardOnStage(card.id)" class="card-override-indicator">显示中</div>
+                      <div
+                        v-else-if="isCardBound(card.id)"
+                        class="card-binding-indicator"
+                      >
+                        {{ getBoundSceneTitle(card.id) }}
+                      </div>
                     </div>
                     <div class="card-face card-back">
                       <div class="card-back-pattern" />
@@ -107,6 +113,26 @@ const isHovered = ref(false);
 const hoveredCardId = ref<string | null>(null);
 const isCollapsed = ref(false);
 const isTransitioning = ref(false);
+const currentScene = computed(() => store.currentBlock?.scene?.trim() ?? '');
+
+// 绑定图判定：卡的 title 在 sceneImageBindings 中即为绑定
+function isCardBound(cardId: string): boolean {
+  return store.isCardBound(cardId);
+}
+
+function getBoundSceneTitle(cardId: string): string {
+  return store.getBoundSceneTitle(cardId);
+}
+
+/**
+ * 判断卡牌是否正在舞台上显示（base64 完全一致）
+ */
+function isCardOnStage(cardId: string): boolean {
+  const card = store.imageCardQueue.find(c => c.id === cardId);
+  if (!card) return false;
+  if (card.type === 'background') return store.stageBackgroundImage === card.imageData;
+  return store.stageCgImage === card.imageData;
+}
 
 // 展开时：卡牌防抖（过渡期间禁止选卡）
 // 需覆盖扇形动画的最大延迟（4*42ms）+ 卡片过渡时长（550ms）+ 余量
@@ -581,6 +607,26 @@ function handleRetryLatest() {
   text-transform: uppercase;
   z-index: 10;
   border: 1px solid rgba(196, 162, 101, 0.45);
+}
+
+.card-binding-indicator {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  padding: 2px 6px;
+  background: rgba(80, 60, 120, 0.85);
+  color: rgba(220, 200, 255, 0.9);
+  border-radius: 3px;
+  font-size: 7px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  z-index: 10;
+  border: 1px solid rgba(160, 130, 220, 0.4);
+  max-width: 70px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 /* 扇心上的重试：逆旋转 90° 保持图标正向，常态可见 */

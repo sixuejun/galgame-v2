@@ -1,6 +1,5 @@
 import { klona } from 'klona';
 import { z } from 'zod';
-import { createVNLogger } from './utils/vnLogger';
 import type { GameEvent } from './boardgame/types';
 import type { ComponentKey, ComponentSkin, ThemeDefinition } from './themes';
 import { getComponentSkin, getTheme } from './themes';
@@ -13,6 +12,7 @@ import {
   fuzzyMatchTitle,
   parseMessageBlocks,
 } from './utils/messageParser';
+import { createVNLogger } from './utils/vnLogger';
 import { clearResourceCache } from './utils/worldbookLoader';
 
 // ====== Types ======
@@ -193,9 +193,7 @@ const VNSettings = z
     portraitY: z.number().min(-50).max(50).default(0),
     portraitMode: z.boolean().default(false),
     skinId: z.string().default('newspaper-default'),
-    themeId: z
-      .enum(['newspaper', 'hedie', 'animal-island', 'liquid-glass'])
-      .default('newspaper'),
+    themeId: z.enum(['newspaper', 'hedie', 'animal-island', 'liquid-glass']).default('newspaper'),
     themeEnabled: z.boolean().default(true),
     themeCustomCss: z.string().default(''),
     themeCustomCssSource: z.string().default(''),
@@ -1376,14 +1374,43 @@ export const useVNStore = defineStore('vn', () => {
   const stageCgImage = ref<string | null>(null);
   let imageGenListenerStopped: (() => void) | null = null;
 
+  /**
+   * 场景切换时，同步绑定图到舞台。
+   * 即使新消息没有 <background> 标签，也要确保当前场景对应的绑定图能正确显示。
+   */
+  watch(
+    () => currentBlock.value?.scene,
+    (newScene, oldScene) => {
+      if (!newScene || newScene === oldScene) return;
+      const scene = newScene.trim();
+      if (!scene) return;
+
+      // 尝试取背景绑定图
+      const bgBinding = sceneImageBindings.value[scene];
+      if (bgBinding && bgBinding.type === 'background') {
+        stageBackgroundImage.value = bgBinding.imageData;
+        console.info('[Bindings] 场景切换同步背景:', scene);
+        return;
+      }
+
+      // 没有绑定图时，清空舞台（让默认背景图生效）
+      stageBackgroundImage.value = null;
+    },
+  );
+
   // --- 场景 ↔ 图片绑定持久化（聊天变量） ---
   // 存储结构：{ [sceneTitle]: { imageData, type, timestamp } }
   // 内存缓存 + 持久化到聊天变量
-  const sceneImageBindings = ref<Record<string, {
-    imageData: string;
-    type: 'background' | 'cg';
-    timestamp: number;
-  }>>({});
+  const sceneImageBindings = ref<
+    Record<
+      string,
+      {
+        imageData: string;
+        type: 'background' | 'cg';
+        timestamp: number;
+      }
+    >
+  >({});
 
   const _bindingsLoaded = ref(false);
 
@@ -1444,16 +1471,21 @@ export const useVNStore = defineStore('vn', () => {
   }
 
   /**
-   * 将绑定图片插入卡牌队列（不自动上舞台）
+   * 将绑定图片插入卡牌队列（如果队列中已有相同 base64 的卡则更新其 title）
    */
   function insertBindingToQueue(sceneTitle: string): boolean {
     const binding = sceneImageBindings.value[sceneTitle];
     if (!binding) return false;
 
-    // 如果队列中已有相同 base64 的图，不重复插入
-    if (imageCardQueue.value.some(c => c.imageData === binding.imageData)) {
-      console.info('[Bindings] 绑定图已在队列中，跳过插入:', sceneTitle);
-      return false;
+    // 如果队列中已有相同 base64 的图，更新其 title 为当前场景名（覆盖旧绑定）
+    const existingIdx = imageCardQueue.value.findIndex(c => c.imageData === binding.imageData);
+    if (existingIdx !== -1) {
+      const existing = imageCardQueue.value[existingIdx];
+      if (existing.title !== sceneTitle) {
+        existing.title = sceneTitle;
+        console.info('[Bindings] 绑定图已在队列中，更新 title:', sceneTitle, '旧title=', existing.title);
+      }
+      return true;
     }
 
     const tempId = `bound-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -1500,17 +1532,17 @@ export const useVNStore = defineStore('vn', () => {
   const currentImageTitle = ref<string | null>(null);
   // 当前显示的图片类型（用于判断类型变化）
   const currentImageType = ref<'background' | 'cg' | null>(null);
-  // 用户强制覆盖状态：记录被手动选中的卡牌 ID
-  const manualOverrideCardId = ref<string | null>(null);
-  // 用户临时“收回”的卡牌 ID，用于再次点击同一张图时恢复舞台显示
-  const hiddenByOverrideCardId = ref<string | null>(null);
 
   // --- 重试弹窗状态 ---
   const retryPanelOpen = ref(false);
   // --- 相册弹窗状态 ---
   const albumPanelOpen = ref(false);
-  function openAlbumPanel() { albumPanelOpen.value = true; }
-  function closeAlbumPanel() { albumPanelOpen.value = false; }
+  function openAlbumPanel() {
+    albumPanelOpen.value = true;
+  }
+  function closeAlbumPanel() {
+    albumPanelOpen.value = false;
+  }
   // 重试模式：'both' | 'background' | 'cg'
   const retryMode = ref<'both' | 'background' | 'cg'>('background');
   // 弹窗内当前激活的标签页（仅在 both 模式下有效）
@@ -1560,7 +1592,9 @@ export const useVNStore = defineStore('vn', () => {
           }
         }
         if (bgPrompt || cgPrompt) {
-          console.info(`[RetryPanel] 当前楼层 scene="${scene}" 匹配到 prompt, bg="${bgPrompt.substring(0, 40)}...", cg="${cgPrompt.substring(0, 40)}..."`);
+          console.info(
+            `[RetryPanel] 当前楼层 scene="${scene}" 匹配到 prompt, bg="${bgPrompt.substring(0, 40)}...", cg="${cgPrompt.substring(0, 40)}..."`,
+          );
         }
       }
     }
@@ -1720,20 +1754,15 @@ export const useVNStore = defineStore('vn', () => {
     for (const idx of selected) {
       const img = generated[idx];
       if (!img || img.status !== 'done' || !img.imageData) continue;
-      const card = {
+      imageCardQueue.value.push({
         id: img.tempId,
         imageData: img.imageData,
         type: stageType,
         timestamp: Date.now(),
         prompt: lastRetryPrompt.value[stageType] ?? '',
+        // 仅保存 title 用于显示，不自动写绑定（绑定必须由 switchToImageCard 触发）
         title: img.title ?? '',
-      };
-      imageCardQueue.value.push(card);
-
-      // 如果有 title，自动追加到绑定存储（后续楼层可直接复用）
-      if (card.title) {
-        bindSceneImage(card.title, card.imageData, stageType);
-      }
+      });
     }
 
     closeRetryPanel();
@@ -1813,28 +1842,7 @@ export const useVNStore = defineStore('vn', () => {
   }
 
   /**
-   * 清除 manualOverride（当 title 或类型变化时调用）
-   * @param newTitle 新的 title（可选）
-   * @param newType 新的类型（可选）
-   */
-  function clearManualOverride(newTitle?: string, newType?: 'background' | 'cg') {
-    if (manualOverrideCardId.value !== null) {
-      console.info('[ImageGen] 清除 manualOverride', {
-        旧Title: currentImageTitle.value,
-        新Title: newTitle,
-        旧Type: currentImageType.value,
-        新Type: newType,
-      });
-    }
-    manualOverrideCardId.value = null;
-    hiddenByOverrideCardId.value = null;
-    if (newTitle !== undefined) currentImageTitle.value = newTitle;
-    if (newType !== undefined) currentImageType.value = newType;
-  }
-
-  /**
    * 获取当前应该显示的背景图片
-   * 优先使用 manualOverride 卡牌，否则使用 stageBackgroundImage
    */
   function getCurrentDisplayBackground(): string | null {
     return stageBackgroundImage.value;
@@ -1842,7 +1850,6 @@ export const useVNStore = defineStore('vn', () => {
 
   /**
    * 获取当前应该显示的 CG 图片
-   * 这里仅返回舞台基础图，手动覆盖由 StageArea 层决定优先级
    */
   function getCurrentDisplayCg(): string | null {
     return stageCgImage.value;
@@ -1852,29 +1859,15 @@ export const useVNStore = defineStore('vn', () => {
     return imageCardQueue.value.find(card => card.id === cardId);
   }
 
-  function isCardForceHidden(cardId: string) {
-    return hiddenByOverrideCardId.value === cardId;
-  }
-
-  function restoreImageCardToStage(cardId: string) {
-    const card = getImageCardById(cardId);
-    if (!card) return;
-    manualOverrideCardId.value = cardId;
-    hiddenByOverrideCardId.value = null;
-    if (card.type === 'background') stageBackgroundImage.value = card.imageData;
-    else stageCgImage.value = card.imageData;
-    console.info('[ImageGen] 恢复舞台显示:', cardId, card.title);
-  }
-
   /**
-   * 处理图像标签块：生图并加入队列
+   * 处理图像标签块：
+   * - 场景名匹配时，优先从绑定存储取图（插入队列并展示）
+   * - 否则走原有生图流程
    * @param blocks 解析出的图像标签块数组
    */
   async function processImageTagBlocks(blocks: ImageTagBlock[]): Promise<void> {
     if (!settings.value.imageGenEnabled) return;
 
-    // 仅当 title 与当前叙事块匹配时才直接上舞台；否则优先入卡牌队列
-    // 无 title 或 title 不匹配正文时，不应直接切图
     const currentTitleAnchor = (currentBlock.value?.scene || '').trim();
 
     for (const block of blocks) {
@@ -1885,58 +1878,43 @@ export const useVNStore = defineStore('vn', () => {
       const canDirectDisplay =
         !!normalizedTitle && !!currentTitleAnchor && fuzzyMatchTitle(currentTitleAnchor, normalizedTitle);
 
-      // 1. 检查 title 或类型是否变化
-      const titleChanged = currentImageTitle.value !== null && !fuzzyMatchTitle(currentImageTitle.value, block.title);
-      const typeChanged = currentImageType.value !== null && currentImageType.value !== block.type;
+      // 记录当前 title 和 type
+      currentImageTitle.value = block.title;
+      currentImageType.value = block.type;
 
-      if (titleChanged || typeChanged) {
-        clearManualOverride(block.title, block.type);
-      } else {
-        currentImageTitle.value = block.title;
-        currentImageType.value = block.type;
-      }
-
-      // 2. 如果可以直接上舞台（title 匹配），优先查绑定图
-      if (canDirectDisplay && !manualOverrideCardId.value) {
+      // 1. 场景匹配时，优先查绑定图
+      if (canDirectDisplay) {
         const binding = sceneImageBindings.value[normalizedTitle];
         if (binding) {
           // 绑定图：优先从队列找，找不到则插入队列再展示
           let boundCard = findBoundCardInQueue(normalizedTitle);
+          if (!boundCard) {
+            // 不在队列，插入队列（即使已在队列中也要取到卡牌引用）
+            const inserted = insertBindingToQueue(normalizedTitle);
+            boundCard = inserted ? imageCardQueue.value[imageCardQueue.value.length - 1] : findBoundCardInQueue(normalizedTitle);
+          }
           if (boundCard) {
             console.info('[ImageGen] 绑定图从队列展示:', normalizedTitle);
             if (block.type === 'background') stageBackgroundImage.value = boundCard.imageData;
             else stageCgImage.value = boundCard.imageData;
-          } else {
-            // 不在队列，插入并展示
-            insertBindingToQueue(normalizedTitle);
-            // 立即取出刚插入的那张来展示（从队列尾部）
-            const inserted = imageCardQueue.value[imageCardQueue.value.length - 1];
-            if (inserted) {
-              if (block.type === 'background') stageBackgroundImage.value = inserted.imageData;
-              else stageCgImage.value = inserted.imageData;
-            }
           }
           continue; // 跳过生图
         }
       }
 
-      // 3. 检查卡牌队列是否已有相同 prompt 的图片
+      // 2. 检查卡牌队列是否已有相同 prompt 的图片
       const existing = imageCardQueue.value.find(c => c.prompt === block.prompt);
       if (existing) {
         console.info('[ImageGen] 使用已有图片:', block.title, 'directDisplay=', canDirectDisplay);
-        // 仅在 title 与当前正文匹配时才更新舞台
         if (canDirectDisplay) {
-          if (block.type === 'background') {
-            stageBackgroundImage.value = existing.imageData;
-          } else {
-            stageCgImage.value = existing.imageData;
-          }
+          if (block.type === 'background') stageBackgroundImage.value = existing.imageData;
+          else stageCgImage.value = existing.imageData;
         }
         continue;
       }
 
-      // 3. 发送生图请求（将 directDisplay 判定编码到 title 前缀中，响应时解码）
-      const requestTitle = `${canDirectDisplay ? '__DIRECT__' : '__QUEUE__'}${normalizedTitle}`;
+      // 3. 发送生图请求（不再区分 directDisplay，统一只入队列，由场景切换决定是否展示）
+      const requestTitle = `${normalizedTitle}`;
       if (block.type === 'background') {
         requestBackgroundImage(block.prompt, requestTitle);
       } else {
@@ -1972,9 +1950,8 @@ export const useVNStore = defineStore('vn', () => {
     activeImageRequests.delete(responseData.id);
 
     if (responseData.success && responseData.imageData) {
-      const rawTitle = pending.title || '';
-      const shouldDirectDisplay = rawTitle.startsWith('__DIRECT__');
-      const title = rawTitle.replace(/^__(DIRECT|QUEUE)__/i, '');
+      // 生图的 title 统一是原始值（无前缀），用于卡牌显示，不做绑定
+      const title = pending.title || '';
 
       // 添加到卡牌队列
       const card: ImageCard = {
@@ -1983,23 +1960,16 @@ export const useVNStore = defineStore('vn', () => {
         type: pending.type,
         timestamp: Date.now(),
         prompt: pending.prompt, // 保存提示词用于重试
-        title, // 保存去前缀后的标题用于显示
+        title, // 保存标题用于显示（无绑定，不会自动展示）
       };
       imageCardQueue.value.push(card);
       if (imageCardQueue.value.length > MAX_IMAGE_CARDS) {
         imageCardQueue.value.shift();
       }
 
-      // 仅允许 directDisplay 的图片直接上舞台
-      if (!manualOverrideCardId.value && shouldDirectDisplay) {
-        if (pending.type === 'background') stageBackgroundImage.value = responseData.imageData;
-        else stageCgImage.value = responseData.imageData;
-      }
-
-      // 生图完成后显示 [ 号外 ] 通知
+      // 生图完成后显示通知
       const typeLabel = pending.type === 'background' ? '背景' : 'CG';
-      const displayTitle = title || '新图片';
-      showToast(`${typeLabel}生成完成：${displayTitle}`);
+      showToast(`${typeLabel}生成完成：${title || '新图片'}`);
     } else if (responseData.error) {
       // 生图失败时也显示通知
       showToast(`生图失败：${responseData.error}`);
@@ -2069,40 +2039,56 @@ export const useVNStore = defineStore('vn', () => {
     requestImage(prompt, 'cg', title);
   }
 
-  // 切换卡牌显示到舞台，并设置 manualOverride
+  // 将卡牌绑定到当前场景并展示到舞台
   function switchToImageCard(cardId: string) {
     const card = getImageCardById(cardId);
     if (!card) return;
 
-    // 再次点击同一张卡：如果它正处于“临时收回”状态，则恢复到舞台
-    if (hiddenByOverrideCardId.value === cardId) {
-      restoreImageCardToStage(cardId);
+    const scene = (currentBlock.value?.scene || '').trim();
+    if (!scene) {
+      showToast('当前无场景，无法绑定');
       return;
     }
 
-    // 如果已经是当前覆盖卡，再点一次则将其收回，露出原舞台图
-    if (manualOverrideCardId.value === cardId) {
-      manualOverrideCardId.value = null;
-      hiddenByOverrideCardId.value = cardId;
-      console.info('[ImageGen] 临时收回卡牌:', cardId, card.title);
-      return;
+    // 清除当前场景的旧绑定
+    if (sceneImageBindings.value[scene]) {
+      unbindSceneImage(scene);
+      console.info('[ImageGen] 清除旧绑定:', scene);
     }
 
-    // 切换到新的覆盖卡，并记住之前是否有旧覆盖状态
-    manualOverrideCardId.value = cardId;
-    hiddenByOverrideCardId.value = null;
+    // 更新卡牌的 title
+    card.title = scene;
 
-    // 更新显示
+    // 写入绑定存储
+    bindSceneImage(scene, card.imageData, card.type);
+
+    // 更新舞台显示
     if (card.type === 'background') stageBackgroundImage.value = card.imageData;
     else stageCgImage.value = card.imageData;
-    console.info('[ImageGen] 设置 manualOverride:', cardId, card.title);
+
+    console.info('[ImageGen] 绑定场景:', scene, 'cardId=', cardId);
+  }
+
+  /**
+   * 判断卡牌是否已绑定（title 存在于绑定存储中）
+   */
+  function isCardBound(cardId: string): boolean {
+    const card = getImageCardById(cardId);
+    if (!card?.title) return false;
+    return !!sceneImageBindings.value[card.title];
+  }
+
+  /**
+   * 获取卡牌的绑定场景 title
+   */
+  function getBoundSceneTitle(cardId: string): string {
+    const card = getImageCardById(cardId);
+    return card?.title ?? '';
   }
 
   // 清空卡牌队列
   function clearImageCardQueue() {
     imageCardQueue.value = [];
-    manualOverrideCardId.value = null;
-    hiddenByOverrideCardId.value = null;
     stageBackgroundImage.value = null;
     stageCgImage.value = null;
   }
@@ -2154,7 +2140,11 @@ export const useVNStore = defineStore('vn', () => {
         await loadPreset(presetName);
         vnLog.info('secondApi', 'preset loaded', { task, presetName });
       } catch (e) {
-        vnLog.warn('secondApi', 'preset load failed', { task, presetName, error: e instanceof Error ? e.message : String(e) });
+        vnLog.warn('secondApi', 'preset load failed', {
+          task,
+          presetName,
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
     } else if (presetName) {
       vnLog.info('secondApi', 'skip preset load (riddle/system)', { task, presetName });
@@ -3853,7 +3843,6 @@ ${latestHint}
 
   return {
     activeOverlay,
-    isCardForceHidden,
     leftMenuExpanded,
     rightMenuExpanded,
     activeModuleId,
@@ -3892,13 +3881,13 @@ ${latestHint}
     requestCgImage,
     switchToImageCard,
     clearImageCardQueue,
+    isCardBound,
+    getBoundSceneTitle,
     retryImageCard,
     getActiveImageRequest,
-    // Image tag parsing & manual override
+    // Image tag parsing & scene bindings
     currentImageTitle,
     currentImageType,
-    manualOverrideCardId,
-    clearManualOverride,
     processImageTagBlocks,
     reparseImageTagsFromMessage,
     getCurrentDisplayBackground,

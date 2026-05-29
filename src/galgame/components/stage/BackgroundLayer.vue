@@ -113,15 +113,7 @@ const store = useVNStore();
 /** 当前背景图 */
 const currentBackgroundImage = computed(() => {
   if (props.backgroundImage) return props.backgroundImage;
-
-  // 优先级：手动选中的卡 > 消息块自带 > 舞台默认
-  if (store.manualOverrideCardId) {
-    const card = store.imageCardQueue.find(
-      c => c.id === store.manualOverrideCardId && c.type === 'background'
-    );
-    if (card) return card.imageData;
-  }
-
+  // 舞台背景由 store.getCurrentDisplayBackground() 提供（包含绑定图更新）
   return store.currentBlock?.sceneImageUrl || store.getCurrentDisplayBackground();
 });
 

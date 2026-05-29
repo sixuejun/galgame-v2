@@ -114,10 +114,6 @@ function getDanmakuStyle(item: DanmakuItem) {
 }
 
 const currentBackgroundImage = computed(() => {
-  if (store.manualOverrideCardId) {
-    const card = store.imageCardQueue.find(c => c.id === store.manualOverrideCardId && c.type === 'background');
-    if (card) return card.imageData;
-  }
   return store.currentBlock?.sceneImageUrl || store.getCurrentDisplayBackground();
 });
 
@@ -126,10 +122,6 @@ const currentSpriteImage = computed(() => {
 });
 
 const currentCgImage = computed(() => {
-  if (store.manualOverrideCardId) {
-    const card = store.imageCardQueue.find(c => c.id === store.manualOverrideCardId && c.type === 'cg');
-    if (card) return card.imageData;
-  }
   return store.currentBlock?.cgImageUrl || store.getCurrentDisplayCg();
 });
 
