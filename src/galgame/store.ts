@@ -13,6 +13,8 @@ import {
   parseMessageBlocks,
 } from './utils/messageParser';
 import { createVNLogger } from './utils/vnLogger';
+import { useLatestMvuStore } from './latestMvuStore';
+import _ from 'lodash';
 import { clearResourceCache } from './utils/worldbookLoader';
 
 // ====== Types ======
@@ -85,6 +87,7 @@ export interface InventoryItem {
   name: string;
   effect: string;
   quantity: number;
+  icon?: string;
 }
 
 export interface TransactionRecord {
@@ -99,6 +102,8 @@ export interface ShopItem {
   name: string;
   effect: string;
   price: number;
+  icon?: string;
+  tags?: string[];
 }
 
 export interface DanmakuItem {
@@ -739,11 +744,8 @@ export const useVNStore = defineStore('vn', () => {
   }
 
   // --- Persisted game data ---
-  const _rawGameData = getVariables({ type: 'chat' });
-  const gameData = ref(VNGameData.parse(_rawGameData?.vn_game ?? {}));
-  watchEffect(() => {
-    insertOrAssignVariables({ vn_game: klona(gameData.value) }, { type: 'chat' });
-  });
+  // gold / inventory moved to MVU (message latest stat_data)
+  const gameData = ref(VNGameData.parse({}));
 
   const _rawChatVars = getVariables({ type: 'chat' });
   const defaultUnlockedId = SYSTEM_PERSONALITIES[0]?.id ?? '';
@@ -1286,10 +1288,44 @@ export const useVNStore = defineStore('vn', () => {
   });
 
   // --- Derived ---
-  const gold = computed(() => gameData.value.gold);
-  const inventory = computed(() => gameData.value.inventory);
+  const latestMvu = useLatestMvuStore();
+  latestMvu.startAutoSync();
+  const gold = computed(() => Number(_.get(latestMvu.statData, '金币', 0)) || 0);
+  const inventory = computed(() => {
+    const raw = _.get(latestMvu.statData, '收集物', {});
+    if (!raw || typeof raw !== 'object') return [] as InventoryItem[];
+
+    return Object.entries(raw as Record<string, any>).map(([name, v]) => {
+      const description = typeof v?.描述 === 'string' ? v.描述 : typeof v?.description === 'string' ? v.description : '';
+      const quantity = Number(v?.数量 ?? v?.quantity ?? 0) || 0;
+      const icon = typeof v?.图标 === 'string' ? v.图标 : typeof v?.icon === 'string' ? v.icon : undefined;
+      return {
+        id: String(name),
+        name: String(name),
+        effect: description,
+        quantity,
+        icon,
+      } satisfies InventoryItem;
+    });
+  });
   const transactionLog = computed(() => gameData.value.transactionLog);
   const workshopLevel = computed(() => gameData.value.workshopLevel);
+
+  // keep economy layer in sync with MVU
+  watch(
+    gold,
+    g => {
+      gameData.value.gold = g;
+    },
+    { immediate: true },
+  );
+  watch(
+    inventory,
+    inv => {
+      gameData.value.inventory = klona(inv);
+    },
+    { immediate: true, deep: true },
+  );
 
   // --- API Provider status (available | degraded | disabled) ---
   const secondApiStatus = computed<ProviderStatus>(() => {
@@ -2297,25 +2333,45 @@ export const useVNStore = defineStore('vn', () => {
           }
           if (task === 'shop') {
             const items: ShopItem[] = [];
-            const lineRegex = /^(.+?)\s*[|｜]\s*(.+?)\s*[|｜]\s*(\d+)\s*$/;
+            // 支持: id|名称|图标|描述|价格|tags?
+            const lineRegex = /^(?:([^|｜]+?)\s*[|｜]\s*)?(.+?)\s*[|｜]\s*(.+?)\s*[|｜]\s*(.+?)\s*[|｜]\s*(\d+)\s*(?:[|｜]\s*(.+?)\s*)?$/;
             for (const line of raw
               .split(/\n/)
               .map(s => s.trim())
               .filter(Boolean)) {
               const m = line.match(lineRegex);
-              if (m)
-                items.push({ id: `s${Date.now()}_${items.length}`, name: m[1], effect: m[2], price: Number(m[3]) });
+              if (!m) continue;
+
+              const rawId = (m[1] ?? '').trim();
+              const name = (m[2] ?? '').trim();
+              const icon = (m[3] ?? '').trim();
+              const effect = (m[4] ?? '').trim();
+              const price = Number((m[5] ?? '').trim());
+              const tagsRaw = (m[6] ?? '').trim();
+
+              const tags = tagsRaw ? tagsRaw.split(/[,，\s]+/).map(s => s.trim()).filter(Boolean) : undefined;
+
+              items.push({
+                id: rawId || `s${Date.now()}_${items.length}`,
+                name,
+                icon: icon || undefined,
+                effect,
+                price: Number.isFinite(price) ? price : 0,
+                tags,
+              });
             }
             if (items.length === 0) {
               try {
-                const parsed = JSON.parse(raw) as { name?: string; effect?: string; price?: number }[];
+                const parsed = JSON.parse(raw) as { id?: string; name?: string; icon?: string; effect?: string; price?: number; tags?: string[] }[];
                 if (Array.isArray(parsed))
                   parsed.forEach((p, i) =>
                     items.push({
-                      id: `s${Date.now()}_${i}`,
+                      id: p.id || `s${Date.now()}_${i}`,
                       name: p.name ?? '',
+                      icon: p.icon,
                       effect: p.effect ?? '',
                       price: Number(p.price) || 0,
+                      tags: Array.isArray(p.tags) ? p.tags : undefined,
                     }),
                   );
               } catch {
@@ -2686,7 +2742,13 @@ export const useVNStore = defineStore('vn', () => {
 
   const GOLD_WINDFALL_THRESHOLD = 400;
   function changeGold(amount: number, moduleId: string, reason: string) {
-    gameData.value.gold += amount;
+    const nextGold = (Number(_.get(latestMvu.statData, '金币', 0)) || 0) + amount;
+    latestMvu.patch(stat => {
+      _.set(stat, '金币', nextGold);
+    });
+
+    // keep local runtime state & logs
+    gameData.value.gold = nextGold;
     gameData.value.transactionLog.unshift({ moduleId, reason, amount, timestamp: Date.now() });
     if (gameData.value.transactionLog.length > 50) gameData.value.transactionLog.length = 50;
     if (amount >= GOLD_WINDFALL_THRESHOLD) triggerProactive('gold_windfall');
@@ -2697,9 +2759,42 @@ export const useVNStore = defineStore('vn', () => {
   }
 
   function addInventoryItem(item: Omit<InventoryItem, 'quantity'>) {
-    const existing = gameData.value.inventory.find(i => i.id === item.id);
-    if (existing) existing.quantity++;
-    else gameData.value.inventory.push({ ...item, quantity: 1 });
+    latestMvu.patch(stat => {
+      const raw = _.get(stat, '收集物', {});
+      const bag: Record<string, { 描述: string; 数量: number; 图标?: string }> =
+        raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as any) : {};
+
+      const nameKey = item.name.trim();
+      const prev = bag[nameKey];
+      const prevQty = Number(prev?.数量 ?? 0) || 0;
+
+      // rule: name same => quantity + 1; other fields keep old
+      if (prev) {
+        bag[nameKey] = {
+          ...prev,
+          数量: prevQty + 1,
+        };
+      } else {
+        bag[nameKey] = {
+          描述: item.effect,
+          数量: 1,
+          ...(item.icon ? { 图标: item.icon } : {}),
+        };
+      }
+
+      _.set(stat, '收集物', bag);
+
+      // keep local runtime state aligned
+      gameData.value.inventory = klona(
+        Object.entries(bag).map(([name, v]) => ({
+          id: name,
+          name,
+          effect: v.描述,
+          quantity: v.数量,
+          icon: v.图标,
+        })),
+      );
+    });
   }
 
   // ====== Workshop ======
@@ -3148,7 +3243,7 @@ ${latestHint}
       return false;
     }
     changeGold(-item.price, 'shop', `购买 ${item.name}`);
-    addInventoryItem({ id: item.id, name: item.name, effect: item.effect });
+    addInventoryItem({ id: item.id, name: item.name, effect: item.effect, icon: (item as any).icon });
     shopItems.value = shopItems.value.filter(i => i.id !== itemId);
     return true;
   }

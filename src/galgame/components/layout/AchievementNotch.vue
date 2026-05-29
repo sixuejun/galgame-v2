@@ -165,6 +165,7 @@
 
 <script setup lang="ts">
 import { useVNStore } from '../../store';
+import { useLatestMvuStore } from '../../latestMvuStore';
 
 interface Achievement {
   name: string;
@@ -186,6 +187,8 @@ interface AchievementConfig {
 }
 
 const settingsStore = useVNStore();
+const latestMvu = useLatestMvuStore();
+latestMvu.startAutoSync();
 const expanded = ref(false);
 const loading = ref(false);
 const config = ref<AchievementConfig | null>(null);
@@ -303,11 +306,11 @@ async function loadData() {
       console.warn('[AchievementNotch] 未找到条目名为"成就列表"的世界书条目');
     }
 
-    // 读取酒馆变量
-    const vars = getVariables({ type: 'message', message_id: 'latest' });
-    worldCollapseDegree.value = Number(_.get(vars, 'stat_data.世界崩坏程度', 0)) || 0;
-    const done = (_.get(vars, 'stat_data.成就.已完成', []) as string[]).filter((n: unknown) => typeof n === 'string');
-    const inProg = (_.get(vars, 'stat_data.成就.进行中', []) as string[]).filter((n: unknown) => typeof n === 'string');
+    // 读取 latest MVU stat_data
+    const stat = latestMvu.statData;
+    worldCollapseDegree.value = Number(_.get(stat, '世界崩坏程度', 0)) || 0;
+    const done = (_.get(stat, '成就.已完成', []) as string[]).filter((n: unknown) => typeof n === 'string');
+    const inProg = (_.get(stat, '成就.进行中', []) as string[]).filter((n: unknown) => typeof n === 'string');
     completedNames.value = Array.isArray(done) ? done : [];
     inProgressNames.value = Array.isArray(inProg) ? inProg : [];
 
@@ -377,32 +380,26 @@ function handleAchievementClick(achievement: Achievement) {
  * @param action 'start' | 'complete' | 'remove'
  */
 function syncBothArrays(name: string, action: 'start' | 'complete' | 'remove') {
-  const vars = getVariables({ type: 'message', message_id: 'latest' });
-  let done = (_.get(vars, 'stat_data.成就.已完成', []) as string[]).filter((n: unknown) => typeof n === 'string');
-  let inProg = (_.get(vars, 'stat_data.成就.进行中', []) as string[]).filter((n: unknown) => typeof n === 'string');
+  latestMvu.patch(statData => {
+    let done = (_.get(statData, '成就.已完成', []) as string[]).filter((n: unknown) => typeof n === 'string');
+    let inProg = (_.get(statData, '成就.进行中', []) as string[]).filter((n: unknown) => typeof n === 'string');
 
-  if (action === 'start') {
-    // 线框 → 进行中
-    if (!inProg.includes(name)) inProg.push(name);
-    // 从已完成移除（防止之前标记过）
-    done = done.filter(n => n !== name);
-  } else if (action === 'complete') {
-    // 进行中 → 已完成
-    inProg = inProg.filter(n => n !== name);
-    if (!done.includes(name)) done.push(name);
-  } else if (action === 'remove') {
-    // 取消完成
-    done = done.filter(n => n !== name);
-    inProg = inProg.filter(n => n !== name);
-  }
+    if (action === 'start') {
+      if (!inProg.includes(name)) inProg.push(name);
+      done = done.filter(n => n !== name);
+    } else if (action === 'complete') {
+      inProg = inProg.filter(n => n !== name);
+      if (!done.includes(name)) done.push(name);
+    } else if (action === 'remove') {
+      done = done.filter(n => n !== name);
+      inProg = inProg.filter(n => n !== name);
+    }
 
-  // 构造完整的 stat_data 并整体替换
-  const statData = _.cloneDeep(_.get(vars, 'stat_data', {})) as Record<string, any>;
-  statData['成就'] = { 进行中: inProg, 已完成: done };
+    _.set(statData, '成就', { 进行中: inProg, 已完成: done });
 
-  inProgressNames.value = inProg;
-  completedNames.value = done;
-  replaceVariables({ stat_data: statData }, { type: 'message', message_id: 'latest' });
+    inProgressNames.value = inProg;
+    completedNames.value = done;
+  });
 
   if (action === 'start') {
     console.info(`[AchievementNotch] 成就开始: ${name}`);
@@ -419,22 +416,20 @@ function syncBothArrays(name: string, action: 'start' | 'complete' | 'remove') {
  * 同步已完成数组（普通成就用）
  */
 function syncCompletedArray(name: string, action: 'add' | 'remove') {
-  const vars = getVariables({ type: 'message', message_id: 'latest' });
-  let done = (_.get(vars, 'stat_data.成就.已完成', []) as string[]).filter((n: unknown) => typeof n === 'string');
+  latestMvu.patch(statData => {
+    let done = (_.get(statData, '成就.已完成', []) as string[]).filter((n: unknown) => typeof n === 'string');
 
-  if (action === 'add') {
-    if (!done.includes(name)) done.push(name);
-  } else {
-    done = done.filter(n => n !== name);
-  }
+    if (action === 'add') {
+      if (!done.includes(name)) done.push(name);
+    } else {
+      done = done.filter(n => n !== name);
+    }
 
-  // 构造完整的 stat_data 并整体替换
-  const statData = _.cloneDeep(_.get(vars, 'stat_data', {})) as Record<string, any>;
-  if (!statData['成就']) statData['成就'] = { 进行中: [], 已完成: [] };
-  statData['成就']['已完成'] = done;
+    const inProg = (_.get(statData, '成就.进行中', []) as string[]).filter((n: unknown) => typeof n === 'string');
+    _.set(statData, '成就', { 进行中: inProg, 已完成: done });
 
-  completedNames.value = done;
-  replaceVariables({ stat_data: statData }, { type: 'message', message_id: 'latest' });
+    completedNames.value = done;
+  });
 
   if (action === 'add') {
     console.info(`[AchievementNotch] 普通成就完成: ${name}`);
@@ -447,38 +442,29 @@ function syncCompletedArray(name: string, action: 'add' | 'remove') {
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 function startPolling() {
-  if (pollTimer) return;
-  pollTimer = setInterval(() => {
-    if (!expanded.value) return;
-    try {
-      const vars = getVariables({ type: 'message', message_id: 'latest' });
-      const deg = Number(_.get(vars, 'stat_data.世界崩坏程度', 0)) || 0;
-      const done = (_.get(vars, 'stat_data.成就.已完成', []) as string[]).filter((n: unknown) => typeof n === 'string');
-      const inProg = (_.get(vars, 'stat_data.成就.进行中', []) as string[]).filter(
-        (n: unknown) => typeof n === 'string',
-      );
-
-      loadActiveCharacterNames();
-
-      if (
-        deg !== worldCollapseDegree.value ||
-        JSON.stringify(done) !== JSON.stringify(completedNames.value) ||
-        JSON.stringify(inProg) !== JSON.stringify(inProgressNames.value)
-      ) {
-        worldCollapseDegree.value = deg;
-        completedNames.value = done;
-        inProgressNames.value = inProg;
-      }
-    } catch {
-      /* ignore */
-    }
-  }, 2000);
+  // polling removed; MVU event auto sync via latestMvu
 }
 
 function stopPolling() {
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
+  // polling removed; MVU event auto sync via latestMvu
+}
+
+function refreshFromLatest() {
+  const stat = latestMvu.statData;
+  const deg = Number(_.get(stat, '世界崩坏程度', 0)) || 0;
+  const done = (_.get(stat, '成就.已完成', []) as string[]).filter((n: unknown) => typeof n === 'string');
+  const inProg = (_.get(stat, '成就.进行中', []) as string[]).filter((n: unknown) => typeof n === 'string');
+
+  loadActiveCharacterNames();
+
+  if (
+    deg !== worldCollapseDegree.value ||
+    JSON.stringify(done) !== JSON.stringify(completedNames.value) ||
+    JSON.stringify(inProg) !== JSON.stringify(inProgressNames.value)
+  ) {
+    worldCollapseDegree.value = deg;
+    completedNames.value = done;
+    inProgressNames.value = inProg;
   }
 }
 
@@ -486,16 +472,23 @@ watch(expanded, val => {
   if (val) {
     currentPage.value = 0;
     loadData();
-    startPolling();
-  } else {
-    stopPolling();
+    refreshFromLatest();
   }
 });
+
+watch(
+  () => latestMvu.lastUpdatedAt,
+  () => {
+    if (!settingsStore.settings.achievementListEnabled) return;
+    refreshFromLatest();
+  },
+  { immediate: true },
+);
 
 onMounted(() => {
   if (settingsStore.settings.achievementListEnabled) {
     loadData();
-    startPolling();
+    refreshFromLatest();
   }
 });
 

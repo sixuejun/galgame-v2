@@ -85,8 +85,8 @@
 </template>
 
 <script setup lang="ts">
-import SkinShell from '../common/SkinShell.vue';
 import { useVNStore } from '../../store';
+import SkinShell from '../common/SkinShell.vue';
 
 const props = defineProps<{
   visible: boolean;
@@ -182,7 +182,8 @@ const textareaStyle = computed(() => ({
   color: 'var(--theme-input-textarea-color, rgba(212, 197, 160, 0.9))',
   letterSpacing: 'var(--theme-input-textarea-letter-spacing, 0.05em)',
   caretColor: 'var(--theme-input-textarea-caret-color, var(--theme-accent, var(--rust)))',
-  padding: 'var(--theme-input-textarea-padding-top, 0.5rem) var(--theme-input-textarea-padding-right, 3rem) var(--theme-input-textarea-padding-bottom, 0.5rem) var(--theme-input-textarea-padding-left, 0.75rem)',
+  padding:
+    'var(--theme-input-textarea-padding-top, 0.5rem) var(--theme-input-textarea-padding-right, 3rem) var(--theme-input-textarea-padding-bottom, 0.5rem) var(--theme-input-textarea-padding-left, 0.75rem)',
 }));
 
 const sendBtnStyle = computed(() => {

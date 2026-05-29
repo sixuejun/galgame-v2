@@ -73,9 +73,9 @@ export const newspaperTheme: ThemeDefinition = {
 
     // 翻页按钮
     '--theme-dialogue-nav-btn-size': '3.5em',
-    '--theme-dialogue-nav-prev-top': '50%',
+    '--theme-dialogue-nav-prev-top': '70%',
     '--theme-dialogue-nav-prev-left': '1.75em',
-    '--theme-dialogue-nav-next-top': '50%',
+    '--theme-dialogue-nav-next-top': '70%',
     '--theme-dialogue-nav-next-right': '1.75em',
     '--theme-dialogue-nav-color': 'rgba(139, 69, 19, 0.6)',
     '--theme-dialogue-nav-hover-color': 'rgba(198, 184, 149, 0.6)',

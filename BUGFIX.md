@@ -170,3 +170,73 @@ src/galgame/
 2. **使用绝对路径或别名**：将 `@/store`、`@/components` 等配置为 webpack alias，避免长串相对路径
 3. **构建后检查产物**：运行 `pnpm build` 后，确认构建成功且无 `webpackMissingModule` 关键字
 4. **IDE 实时反馈**：确保 IDE 的 TypeScript/语言服务正确配置了 `tsconfig.json` 的 `paths` 和 `baseUrl`，以便在编写时就能发现路径错误
+
+## [2026-05-30] 界面能显示但不能操作：Mvu 全局变量未等待初始化
+
+### 问题描述
+
+Galgame 界面在酒馆中**能显示但无法操作**，点击、输入均无响应，Vue 响应式系统处于半瘫痪状态。
+
+Console 中出现：
+```
+ReferenceError: Mvu is not defined
+  at latestMvuStore.ts:46
+Cannot read properties of undefined (reading 'currentBlock')
+```
+
+后续还有大量 `store.xxx` 为 undefined 的报错，但这些都是连锁反应。
+
+### 根因
+
+`Mvu` 是 MVU 变量框架脚本在**运行时**注入的全局变量（`window.Mvu`），它通过 `waitGlobalInitialized('Mvu')` 控制初始化顺序。
+
+`latestMvuStore.ts` 第 43 行（修复前）在 `startAutoSync()` 中直接调用：
+
+```typescript
+eventOn(Mvu.events.VARIABLE_UPDATE_ENDED, () => {
+  refresh();
+});
+```
+
+但 `Mvu` 并未等待初始化完毕就立即被访问。当 galgame 界面先于 MVU 脚本加载完成时，`Mvu` 就是 `undefined`，导致：
+1. `Mvu.events` → `Cannot read properties of undefined`
+2. `useLatestMvuStore()` 初始化失败
+3. `store.currentBlock` 为 undefined
+4. 界面半死不活
+
+### 修复
+
+```typescript
+// latestMvuStore.ts
+async function startAutoSync() {
+  if (ready.value) return;
+  ready.value = true;
+
+  refresh();
+
+  // Mvu 是运行时全局变量，必须等待其初始化完毕才能订阅事件
+  await waitGlobalInitialized('Mvu');
+
+  // 当新楼层变量更新完毕时刷新 latest
+  eventOn(Mvu.events.VARIABLE_UPDATE_ENDED, () => {
+    refresh();
+  });
+}
+```
+
+`startAutoSync` 改为 `async`，在订阅事件前 `await waitGlobalInitialized('Mvu')`。`waitGlobalInitialized` 已在 `@types/function/global.d.ts` 中全局声明，无需 import。
+
+### 教训
+
+**`Mvu` 是运行时注入的全局变量，不存在于代码模块中——必须显式等待初始化。**
+
+- `Mvu` 不是通过 `import` 引入的模块，而是 MVU 脚本在酒馆中执行时动态挂载到 `window` 上的全局对象
+- TypeScript 的 `@types` 只提供类型提示，不影响运行时行为
+- `@types/iframe/exported.mvu.d.ts` 第 51 行明确说明：**在使用它之前，你应该先通过 `await waitGlobalInitialized('Mvu')` 来等待 Mvu 初始化完毕**
+- `store` 初始化失败会级联导致所有依赖它的 computed/watch 全部失效，表现为"界面活着但不能交互"
+
+防范措施：
+
+1. **所有依赖运行时全局变量的代码，必须先等待其初始化**：`await waitGlobalInitialized('GlobalName')`
+2. **store 中引用外部全局变量时，优先用懒加载而非同步访问**：把 `eventOn(Mvu.events.xxx)` 放到 `startXxx()` 这样的显式调用函数中，而不是 store setup 同步阶段
+3. **排查"界面能显示但不能操作"时，优先检查 store 初始化阶段**的报错——这往往是 Vue 响应式链断裂的根源
