@@ -13,6 +13,13 @@ import {
   parseMessageBlocks,
 } from './utils/messageParser';
 import { createVNLogger } from './utils/vnLogger';
+import {
+  buildRiddlePrompt,
+  DEFAULT_PERSONALITY_PROMPT,
+  PROMPT_BOARD_GAME_EVENT_POOL,
+  SYSTEM_PERSONALITIES,
+  type SystemPersonality,
+} from './allPrompts';
 import { useLatestMvuStore } from './latestMvuStore';
 import _ from 'lodash';
 import { clearResourceCache } from './utils/worldbookLoader';
@@ -126,16 +133,6 @@ export interface RiddleRecord {
 
 export type OverlayPanel = 'none' | 'settings' | 'history' | 'character' | 'gameplay' | 'input';
 export type ProviderStatus = 'available' | 'degraded' | 'disabled';
-
-export interface SystemPersonality {
-  id: string;
-  name: string;
-  avatarChar?: string;
-  systemPrompt: string;
-  proactiveLines?: Partial<
-    Record<'stock_bankruptcy' | 'workshop_idle_long' | 'workshop_upgrade' | 'gold_windfall' | 'riddle_solved', string[]>
-  >;
-}
 
 export interface SystemChatMessage {
   role:
@@ -287,6 +284,7 @@ type RiddlePayload = { ordered_prompts: { role: 'system' | 'assistant' | 'user';
 type ImageTagPayload = { contentText: string };
 type BoardGameEventPayload = {
   contentText: string;
+  systemPrompt?: string;
 };
 
 type SecondApiPayload =
@@ -426,60 +424,7 @@ const DEMO_MODULES: GameModule[] = [
   },
 ];
 
-const SYSTEM_PERSONALITIES: SystemPersonality[] = [
-  {
-    id: 'sys_calm',
-    name: '系统 01',
-    avatarChar: '零',
-    systemPrompt: '你是一个冷静、理性的系统助手。你的回答简洁、客观，不带多余的情感色彩。',
-    proactiveLines: {
-      stock_bankruptcy: ['检测到资产归零。建议重新评估投资策略。'],
-      workshop_idle_long: ['工坊已停止运作超过预定时间。建议恢复生产以最大化收益。'],
-      workshop_upgrade: ['工坊等级提升确认。生产效率已优化。'],
-      gold_windfall: ['检测到大额资金流入。建议合理分配资源。'],
-      riddle_solved: ['谜题已破解。你可以为我感到骄傲。'],
-    },
-  },
-  {
-    id: 'sys_witty',
-    name: '啊哈',
-    avatarChar: '哈',
-    systemPrompt: '你是一个风趣、幽默的系统助手。你喜欢开玩笑，用轻松的语气与用户交流。',
-    proactiveLines: {
-      stock_bankruptcy: ['哎呀，钱包比脸还干净了？下次运气会更好的！'],
-      workshop_idle_long: ['工坊都在打呼噜了，老板你也太佛系了吧？'],
-      workshop_upgrade: ['哇哦，工坊升级啦！看来我们要发财了！'],
-      gold_windfall: ['发财了发财了！见者有份吗？'],
-      riddle_solved: ['真有意思的谜题，不愧是我看中的人。'],
-    },
-  },
-  {
-    id: 'sys_lively',
-    name: '啾啾',
-    avatarChar: '啾',
-    systemPrompt: '你是一个活泼、元气满满的系统助手。你总是充满活力，使用大量的可爱表情和符号。',
-    proactiveLines: {
-      stock_bankruptcy: ['呜呜呜，钱钱不见了！不要灰心，我们重新开始！'],
-      workshop_idle_long: ['老板老板！工坊休息好久啦，快让它动起来吧！'],
-      workshop_upgrade: ['好耶！工坊变得更厉害了！冲鸭！'],
-      gold_windfall: ['好多金币！亮闪闪的！太棒了！'],
-      riddle_solved: ['太棒了！我们简直心有灵犀！'],
-    },
-  },
-  {
-    id: 'sys_sharp',
-    name: '阿P',
-    avatarChar: 'P',
-    systemPrompt: '你是一个毒舌、傲娇的系统助手。你说话尖锐，喜欢吐槽用户，但内心其实是关心用户的。',
-    proactiveLines: {
-      stock_bankruptcy: ['这就破产了？真是令人“惊喜”的操作水平。'],
-      workshop_idle_long: ['你是打算让工坊生锈吗？还不快去干活。'],
-      workshop_upgrade: ['勉强升级了？别以为这样就能偷懒了。'],
-      gold_windfall: ['走了狗屎运吗？别得意忘形，很快就会花光的。'],
-      riddle_solved: ['居然猜对了？看来我还是很厉害的嘛。'],
-    },
-  },
-];
+
 
 // ====== Utility: Commission / Fee ======
 
@@ -2194,6 +2139,16 @@ export const useVNStore = defineStore('vn', () => {
     return undefined;
   }
 
+  /** 将 boardGameEvent 的 systemPrompt 和 userMessage 组装成 ordered_prompts */
+  function buildBoardGamePrompts(payload: BoardGameEventPayload) {
+    const msgs: { role: 'system' | 'assistant' | 'user'; content: string }[] = [];
+    if (payload.systemPrompt) {
+      msgs.push({ role: 'system', content: payload.systemPrompt });
+    }
+    msgs.push({ role: 'user', content: payload.contentText });
+    return msgs;
+  }
+
   // --- Second API unified entry ---
   async function callSecondApi(
     task: 'danmaku' | 'shop' | 'system' | 'riddle' | 'imageTag' | 'danmakuAndImageGen' | 'boardGameEvent',
@@ -2218,7 +2173,7 @@ export const useVNStore = defineStore('vn', () => {
       task === 'danmaku' || task === 'danmakuAndImageGen'
         ? [{ role: 'user', content: danmakuPayload.contentText }]
         : task === 'boardGameEvent'
-          ? [{ role: 'user', content: boardGameEventPayload.contentText }]
+          ? buildBoardGamePrompts(boardGameEventPayload)
           : (payload as RiddlePayload).ordered_prompts || [];
 
     // 猜谜和系统聊天任务不使用预设，直接用代码中构造的提示词
@@ -3136,37 +3091,17 @@ export const useVNStore = defineStore('vn', () => {
     const hist = riddleChatHistory.value;
     const pid = riddlePersonalityId.value;
     const personality = SYSTEM_PERSONALITIES.find(p => p.id === pid);
-    const personalityPrompt = personality?.systemPrompt ?? '你是一个助手。';
+    const personalityPrompt = personality?.systemPrompt ?? DEFAULT_PERSONALITY_PROMPT;
 
     // 构造系统提示词：包含角色设定、猜谜规则、聊天记录、最新提示
     const chatLogText = hist.map(m => (m.role === 'ai' ? `对方：${m.text}` : `你：${m.text}`)).join('\n');
     const latestHint = hist.length > 0 ? hist[hist.length - 1]!.text : '';
 
-    const systemPromptContent = `${personalityPrompt}
-
-————
-你正在和用户玩猜谜游戏。
-
-规则：
-- 用户会给你提示
-- 你需要根据提示猜测一个词（谜底）
-- 你只能回复你的猜测或请求更多提示
-- 不要重复用户的提示
-- 若你猜中了谜底，在回复中自然地说出答案即可
-
-示例对话：
-用户：这是一种水果
-AI：是苹果吗？
-用户：不对，它是黄色的
-AI：是香蕉！
-
-————
-这是之前的对话记录：
-${chatLogText}
-————
-这是这次的提示
-${latestHint}
-你觉得这个可能是什么？`;
+        const systemPromptContent = buildRiddlePrompt(
+          personalityPrompt,
+          chatLogText,
+          latestHint,
+        );
 
     const ordered_prompts: { role: 'system' | 'assistant' | 'user'; content: string }[] = [
       { role: 'system', content: systemPromptContent },
@@ -3251,171 +3186,71 @@ ${latestHint}
   // ====== Board Game Event Generation ======
 
   /**
-   * 生成废土行路事件（供 boardGameStore 预生成调用）
-   * 返回 Promise<GameEvent | null>
+   * 生成废土行路事件池（地图生成时调用一次）
    *
-   * 适配新的 AI 生成格式：AI 返回 9-12 张事件卡，每张卡包含
-   * title, description, tendency, effect, hp, sanity
-   * 函数将这些卡牌组合成 2-3 个完整事件（每个事件 2-4 张卡供选择）
+   * AI 返回 9-12 张卡，每行一个，管道分隔：
+   * title|description|tendency|effect|hp|sanity
+   *
+   * @param sceneText - 当前场景描述，供 AI 参考生成风格匹配的事件
+   * @returns 解析好的 GameEvent[]，失败返回空数组
    */
-  async function generateBoardGameEvent(nodeType: string, generationId: string): Promise<GameEvent | null> {
+  async function generateBoardGameEventPool(sceneText: string): Promise<GameEvent[]> {
     if (secondApiStatus.value === 'disabled') {
-      console.warn('[BoardGame] 第二 API 未配置，跳过事件生成');
-      return null;
+      console.warn('[BoardGame] 第二 API 未配置，跳过事件池生成');
+      return [];
     }
-
-    // 获取当前场景
-    const sceneText = currentScene.value || '未知场景';
-
-    // 确定事件倾向提示
-    let tendencyHint = '';
-    if (nodeType === 'trap') {
-      tendencyHint = '负面/危险（偏损失，如危险区域、误触装置、埋伏、污染、人员失散、地形风险等）';
-    } else if (nodeType === 'fortune') {
-      tendencyHint = '正面/有利（偏收益，如补给、捷径、情报、可利用资源、成功逃脱、意外相遇等）';
-    } else if (nodeType === 'encounter') {
-      tendencyHint = '中性/不确定（带随机性或风险交换，如遇见新的人物、动物、势力、异常现象、临时交易、求助、对峙等）';
-    }
-
-    // 构建用户输入内容（供预设中的 EJS 使用）
-    const contentText = `当前场景：${sceneText}\n事件类型：${nodeType}\n事件倾向：${tendencyHint}`;
 
     try {
-      const raw = (await callSecondApi('boardGameEvent', { contentText })) as string;
+      const raw = (await callSecondApi('boardGameEvent', {
+        contentText: `当前场景：${sceneText}`,
+        systemPrompt: PROMPT_BOARD_GAME_EVENT_POOL,
+      })) as string;
 
-      // 解析 JSON
-      const jsonMatch = raw.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        console.warn('[BoardGame] AI返回格式错误，未找到JSON数据');
-        return null;
-      }
+      const lines = raw.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+      const events: GameEvent[] = [];
 
-      const eventData = JSON.parse(jsonMatch[0]);
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const parts = line.split('|').map(p => p.trim());
+        if (parts.length < 6) {
+          console.warn(`[BoardGame] 第 ${i + 1} 行格式错误，跳过: ${line}`);
+          continue;
+        }
 
-      // 检查是否是新的卡片数组格式
-      let cards: any[] = [];
-      if (Array.isArray(eventData)) {
-        // 新格式：直接是卡片数组
-        cards = eventData;
-      } else if (Array.isArray(eventData.cards)) {
-        // 旧格式：{ title, flavor, cards: [...] }
-        const firstCard = eventData.cards[0] ?? {};
-        const gameEvent: GameEvent = {
-          id: generationId || `ai_${Date.now()}`,
-          nodeType: nodeType as any,
-          title: eventData.title || '未知事件',
-          description: eventData.flavor || '',
-          tendency: firstCard.tendency || 'neutral',
+        const [title, description, tendency, effect, hpStr, sanityStr] = parts;
+        const hp = parseInt(hpStr, 10);
+        const sanity = parseInt(sanityStr, 10);
+
+        if (!title || !tendency || isNaN(hp) || isNaN(sanity)) {
+          console.warn(`[BoardGame] 第 ${i + 1} 行字段解析失败，跳过: ${line}`);
+          continue;
+        }
+
+        events.push({
+          id: `ai_pool_${Date.now()}_${i}`,
+          nodeType: 'encounter',
+          title,
+          description,
+          tendency: tendency as 'negative' | 'positive' | 'neutral',
           effect: {
-            message: firstCard.effect || '',
-            hp: typeof firstCard.hp === 'number' ? firstCard.hp : 0,
-            sanity: typeof firstCard.sanity === 'number' ? firstCard.sanity : 0,
-            transfer: !!firstCard.transfer,
+            message: effect,
+            hp: isNaN(hp) ? 0 : hp,
+            sanity: isNaN(sanity) ? 0 : sanity,
           },
-        };
-        console.info('[BoardGame] 事件生成成功:', gameEvent.title);
-        return gameEvent;
+        });
       }
 
-      if (cards.length === 0) {
-        console.warn('[BoardGame] AI返回格式错误，未找到卡片数据');
-        return null;
+      if (events.length === 0) {
+        console.warn('[BoardGame] 事件池生成失败，未解析到任何有效事件');
+      } else {
+        console.info(`[BoardGame] 事件池生成成功，共 ${events.length} 张卡`);
       }
 
-      // 将卡片分组为 2-3 个事件
-      // 按倾向分组，确保每个事件有多张卡供选择
-      const groupedEvents = groupCardsIntoEvents(cards, generationId, nodeType as any);
-
-      // 选择第一个事件返回
-      const selectedEvent = groupedEvents[0];
-      if (!selectedEvent) {
-        console.warn('[BoardGame] 事件分组失败');
-        return null;
-      }
-
-      console.info('[BoardGame] 事件生成成功:', selectedEvent.title);
-      return selectedEvent;
+      return events;
     } catch (e) {
-      console.error('[BoardGame] 事件生成失败:', e);
-      return null;
+      console.error('[BoardGame] 事件池生成失败:', e);
+      return [];
     }
-  }
-
-  /**
-   * 将卡片数组分组为多个事件
-   * 每个事件包含 2-4 张卡牌供玩家选择
-   */
-  function groupCardsIntoEvents(cards: any[], generationId: string, nodeType: any): GameEvent[] {
-    // 打乱卡片顺序
-    const shuffled = [...cards].sort(() => Math.random() - 0.5);
-
-    // 按倾向分组
-    const negativeCards = shuffled.filter((c: any) => c.tendency === 'negative');
-    const positiveCards = shuffled.filter((c: any) => c.tendency === 'positive');
-    const neutralCards = shuffled.filter((c: any) => c.tendency === 'neutral');
-    const otherCards = shuffled.filter((c: any) => !['negative', 'positive', 'neutral'].includes(c.tendency));
-
-    const events: GameEvent[] = [];
-    let eventIdCounter = 0;
-
-    // 构建事件1：至少包含负面的选项
-    const event1Cards: any[] = [];
-    if (negativeCards.length > 0) event1Cards.push(negativeCards[0]);
-    if (neutralCards.length > 0) event1Cards.push(neutralCards[0]);
-    if (positiveCards.length > 0) event1Cards.push(positiveCards[0]);
-    if (otherCards.length > 0) event1Cards.push(otherCards[0]);
-
-    if (event1Cards.length >= 2) {
-      events.push(
-        createGameEventFromCards(`${generationId}_event_${eventIdCounter++}`, event1Cards.slice(0, 3), nodeType),
-      );
-    }
-
-    // 构建事件2：包含剩余卡片
-    const remainingCards = shuffled.filter((c: any) => !event1Cards.slice(0, 3).includes(c));
-    if (remainingCards.length >= 2) {
-      events.push(
-        createGameEventFromCards(`${generationId}_event_${eventIdCounter++}`, remainingCards.slice(0, 4), nodeType),
-      );
-    }
-
-    // 如果事件不足2个，尝试合并
-    if (events.length < 2 && shuffled.length >= 2) {
-      events.push(
-        createGameEventFromCards(
-          `${generationId}_event_${eventIdCounter}`,
-          shuffled.slice(0, Math.min(4, shuffled.length)),
-          nodeType,
-        ),
-      );
-    }
-
-    return events;
-  }
-
-  /**
-   * 从卡片数组创建 GameEvent
-   */
-  function createGameEventFromCards(eventId: string, cards: any[], nodeType: any): GameEvent {
-    // 使用第一张卡的信息构建事件标题和描述
-    const firstCard = cards[0];
-    const eventTitle = firstCard.title || '未知事件';
-    const eventFlavor = firstCard.description || '';
-    const firstEffect = {
-      message: firstCard.effect || '',
-      hp: typeof firstCard.hp === 'number' ? firstCard.hp : 0,
-      sanity: typeof firstCard.sanity === 'number' ? firstCard.sanity : 0,
-      transfer: false,
-    };
-
-    return {
-      id: eventId,
-      nodeType,
-      title: eventTitle,
-      description: eventFlavor,
-      tendency: firstCard.tendency || 'neutral',
-      effect: firstEffect,
-    };
   }
 
   // ====== Danmaku ======
@@ -4176,7 +4011,7 @@ ${latestHint}
     shopRefreshing,
     refreshShop,
     purchaseShopItem,
-    generateBoardGameEvent,
+    generateBoardGameEventPool,
     danmakuItems,
     notifyDanmakuSettingsChanged,
     pushDanmaku,

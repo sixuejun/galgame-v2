@@ -597,11 +597,8 @@ onMounted(() => {
         }
       }
 
-      const eventNodeIds = Array.from(nodeTypeMap.keys());
-      if (eventNodeIds.length > 0) {
-        console.info('[废土行路] 初始化预生成事件:', eventNodeIds.length, '个节点');
-        bgStore.triggerPreGenerateEvents(eventNodeIds, nodeTypeMap, vnStore, `init_${seedInput.value}`);
-      }
+      // 填充事件池（一次性调 API 生成 9-12 张卡）
+      bgStore.fillEventPool(vnStore.currentScene || '末日废墟', vnStore);
     }
   });
 });
@@ -758,44 +755,8 @@ function handleSendToChoice(event: GameEvent) {
   vnStore.showToast('事件选项已添加到选择框');
 }
 
-function handleRetryAiGeneration() {
-  bgStore.retryAiEventGeneration();
-  // Trigger AI generation again with the same node type
-  const node = bgStore.currentNode;
-  if (node && node.type !== 'empty' && node.type !== 'start' && node.type !== 'end') {
-    triggerAiEventGeneration(node.type);
-  }
-}
-
-async function triggerAiEventGeneration(nodeType: string) {
-  // 检查是否有预生成的事件
-  const preGenerated = bgStore.getPreGeneratedEvent(bgStore.currentNodeId);
-  if (preGenerated) {
-    bgStore.setAiGeneratedEvent(preGenerated);
-    bgStore.finishAiEventGeneration(true);
-    bgStore.consumePreGeneratedEvent(bgStore.currentNodeId);
-    bgStore.addLog(`⚡ AI生成事件：${preGenerated.title}`);
-    return;
-  }
-
-  // 如果没有预生成事件，则实时生成（降级方案）
-  bgStore.startAiEventGeneration(`realtime_${Date.now()}`);
-
-  try {
-    const eventData = await vnStore.generateBoardGameEvent(nodeType, `realtime_${Date.now()}`);
-
-    if (!eventData) {
-      throw new Error('事件生成失败');
-    }
-
-    bgStore.setAiGeneratedEvent(eventData);
-    bgStore.finishAiEventGeneration(true);
-    bgStore.addLog(`⚡ AI生成事件：${eventData.title}`);
-  } catch (error: any) {
-    console.error('[废土行路] AI事件生成失败:', error);
-    bgStore.finishAiEventGeneration(false, error.message || '生成失败');
-  }
-}
+// triggerAiEventGeneration 已废弃：事件池在地图生成时一次性填充，
+// triggerEvent 会自动从池中抽取，无需手动调 API
 
 function handleContinue() {
   eventFlipped.value = false;
@@ -807,24 +768,11 @@ function refreshMap() {
   // 触发地图重新生成
   bgStore.regenerateMap(seedInput.value);
 
-  // 在地图重新生成后，触发预生成事件
+  // 重新生成时也重新填充事件池
   nextTick(() => {
-    // 构建 nodeId 到 nodeType 的映射
-    const nodeTypeMap = new Map<string, string>();
-    for (const node of bgStore.mapConfig.nodes) {
-      if (node.type !== 'empty' && node.type !== 'start' && node.type !== 'end') {
-        nodeTypeMap.set(node.id, node.type);
-      }
+    if (vnStore.settings.boardGameEventGenEnabled) {
+      bgStore.fillEventPool(vnStore.currentScene || '末日废墟', vnStore);
     }
-
-    // 获取所有需要预生成事件的节点 ID
-    const eventNodeIds = Array.from(nodeTypeMap.keys());
-
-    if (eventNodeIds.length > 0 && vnStore.settings.boardGameEventGenEnabled) {
-      console.info('[废土行路] 开始预生成事件:', eventNodeIds.length, '个节点');
-      bgStore.triggerPreGenerateEvents(eventNodeIds, nodeTypeMap, vnStore, `map_${seedInput.value}`);
-    }
-
     // 重置角色位置
     setTokenPosition(bgStore.currentNodeId);
   });
@@ -851,12 +799,6 @@ watch(
       nextTick(() => {
         autoMoveIfSinglePath();
       });
-    } else if (newPhase === 'event') {
-      // Event triggered, check if AI generation is enabled
-      if (vnStore.settings.boardGameEventGenEnabled && bgStore.currentEventNodeType) {
-        // Trigger AI generation
-        triggerAiEventGeneration(bgStore.currentEventNodeType);
-      }
     }
   },
 );

@@ -10,6 +10,7 @@
  */
 
 import { callSecondApi, type SecondApiMessage } from './secondApiClient';
+import { PROMPT_IMAGE_TAG } from '../../allPrompts';
 
 /**
  * Image type for generation
@@ -27,42 +28,6 @@ export type ImageStyle =
   | 'sketch'
   | 'pixel_art'
   | 'illustration';
-
-/**
- * System prompt for background image prompt generation
- */
-const BACKGROUND_SYSTEM_PROMPT = `You are a creative image prompt generator for a visual novel background scene.
-Generate detailed, comma-separated image generation prompts in English that describe the scene.
-
-Requirements:
-- Be specific about the setting, lighting, mood, and atmosphere
-- Include art style keywords (e.g., "anime style", "oil painting", "cinematic lighting")
-- Focus on environmental details that set the mood
-- Use positive, descriptive language
-- Include appropriate resolution hints like "4k", "high detail", "masterpiece"
-
-Examples:
-- "cozy cafe interior, warm golden hour lighting, steam rising from cups, bookshelves in background, anime style, soft colors, afternoon light through windows, detailed, high quality"
-- "dark forest path, moonlight filtering through canopy, mist rising from ground, mysterious atmosphere, digital art, detailed, cinematic lighting"
-- "post-apocalyptic city ruins, overgrown with vines and vegetation, golden sunset, abandoned vehicles, detailed ruins, dramatic sky, cinematic, 4k"`;
-
-/**
- * System prompt for CG image prompt generation
- */
-const CG_SYSTEM_PROMPT = `You are a creative image prompt generator for visual novel CG (special scene) images.
-Generate detailed, comma-separated image generation prompts in English for emotionally impactful scenes.
-
-Requirements:
-- Focus on character emotions, poses, and composition
-- Include appropriate lighting for mood
-- Specify camera angle and shot type
-- Include art style that matches the scene tone
-- Be tasteful and appropriate for the intended emotional impact
-
-Examples:
-- "beautiful anime girl, standing on cliff edge, long flowing hair in wind, dramatic sunset, confident pose, looking into distance, emotional, cinematic lighting, detailed eyes, masterpiece, high quality"
-- "tender moment, two characters holding hands, cherry blossom petals falling, soft pink lighting, warm atmosphere, close-up shot, romantic mood, anime style, detailed, high quality"
-- "dramatic confrontation scene, character in shadow, spotlight from above, intense expression, dark atmospheric lighting, cinematic composition, anime style, detailed"`;
 
 export interface ImageTagGenerationOptions {
   /** Scene title/description */
@@ -124,7 +89,7 @@ export async function generateImagePrompt(
     includeQualityModifiers = true,
   } = options;
 
-  const systemPrompt = type === 'background' ? BACKGROUND_SYSTEM_PROMPT : CG_SYSTEM_PROMPT;
+  const systemPrompt = type === 'background' ? PROMPT_IMAGE_TAG : PROMPT_IMAGE_TAG;
 
   // Build user message
   let userMessage = `Scene Title: "${title}"\n`;
@@ -198,7 +163,7 @@ export async function generateImagePromptVariations(
   options: ImageTagGenerationOptions,
   count: number = 3
 ): Promise<ImageTagGenerationResult[]> {
-  const systemPrompt = options.type === 'background' ? BACKGROUND_SYSTEM_PROMPT : CG_SYSTEM_PROMPT;
+  const systemPrompt = options.type === 'background' ? PROMPT_IMAGE_TAG : PROMPT_IMAGE_TAG;
 
   let userMessage = `Generate ${count} different image prompts for the same scene.\n\n`;
   userMessage += `Scene Title: "${options.title}"\n`;
@@ -281,7 +246,7 @@ export async function refineImagePrompt(
 
   const userMessage = `Original prompt:\n"${originalPrompt}"\n\nRefinement request: ${refinementInstructions[refinement]}\n\nProvide the refined prompt in English:`;
 
-  const response = await callSecondApi('imageTag', BACKGROUND_SYSTEM_PROMPT, userMessage);
+  const response = await callSecondApi('imageTag', PROMPT_IMAGE_TAG, userMessage);
 
   if (!response.success || !response.content) {
     return {
@@ -310,7 +275,7 @@ export async function generateImagePromptFromHistory(
   type: ImageType,
   style: ImageStyle = 'anime'
 ): Promise<ImageTagGenerationResult> {
-  const systemPrompt = type === 'background' ? BACKGROUND_SYSTEM_PROMPT : CG_SYSTEM_PROMPT;
+  const systemPrompt = type === 'background' ? PROMPT_IMAGE_TAG : PROMPT_IMAGE_TAG;
 
   const historyText = chatHistory
     .map(msg => `${msg.role}: ${msg.content}`)

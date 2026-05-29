@@ -6,32 +6,7 @@
  */
 
 import { callSecondApi, type SecondApiMessage } from './secondApiClient';
-
-/**
- * System prompt for danmaku generation
- * Guides the AI to generate short, punchy comments from a "viewer" perspective
- */
-const DANMAKU_SYSTEM_PROMPT = `You are a creative danmaku generator for a visual novel experience.
-Generate short, punchy comments (弹幕/bullet comments) that a viewer might type while watching.
-These are short reactions, typically 3-15 characters in Chinese.
-They should be:
-- Light-hearted and reactive to the current scene
-- Varied in tone (excited, funny, surprised, emotional, meta-commentary)
-- Written from a viewer's perspective watching a show
-- NOT dialogue or narration
-- Natural casual Chinese internet speech
-
-Examples:
-- "哈哈哈" (laughing)
-- "这剧情太刀了" (this plot is so painful)
-- "awsl" (oh my god I'm dying - internet slang)
-- "好甜" (so sweet)
-- "等等等等等" (waiting music)
-- "进度条撑住" (hold on progress bar)
-- "突然虐" (suddenly angsty)
-- "这UP好帅" (this character is so cool)
-
-Generate exactly 3-5 danmaku comments, one per line.`;
+import { PROMPT_DANMAKU } from '../../allPrompts';
 
 export interface DanmakuGenerationOptions {
   /** Scene context for generating relevant danmaku */
@@ -116,7 +91,7 @@ export async function generateDanmaku(
   }
   userMessage += `\nGenerate ${count} short danmaku comments (弹幕), one per line.`;
 
-  const response = await callSecondApi('danmaku', DANMAKU_SYSTEM_PROMPT, userMessage);
+  const response = await callSecondApi('danmaku', PROMPT_DANMAKU, userMessage);
 
   if (!response.success || !response.content) {
     return {
@@ -162,7 +137,7 @@ export async function generateDanmakuFromHistory(
 
   const userMessage = `Recent dialogue:\n${historyText}\n\nGenerate ${count} short danmaku comments (弹幕) that viewers might type in response to this scene, one per line.`;
 
-  const response = await callSecondApi('danmaku', DANMAKU_SYSTEM_PROMPT, userMessage);
+  const response = await callSecondApi('danmaku', PROMPT_DANMAKU, userMessage);
 
   if (!response.success || !response.content) {
     return {
@@ -199,7 +174,7 @@ export async function generateThemedDanmaku(
     spoilery: 'Focus on generating spoiler-type reactions (without actual spoilers).',
   };
 
-  const themeSystemPrompt = `${DANMAKU_SYSTEM_PROMPT}\n\n${themePrompts[theme]}`;
+  const themeSystemPrompt = `${PROMPT_DANMAKU}\n\n${themePrompts[theme]}`;
 
   const userMessage = `Scene: ${context}\n\nGenerate 4 short danmaku comments with a ${theme} tone, one per line.`;
 

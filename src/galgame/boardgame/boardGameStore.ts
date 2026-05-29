@@ -36,9 +36,9 @@ export const useBoardGameStore = defineStore('boardGame', () => {
   const aiGeneratedEvent = ref<GameEvent | null>(null);
   const aiGenerationId = ref<string | null>(null); // Track generation ID for cancellation
 
-  // ── AI Pre-generated Events Cache ────────────────────────────
-  // 预生成的事件缓存，key 是 nodeId
-  const preGeneratedEvents = ref<Map<string, GameEvent>>(new Map());
+  // ── Event Pool ───────────────────────────────────────────────
+  // 事件池：地图生成时一次性填充，按格子类型从池中抽取，用掉即删除
+  const eventPool = ref<GameEvent[]>([]);
 
   // ── Log ──────────────────────────────────────────────────────
   const gameLog = ref<string[]>(['□ 游戏开始，从起点出发。']);
@@ -66,53 +66,42 @@ export const useBoardGameStore = defineStore('boardGame', () => {
   }
 
   /**
-   * 触发预生成事件请求（供 BoardGameModule 调用）
-   * 返回一个 Promise，解析为预生成的事件列表
+   * 填充事件池（地图生成时调用一次）
+   * 一次性调 API 拿到 9-12 张卡，存入池中
    */
-  async function triggerPreGenerateEvents(
-    nodeIds: string[],
-    nodeTypeMap: Map<string, string>,
+  async function fillEventPool(
+    sceneText: string,
     vnStore: any,
-    generationPrefix: string,
-  ): Promise<Map<string, GameEvent>> {
-    const results = new Map<string, GameEvent>();
-
-    for (const nodeId of nodeIds) {
-      const nodeType = nodeTypeMap.get(nodeId);
-      if (!nodeType || nodeType === 'empty' || nodeType === 'start' || nodeType === 'end') {
-        continue;
+  ): Promise<void> {
+    try {
+      const events = await vnStore.generateBoardGameEventPool(sceneText);
+      eventPool.value = events;
+      if (events.length === 0) {
+        console.warn('[BoardGame] 事件池为空，将使用备用事件');
+      } else {
+        console.info(`[BoardGame] 事件池已填充，共 ${events.length} 张卡`);
       }
-
-      try {
-        const eventData = await vnStore.generateBoardGameEvent(nodeType, `${generationPrefix}_${nodeId}`);
-        if (eventData) {
-          results.set(nodeId, eventData);
-        }
-      } catch (e) {
-        console.warn(`[BoardGame] 预生成事件失败: ${nodeId}`, e);
-      }
+    } catch (e) {
+      console.error('[BoardGame] 填充事件池失败:', e);
+      eventPool.value = [];
     }
-
-    // 合并到缓存
-    for (const [nodeId, event] of results) {
-      preGeneratedEvents.value.set(nodeId, event);
-    }
-
-    return results;
   }
 
   /**
-   * 获取预生成的事件（如果存在）
+   * 从事件池中抽取一张匹配格子类型的卡，用掉即删除
    */
-  function getPreGeneratedEvent(nodeId: string): GameEvent | null {
-    return preGeneratedEvents.value.get(nodeId) || null;
-  }
-
-  /**
-   * 清除已使用的事件（玩家触发后删除）
-   */
-  function consumePreGeneratedEvent(nodeId: string) {
-    preGeneratedEvents.value.delete(nodeId);
+  function drawEventFromPool(nodeType: string): GameEvent | null {
+    const filtered = eventPool.value.filter(e => e.nodeType === nodeType || nodeType === 'encounter');
+    if (filtered.length === 0) {
+      // 池空了，回退到手动事件
+      console.info('[BoardGame] 事件池已空，回退到备用事件');
+      return null;
+    }
+    const idx = Math.floor(Math.random() * filtered.length);
+    const event = filtered[idx]!;
+    eventPool.value = eventPool.value.filter(e => e.id !== event.id);
+    console.info(`[BoardGame] 从池中抽取事件「${event.title}」，剩余 ${eventPool.value.length} 张`);
+    return event;
   }
 
   /** idle → rolling */
@@ -193,6 +182,17 @@ export const useBoardGameStore = defineStore('boardGame', () => {
 
   /** choosingPath | idle → event */
   function triggerEvent(node: MapNode) {
+    // 优先从事件池抽取
+    const poolEvent = drawEventFromPool(node.type);
+    if (poolEvent) {
+      currentEvent.value = poolEvent;
+      aiGeneratedEvent.value = null;
+      phase.value = 'event';
+      walkableNodeIds.value = [];
+      addLog(`⚡ 触发事件：${poolEvent.title}`);
+      return;
+    }
+    // 池空了，用手动事件
     const event = getRandomEvent(node.type);
     if (!event) {
       addLog(`□ 停在空地`);
@@ -200,7 +200,7 @@ export const useBoardGameStore = defineStore('boardGame', () => {
       return;
     }
     currentEvent.value = event;
-    aiGeneratedEvent.value = null; // Clear any AI generated event
+    aiGeneratedEvent.value = null;
     phase.value = 'event';
     walkableNodeIds.value = [];
     addLog(`⚡ 触发事件：${event.title}`);
@@ -297,6 +297,7 @@ export const useBoardGameStore = defineStore('boardGame', () => {
     resolveMessage.value = '';
     isAnimating.value = false;
     totalSteps.value = 0;
+    eventPool.value = [];
     gameLog.value = ['□ 游戏重置，从起点出发。'];
   }
 
@@ -342,10 +343,9 @@ export const useBoardGameStore = defineStore('boardGame', () => {
     finishAiEventGeneration,
     retryAiEventGeneration,
     cancelAiEventGeneration,
-    // 预生成事件相关
-    triggerPreGenerateEvents,
-    getPreGeneratedEvent,
-    consumePreGeneratedEvent,
-    preGeneratedEvents,
+    // 事件池
+    fillEventPool,
+    drawEventFromPool,
+    eventPool,
   };
 });
