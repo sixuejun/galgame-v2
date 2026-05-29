@@ -26,9 +26,7 @@
           </button>
           <button class="mode-tab" :class="{ active: retryActiveTab === 'cg' }" @click="store.setRetryActiveTab('cg')">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
-              <path
-                d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"
-              />
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
             </svg>
             重新生成 CG
           </button>
@@ -62,17 +60,26 @@
             />
           </div>
 
-          <!-- 生成按钮 -->
+          <!-- 按钮行 -->
           <div class="prompt-actions">
+            <!-- 相册按钮（打开独立相册弹窗） -->
+            <button class="album-btn" @click="store.openAlbumPanel()">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                <path d="M22 16V4c0-1.1-.9-2-2-2H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2zm-11-4l2.03 2.71L16 11l4 5H8l3-4zM2 6v14c0 1.1.9 2 2 2h14v-2H4V6H2z" />
+              </svg>
+              相册
+              <span v-if="albumCount > 0" class="album-badge">{{ albumCount }}</span>
+            </button>
+
+            <div class="action-spacer" />
+
             <button class="gen-btn" :disabled="!currentPromptText.trim() || isGenerating" @click="onGenerate">
               <span v-if="isGenerating" class="spinner" />
               {{ isGenerating ? '生成中...' : '生成' }}
             </button>
-            <label class="import-btn" title="从本地上传图片">
+            <label class="import-btn" title="从本地上传图片（自动绑定当前场景）">
               <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
-                <path
-                  d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"
-                />
+                <path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z" />
               </svg>
               导入图片
               <input ref="fileInputRef" type="file" accept="image/*" class="hidden-file-input" @change="onFileSelected" />
@@ -82,6 +89,7 @@
 
         <!-- 预览图网格 -->
         <div v-if="retryGeneratedImages.length > 0" class="preview-section">
+          <div class="section-label">本次生成 / 导入</div>
           <div class="preview-grid">
             <div
               v-for="(img, i) in retryGeneratedImages"
@@ -93,14 +101,24 @@
                 'is-selected': retrySelectedIndices.has(i),
               }"
               @click="img.status === 'done' ? onToggleSelect(i) : null"
-              @dblclick="img.status === 'done' ? openPreview(img.imageData!) : null"
+              @dblclick="img.status === 'done' ? openPreview(img.imageData!, img.tempId) : null"
             >
+              <!-- 铅笔按钮（右上角） -->
+              <button
+                v-if="img.status === 'done'"
+                class="edit-title-btn"
+                title="编辑标题"
+                @click.stop="openTitleEdit(img.tempId)"
+              >
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor">
+                  <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
+                </svg>
+              </button>
+
               <!-- 长按预览图标 -->
               <div class="long-press-hint">
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
-                  <path
-                    d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"
-                  />
+                  <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" />
                 </svg>
               </div>
 
@@ -110,6 +128,8 @@
                 <div class="select-overlay">
                   <div class="select-badge">{{ retrySelectedIndices.has(i) ? '✓' : '+' }}</div>
                 </div>
+                <!-- title 标签 -->
+                <div v-if="img.title" class="title-tag">{{ img.title }}</div>
               </template>
 
               <!-- 生成中 -->
@@ -138,11 +158,53 @@
     </div>
   </Transition>
 
-  <!-- 大图预览遮罩（双击触发） -->
+  <!-- 大图预览遮罩（双击预览图触发） -->
   <Transition name="preview-fade">
-    <div v-if="previewImage" class="preview-overlay" @click="previewImage = null">
-      <img :src="previewImage" class="preview-full-img" @click.stop />
-      <button class="preview-close" @click="previewImage = null">✕</button>
+    <div v-if="previewItem" class="preview-overlay" @click.self="closePreview">
+      <div class="preview-panel" @click.stop>
+        <img :src="previewItem.imageData" class="preview-full-img" />
+
+        <!-- 编辑操作栏（本次图片） -->
+        <div class="preview-edit-bar">
+          <button class="preview-edit-btn" @click="openTitleEdit(previewItem.tempId!)">编辑标题</button>
+          <label class="preview-edit-btn">
+            替换图片
+            <input type="file" accept="image/*" class="hidden-file-input" @change="onReplaceFile($event, previewItem.tempId!)" />
+          </label>
+          <label class="preview-edit-btn">
+            网络图片
+            <input type="text" class="url-input" placeholder="粘贴 URL 后回车" @keyup.enter="onUrlImport($event, previewItem.tempId!)" />
+          </label>
+        </div>
+
+        <button class="preview-close" @click="closePreview">✕</button>
+      </div>
+    </div>
+  </Transition>
+
+  <!-- 标题编辑弹窗 -->
+  <Transition name="panel-fade">
+    <div v-if="titleEditTarget !== null" class="edit-title-overlay" @click.self="titleEditTarget = null">
+      <div class="edit-title-panel">
+        <div class="edit-title-header">
+          <span>编辑标题</span>
+          <button class="close-btn" @click="titleEditTarget = null">✕</button>
+        </div>
+        <div class="edit-title-body">
+          <input
+            v-model="titleEditValue"
+            class="edit-title-input"
+            placeholder="输入标题..."
+            @keyup.enter="confirmTitleEdit()"
+            ref="titleEditInputRef"
+          />
+          <div class="edit-title-hint">标题用于场景绑定：相同标题的图片在场景切换时会优先展示</div>
+        </div>
+        <div class="edit-title-footer">
+          <button class="cancel-btn" @click="titleEditTarget = null">取消</button>
+          <button class="confirm-title-btn" @click="confirmTitleEdit()">确认</button>
+        </div>
+      </div>
     </div>
   </Transition>
 </template>
@@ -161,8 +223,25 @@ const lastRetryPrompt = computed(() => store.lastRetryPrompt);
 
 const bgPromptText = ref('');
 const cgPromptText = ref('');
-const previewImage = ref<string | null>(null);
 const fileInputRef = ref<HTMLInputElement | null>(null);
+
+// 相册按钮 badge 计数
+const albumCount = computed(() =>
+  store.getBindingAlbum('background').length + store.getBindingAlbum('cg').length,
+);
+
+// 预览状态
+interface PreviewTarget {
+  imageData: string;
+  tempId: string;
+  title?: string;
+}
+const previewItem = ref<PreviewTarget | null>(null);
+
+// 标题编辑状态
+const titleEditTarget = ref<string | null>(null);
+const titleEditValue = ref('');
+const titleEditInputRef = ref<HTMLInputElement | null>(null);
 
 const isGenerating = computed(() => retryGeneratedImages.value.some(g => g.status === 'generating'));
 
@@ -205,8 +284,13 @@ function onToggleSelect(index: number) {
   store.toggleRetryImageSelection(index);
 }
 
-function openPreview(imageData: string) {
-  previewImage.value = imageData;
+function openPreview(imageData: string, tempId: string) {
+  const img = retryGeneratedImages.value.find(g => g.tempId === tempId);
+  previewItem.value = { imageData, tempId, title: img?.title };
+}
+
+function closePreview() {
+  previewItem.value = null;
 }
 
 function onConfirm() {
@@ -217,29 +301,89 @@ function onFileSelected(event: Event) {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
   if (!file) return;
-
   if (!file.type.startsWith('image/')) {
     toastr.warning('请选择图片文件');
     return;
   }
+  const reader = new FileReader();
+  reader.onload = e => {
+    const base64 = e.target?.result as string;
+    if (base64) store.importImageToRetry(base64);
+  };
+  reader.onerror = () => toastr.error('图片读取失败');
+  reader.readAsDataURL(file);
+  input.value = '';
+}
 
+// 打开标题编辑弹窗
+function openTitleEdit(tempId: string) {
+  const img = retryGeneratedImages.value.find(g => g.tempId === tempId);
+  titleEditTarget.value = tempId;
+  titleEditValue.value = img?.title ?? store.currentBlock?.scene ?? '';
+  nextTick(() => titleEditInputRef.value?.focus());
+}
+
+// 确认标题编辑
+function confirmTitleEdit() {
+  const target = titleEditTarget.value;
+  if (!target || !titleEditValue.value.trim()) {
+    titleEditTarget.value = null;
+    return;
+  }
+  store.updateRetryImageTitle(target, titleEditValue.value.trim());
+  toastr.success(`标题已更新为「${titleEditValue.value.trim()}」`);
+  if (previewItem.value?.tempId === target) {
+    previewItem.value.title = titleEditValue.value.trim();
+  }
+  titleEditTarget.value = null;
+}
+
+// 替换图片
+function onReplaceFile(event: Event, tempId: string) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file || !file.type.startsWith('image/')) return;
   const reader = new FileReader();
   reader.onload = e => {
     const base64 = e.target?.result as string;
     if (base64) {
-      store.importImageToRetry(base64);
+      store.replaceRetryImageData(tempId, base64);
+      toastr.success('图片已替换');
     }
   };
   reader.onerror = () => toastr.error('图片读取失败');
   reader.readAsDataURL(file);
-
-  // 清空 value，允许重复选择同一文件
   input.value = '';
+}
+
+// 导入网络图片
+async function onUrlImport(event: Event, tempId: string) {
+  const input = event.target as HTMLInputElement;
+  const url = input.value.trim();
+  if (!url) return;
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error('网络错误');
+    const blob = await resp.blob();
+    const reader = new FileReader();
+    reader.onload = e => {
+      const base64 = e.target?.result as string;
+      if (base64) {
+        store.replaceRetryImageData(tempId, base64);
+        toastr.success('网络图片已导入');
+      }
+    };
+    reader.onerror = () => toastr.error('图片读取失败');
+    reader.readAsDataURL(blob);
+    input.value = '';
+  } catch {
+    toastr.error('网络图片获取失败，请检查 URL');
+  }
 }
 </script>
 
 <style scoped>
-/* ====== 外层容器（与 SettingsPanel 保持一致：absolute 填充父级） ====== */
+/* ====== 外层容器 ====== */
 .retry-overlay {
   position: absolute;
   inset: 0;
@@ -250,7 +394,7 @@ function onFileSelected(event: Event) {
   padding: 16px;
 }
 
-/* ====== 黑色遮罩（点击关闭） ====== */
+/* ====== 黑色遮罩 ====== */
 .retry-backdrop {
   position: absolute;
   inset: 0;
@@ -303,9 +447,7 @@ function onFileSelected(event: Event) {
   align-items: center;
   justify-content: center;
   font-size: 12px;
-  transition:
-    background 0.2s,
-    border-color 0.2s;
+  transition: background 0.2s, border-color 0.2s;
 }
 
 .close-btn:hover {
@@ -333,20 +475,12 @@ function onFileSelected(event: Event) {
   font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
-  transition:
-    color 0.2s,
-    border-color 0.2s;
+  transition: color 0.2s, border-color 0.2s;
   margin-bottom: -1px;
 }
 
-.mode-tab:hover {
-  color: var(--theme-text-main, var(--vn-fg));
-}
-
-.mode-tab.active {
-  color: var(--theme-accent, var(--rust));
-  border-bottom-color: var(--theme-accent, var(--rust));
-}
+.mode-tab:hover { color: var(--theme-text-main, var(--vn-fg)); }
+.mode-tab.active { color: var(--theme-accent, var(--rust)); border-bottom-color: var(--theme-accent, var(--rust)); }
 
 /* ====== 提示词输入区 ====== */
 .prompt-section {
@@ -358,11 +492,7 @@ function onFileSelected(event: Event) {
   flex-shrink: 0;
 }
 
-.prompt-block {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
+.prompt-block { display: flex; flex-direction: column; gap: 6px; }
 
 .prompt-label {
   font-size: 0.75rem;
@@ -384,30 +514,62 @@ function onFileSelected(event: Event) {
   padding: 10px 12px;
   resize: vertical;
   outline: none;
-  transition:
-    border-color 0.2s,
-    opacity 0.2s;
+  transition: border-color 0.2s, opacity 0.2s;
   font-family: inherit;
 }
 
-.prompt-input:focus {
-  border-color: rgba(196, 162, 101, 0.55);
-}
+.prompt-input:focus { border-color: rgba(196, 162, 101, 0.55); }
+.prompt-input::placeholder { color: var(--theme-text-muted, var(--vn-muted)); }
+.prompt-input.is-inactive { opacity: 0.35; cursor: not-allowed; }
 
-.prompt-input::placeholder {
-  color: var(--theme-text-muted, var(--vn-muted));
-}
-
-/* 非当前激活标签页的输入框置灰 */
-.prompt-input.is-inactive {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-
+/* ====== 按钮行 ====== */
 .prompt-actions {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  gap: 8px;
+}
+
+.action-spacer { flex: 1; }
+
+/* ====== 相册按钮 ====== */
+.album-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: rgba(42, 36, 32, 0.6);
+  border: 1px solid rgba(196, 162, 101, 0.3);
+  border-radius: 6px;
+  color: var(--theme-text-soft, var(--vn-muted));
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+  user-select: none;
+  position: relative;
+}
+
+.album-btn:hover {
+  background: rgba(42, 36, 32, 0.9);
+  border-color: rgba(196, 162, 101, 0.5);
+  color: var(--theme-text-main, var(--vn-fg));
+}
+
+.album-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--theme-accent, var(--rust));
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* ====== 生成按钮 ====== */
@@ -423,10 +585,7 @@ function onFileSelected(event: Event) {
   font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
-  transition:
-    background 0.2s,
-    border-color 0.2s,
-    opacity 0.2s;
+  transition: background 0.2s, border-color 0.2s, opacity 0.2s;
 }
 
 .gen-btn:hover:not(:disabled) {
@@ -434,10 +593,7 @@ function onFileSelected(event: Event) {
   border-color: var(--theme-accent, var(--rust));
 }
 
-.gen-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
+.gen-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* ====== 导入按钮 ====== */
 .import-btn {
@@ -452,10 +608,7 @@ function onFileSelected(event: Event) {
   font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
-  transition:
-    background 0.2s,
-    border-color 0.2s,
-    color 0.2s;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
   user-select: none;
 }
 
@@ -475,10 +628,15 @@ function onFileSelected(event: Event) {
 }
 
 /* ====== 预览网格 ====== */
-.preview-section {
-  padding: 16px 20px;
-  flex: 1;
-  min-height: 0;
+.preview-section { padding: 14px 20px; flex: 1; min-height: 0; }
+
+.section-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--theme-text-muted, var(--vn-muted));
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 10px;
 }
 
 .preview-grid {
@@ -493,38 +651,41 @@ function onFileSelected(event: Event) {
   border-radius: 8px;
   overflow: hidden;
   border: 2px solid transparent;
-  transition:
-    border-color 0.2s,
-    transform 0.2s,
-    box-shadow 0.2s;
+  transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
   cursor: default;
   background: rgba(42, 36, 32, 0.5);
 }
 
-.preview-item.is-done {
+.preview-item.is-done { cursor: pointer; }
+.preview-item.is-done:hover { border-color: rgba(196, 162, 101, 0.5); transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4); }
+.preview-item.is-selected { border-color: var(--theme-accent, var(--rust)) !important; transform: translateY(-5px) !important; box-shadow: 0 10px 30px rgba(139, 69, 19, 0.55) !important; }
+
+/* 铅笔按钮 */
+.edit-title-btn {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  z-index: 3;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(196, 162, 101, 0.4);
+  color: rgba(255, 255, 255, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s, background 0.2s;
 }
 
-.preview-item.is-done:hover {
-  border-color: rgba(196, 162, 101, 0.5);
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
-}
+.preview-item:hover .edit-title-btn { opacity: 1; }
+.edit-title-btn:hover { background: rgba(139, 69, 19, 0.8); }
 
-.preview-item.is-selected {
-  border-color: var(--theme-accent, var(--rust)) !important;
-  transform: translateY(-5px) !important;
-  box-shadow: 0 10px 30px rgba(139, 69, 19, 0.55) !important;
-}
+.preview-img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
-.preview-img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-
-/* ====== 长按预览图标 ====== */
+/* 长按预览图标 */
 .long-press-hint {
   position: absolute;
   top: 6px;
@@ -537,226 +698,293 @@ function onFileSelected(event: Event) {
   display: flex;
   align-items: center;
   justify-content: center;
-  opacity: 0;
-  transition: opacity 0.2s;
-  pointer-events: none;
 }
 
-.preview-item.is-done:hover .long-press-hint {
-  opacity: 1;
-}
-
-/* ====== 选中遮罩 ====== */
 .select-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.2);
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   opacity: 0;
   transition: opacity 0.2s;
-  display: flex;
-  align-items: flex-end;
-  justify-content: flex-end;
-  padding: 6px;
 }
 
-.preview-item.is-selected .select-overlay {
-  opacity: 1;
-}
+.preview-item.is-selected .select-overlay { opacity: 1; }
 
 .select-badge {
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: var(--theme-accent, var(--rust));
-  border: 2px solid rgba(196, 162, 101, 0.6);
-  color: var(--paper-light);
-  font-size: 13px;
+  color: #fff;
+  font-size: 1rem;
   font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-/* ====== 生成中占位 ====== */
+/* 标题标签 */
+.title-tag {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: linear-gradient(transparent, rgba(0,0,0,0.7));
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.7rem;
+  padding: 10px 6px 4px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 生成中 / 失败占位 */
 .gen-placeholder {
-  width: 100%;
-  height: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  height: 100%;
+  gap: 6px;
   color: var(--theme-text-muted, var(--vn-muted));
-  font-size: 0.75rem;
+  font-size: 0.78rem;
 }
 
-.error-placeholder {
-  color: rgba(200, 80, 80, 0.8);
-}
+.error-placeholder { color: rgba(220, 80, 80, 0.8); }
 
-/* ====== 生成旋转动画 ====== */
 .gen-spinner {
-  width: 28px;
-  height: 28px;
-  border: 3px solid rgba(196, 162, 101, 0.2);
-  border-top-color: rgba(196, 162, 101, 0.7);
+  width: 24px;
+  height: 24px;
+  border: 2px solid rgba(196, 162, 101, 0.2);
+  border-top-color: var(--theme-accent, var(--rust));
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* ====== 底部确认栏 ====== */
 .retry-footer {
-  padding: 12px 20px 16px;
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 12px;
-  border-top: 1px solid rgba(196, 162, 101, 0.12);
+  gap: 10px;
+  padding: 12px 20px;
+  border-top: 1px solid rgba(196, 162, 101, 0.1);
   flex-shrink: 0;
 }
 
-.selected-info {
-  font-size: 0.8rem;
-  color: var(--theme-text-muted, var(--vn-muted));
-  flex: 1;
-}
-
 .clear-btn {
-  padding: 6px 14px;
+  padding: 7px 16px;
   background: transparent;
   border: 1px solid rgba(196, 162, 101, 0.3);
-  border-radius: 5px;
+  border-radius: 6px;
   color: var(--theme-text-muted, var(--vn-muted));
-  font-size: 0.8rem;
+  font-size: 0.82rem;
   cursor: pointer;
-  transition:
-    border-color 0.2s,
-    color 0.2s;
+  transition: background 0.2s, color 0.2s;
 }
+.clear-btn:hover { background: rgba(196, 162, 101, 0.1); color: var(--theme-text-main, var(--vn-fg)); }
 
-.clear-btn:hover {
-  border-color: rgba(196, 162, 101, 0.6);
-  color: var(--theme-text-main, var(--vn-fg));
-}
+.selected-info { font-size: 0.82rem; color: var(--theme-text-muted, var(--vn-muted)); }
 
 .confirm-btn {
-  padding: 8px 22px;
-  background: rgba(139, 69, 19, 0.85);
-  border: 1px solid rgba(196, 162, 101, 0.55);
+  padding: 7px 20px;
+  background: var(--theme-accent-soft, rgba(139, 69, 19, 0.7));
+  border: 1px solid rgba(196, 162, 101, 0.45);
   border-radius: 6px;
   color: var(--paper-light);
   font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
-  transition:
-    background 0.2s,
-    opacity 0.2s;
+  transition: background 0.2s, border-color 0.2s;
 }
-
-.confirm-btn:hover:not(:disabled) {
-  background: rgba(139, 69, 19, 1);
-}
-
-.confirm-btn:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
+.confirm-btn:hover:not(:disabled) { background: rgba(139, 69, 19, 0.95); border-color: var(--theme-accent, var(--rust)); }
+.confirm-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* ====== 大图预览 ====== */
 .preview-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.88);
-  z-index: 300;
+  z-index: 70;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
+  padding: 20px;
+}
+
+.preview-panel {
+  position: relative;
+  max-width: 90vw;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .preview-full-img {
-  max-width: 90vw;
-  max-height: 90vh;
+  max-width: 100%;
+  max-height: calc(90vh - 60px);
   object-fit: contain;
   border-radius: 8px;
-  box-shadow: 0 0 60px rgba(0, 0, 0, 0.8);
-  cursor: default;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
 }
 
+.preview-edit-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.preview-edit-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 5px;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.preview-edit-btn:hover { background: rgba(255, 255, 255, 0.2); }
+
+.url-input {
+  padding: 5px 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 5px;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 0.82rem;
+  outline: none;
+  width: 220px;
+}
+.url-input::placeholder { color: rgba(255, 255, 255, 0.4); }
+.url-input:focus { border-color: rgba(196, 162, 101, 0.6); }
+
 .preview-close {
-  position: fixed;
-  top: 16px;
-  right: 16px;
-  width: 36px;
-  height: 36px;
+  position: absolute;
+  top: -12px;
+  right: -12px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
-  border: 1px solid rgba(196, 162, 101, 0.4);
-  background: rgba(42, 36, 32, 0.7);
-  color: var(--theme-text-main, var(--vn-fg));
-  font-size: 16px;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 14px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: background 0.2s;
 }
+.preview-close:hover { background: rgba(139, 69, 19, 0.7); }
 
-.preview-close:hover {
-  background: var(--theme-accent-soft, rgba(139, 69, 19, 0.5));
+.preview-fade-enter-active, .preview-fade-leave-active { transition: opacity 0.2s; }
+.preview-fade-enter-from, .preview-fade-leave-to { opacity: 0; }
+
+/* ====== 标题编辑弹窗 ====== */
+.edit-title-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
 }
 
-/* ====== 过渡动画 ====== */
-.panel-fade-enter-active,
-.panel-fade-leave-active {
-  transition: opacity 0.25s ease;
+.edit-title-panel {
+  background: var(--vn-panel-bg);
+  border: 1px solid rgba(196, 162, 101, 0.35);
+  border-radius: 10px;
+  width: 340px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
 }
 
-.panel-fade-enter-from,
-.panel-fade-leave-to {
-  opacity: 0;
+.edit-title-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(196, 162, 101, 0.15);
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--theme-text-main, var(--vn-fg));
 }
 
-.panel-fade-enter-active .retry-panel,
-.panel-fade-leave-active .retry-panel {
-  transition:
-    transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1),
-    opacity 0.25s ease;
+.edit-title-body {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.panel-fade-enter-from .retry-panel {
-  transform: scale(0.92);
-  opacity: 0;
+.edit-title-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(42, 36, 32, 0.5);
+  border: 1px solid rgba(196, 162, 101, 0.3);
+  border-radius: 6px;
+  color: var(--theme-text-main, var(--vn-fg));
+  font-size: 0.9rem;
+  padding: 8px 10px;
+  outline: none;
+}
+.edit-title-input:focus { border-color: rgba(196, 162, 101, 0.6); }
+
+.edit-title-hint {
+  font-size: 0.72rem;
+  color: var(--theme-text-muted, var(--vn-muted));
+  line-height: 1.5;
 }
 
-.panel-fade-leave-to .retry-panel {
-  transform: scale(0.95);
-  opacity: 0;
+.edit-title-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid rgba(196, 162, 101, 0.1);
 }
 
-.preview-fade-enter-active,
-.preview-fade-leave-active {
-  transition: opacity 0.2s ease;
+.cancel-btn {
+  padding: 6px 16px;
+  background: transparent;
+  border: 1px solid rgba(196, 162, 101, 0.3);
+  border-radius: 5px;
+  color: var(--theme-text-muted, var(--vn-muted));
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: background 0.2s;
 }
+.cancel-btn:hover { background: rgba(196, 162, 101, 0.1); }
 
-.preview-fade-enter-from,
-.preview-fade-leave-to {
-  opacity: 0;
+.confirm-title-btn {
+  padding: 6px 18px;
+  background: var(--theme-accent-soft, rgba(139, 69, 19, 0.7));
+  border: 1px solid rgba(196, 162, 101, 0.4);
+  border-radius: 5px;
+  color: var(--paper-light);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
 }
+.confirm-title-btn:hover { background: rgba(139, 69, 19, 0.95); }
 
-/* ====== 按钮内旋转 ====== */
-.spinner {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  border-top-color: rgba(255, 255, 255, 0.8);
-  border-radius: 50%;
-  animation: spin 0.7s linear infinite;
-}
+.panel-fade-enter-active, .panel-fade-leave-active { transition: opacity 0.2s; }
+.panel-fade-enter-from, .panel-fade-leave-to { opacity: 0; }
 </style>

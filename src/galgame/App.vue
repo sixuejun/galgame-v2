@@ -75,6 +75,8 @@
 
     <!-- 重试生图面板 -->
     <ImageGenRetryPanel />
+    <!-- 相册面板 -->
+    <ImageAlbumPanel />
   </main>
 </template>
 
@@ -89,6 +91,7 @@ import GameplayPanel from './components/module/GameplayPanel.vue';
 import HistoryPanel from './components/panel/HistoryPanel.vue';
 import ImageDeck from './components/stage/ImageDeck.vue';
 import ImageGenRetryPanel from './components/common/ImageGenRetryPanel.vue';
+import ImageAlbumPanel from './components/common/ImageAlbumPanel.vue';
 import QuickAccessMenu from './components/layout/QuickAccessMenu.vue';
 import SettingsPanel from './components/panel/SettingsPanel.vue';
 import StageArea from './components/stage/StageArea.vue';

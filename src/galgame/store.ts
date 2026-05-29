@@ -1376,6 +1376,117 @@ export const useVNStore = defineStore('vn', () => {
   const stageCgImage = ref<string | null>(null);
   let imageGenListenerStopped: (() => void) | null = null;
 
+  // --- 场景 ↔ 图片绑定持久化（聊天变量） ---
+  // 存储结构：{ [sceneTitle]: { imageData, type, timestamp } }
+  // 内存缓存 + 持久化到聊天变量
+  const sceneImageBindings = ref<Record<string, {
+    imageData: string;
+    type: 'background' | 'cg';
+    timestamp: number;
+  }>>({});
+
+  const _bindingsLoaded = ref(false);
+
+  function _loadBindings() {
+    try {
+      const raw = getVariables({ type: 'chat' })?.vn_scene_bindings;
+      if (raw && typeof raw === 'object') {
+        sceneImageBindings.value = raw as typeof sceneImageBindings.value;
+        _bindingsLoaded.value = true;
+        console.info('[Bindings] 从聊天变量加载绑定:', Object.keys(sceneImageBindings.value).length, '个');
+      }
+    } catch (e) {
+      console.warn('[Bindings] 加载绑定失败:', e);
+    }
+  }
+
+  function _saveBindings() {
+    try {
+      insertOrAssignVariables({ vn_scene_bindings: klona(sceneImageBindings.value) }, { type: 'chat' });
+    } catch (e) {
+      console.warn('[Bindings] 保存绑定失败:', e);
+    }
+  }
+
+  /**
+   * 获取所有绑定（用于相册 UI）
+   */
+  function getSceneBindings() {
+    return sceneImageBindings.value;
+  }
+
+  /**
+   * 绑定场景 ↔ 图片（同一场景名只保留一张，后覆盖前）
+   * @param sceneTitle 场景名
+   * @param imageData 完整 base64
+   * @param type 图片类型
+   */
+  function bindSceneImage(sceneTitle: string, imageData: string, type: 'background' | 'cg') {
+    if (!sceneTitle.trim()) return;
+    sceneImageBindings.value[sceneTitle.trim()] = {
+      imageData,
+      type,
+      timestamp: Date.now(),
+    };
+    _saveBindings();
+    console.info('[Bindings] 绑定场景:', sceneTitle.trim(), 'type=', type);
+  }
+
+  /**
+   * 解除绑定
+   */
+  function unbindSceneImage(sceneTitle: string) {
+    if (sceneImageBindings.value[sceneTitle]) {
+      delete sceneImageBindings.value[sceneTitle];
+      _saveBindings();
+      console.info('[Bindings] 解除绑定:', sceneTitle);
+    }
+  }
+
+  /**
+   * 将绑定图片插入卡牌队列（不自动上舞台）
+   */
+  function insertBindingToQueue(sceneTitle: string): boolean {
+    const binding = sceneImageBindings.value[sceneTitle];
+    if (!binding) return false;
+
+    // 如果队列中已有相同 base64 的图，不重复插入
+    if (imageCardQueue.value.some(c => c.imageData === binding.imageData)) {
+      console.info('[Bindings] 绑定图已在队列中，跳过插入:', sceneTitle);
+      return false;
+    }
+
+    const tempId = `bound-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    imageCardQueue.value.push({
+      id: tempId,
+      imageData: binding.imageData,
+      type: binding.type,
+      timestamp: binding.timestamp,
+      title: sceneTitle,
+    });
+    if (imageCardQueue.value.length > MAX_IMAGE_CARDS) {
+      imageCardQueue.value.shift();
+    }
+    console.info('[Bindings] 绑定图已插入队列:', sceneTitle, 'tempId=', tempId);
+    return true;
+  }
+
+  /**
+   * 查找队列中是否存在指定场景的绑定图
+   */
+  function findBoundCardInQueue(sceneTitle: string): ImageCard | null {
+    return imageCardQueue.value.find(c => c.title === sceneTitle) ?? null;
+  }
+
+  // 聊天切换时清空绑定
+  eventOn(tavern_events.CHAT_CHANGED, () => {
+    sceneImageBindings.value = {};
+    _bindingsLoaded.value = false;
+  });
+
+  // 初始加载绑定
+  _loadBindings();
+
   // 图片卡牌队列（最多10张）
   const imageCardQueue = ref<ImageCard[]>([]);
   const MAX_IMAGE_CARDS = 10;
@@ -1396,6 +1507,10 @@ export const useVNStore = defineStore('vn', () => {
 
   // --- 重试弹窗状态 ---
   const retryPanelOpen = ref(false);
+  // --- 相册弹窗状态 ---
+  const albumPanelOpen = ref(false);
+  function openAlbumPanel() { albumPanelOpen.value = true; }
+  function closeAlbumPanel() { albumPanelOpen.value = false; }
   // 重试模式：'both' | 'background' | 'cg'
   const retryMode = ref<'both' | 'background' | 'cg'>('background');
   // 弹窗内当前激活的标签页（仅在 both 模式下有效）
@@ -1407,6 +1522,7 @@ export const useVNStore = defineStore('vn', () => {
       imageData: string;
       status: 'generating' | 'done' | 'error';
       errorMsg?: string;
+      title?: string; // 用户在面板中编辑的 title，用于插入队列和后续绑定
     }>
   >([]);
   const retrySelectedIndices = ref<Set<number>>(new Set());
@@ -1604,23 +1720,54 @@ export const useVNStore = defineStore('vn', () => {
     for (const idx of selected) {
       const img = generated[idx];
       if (!img || img.status !== 'done' || !img.imageData) continue;
-      imageCardQueue.value.push({
+      const card = {
         id: img.tempId,
         imageData: img.imageData,
         type: stageType,
         timestamp: Date.now(),
         prompt: lastRetryPrompt.value[stageType] ?? '',
-        title: '',
-      });
-    }
+        title: img.title ?? '',
+      };
+      imageCardQueue.value.push(card);
 
-    const firstIdx = [...selected][0];
-    const firstImg = generated[firstIdx];
-    if (firstImg?.status === 'done') {
-      switchToImageCard(firstImg.tempId);
+      // 如果有 title，自动追加到绑定存储（后续楼层可直接复用）
+      if (card.title) {
+        bindSceneImage(card.title, card.imageData, stageType);
+      }
     }
 
     closeRetryPanel();
+  }
+
+  /**
+   * 更新重试面板中某张图片的 title
+   */
+  function updateRetryImageTitle(tempId: string, newTitle: string) {
+    const img = retryGeneratedImages.value.find(g => g.tempId === tempId);
+    if (img) {
+      img.title = newTitle;
+    }
+  }
+
+  /**
+   * 替换重试面板中某张图片的 base64 数据
+   */
+  function replaceRetryImageData(tempId: string, newBase64: string) {
+    const img = retryGeneratedImages.value.find(g => g.tempId === tempId);
+    if (img) {
+      img.imageData = newBase64;
+      img.status = 'done';
+    }
+  }
+
+  /**
+   * 获取绑定相册（按类型分组）
+   */
+  function getBindingAlbum(type: 'background' | 'cg'): Array<{ title: string; imageData: string; timestamp: number }> {
+    return Object.entries(sceneImageBindings.value)
+      .filter(([, v]) => v.type === type)
+      .map(([title, v]) => ({ title, imageData: v.imageData, timestamp: v.timestamp }))
+      .sort((a, b) => b.timestamp - a.timestamp);
   }
 
   /**
@@ -1638,6 +1785,7 @@ export const useVNStore = defineStore('vn', () => {
   /**
    * 将用户本地上传的图片（base64）直接追加到 retryGeneratedImages，
    * 无需调用生图 API，直接可确认插入到舞台。
+   * 同时自动以当前场景名为 title，并追加到绑定存储。
    * @param base64Data 图片 base64 数据（data:image/...;base64,xxx 格式）
    */
   function importImageToRetry(base64Data: string) {
@@ -1645,6 +1793,7 @@ export const useVNStore = defineStore('vn', () => {
     if (!type) return;
 
     const tempId = `import-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const scene = currentBlock.value?.scene?.trim() ?? '';
     retryGeneratedImages.value.push({
       tempId,
       requestId: tempId,
@@ -1655,7 +1804,12 @@ export const useVNStore = defineStore('vn', () => {
     // 自动选中新导入的那张（替换之前的选中）
     retrySelectedIndices.value = new Set([retryGeneratedImages.value.length - 1]);
 
-    console.info('[RetryPanel] 导入图片完成, tempId=', tempId, 'type=', type);
+    // 自动以当前场景名为 title，并追加到绑定
+    if (scene) {
+      bindSceneImage(scene, base64Data, type);
+    }
+
+    console.info('[RetryPanel] 导入图片完成, tempId=', tempId, 'type=', type, 'scene=', scene);
   }
 
   /**
@@ -1736,15 +1890,37 @@ export const useVNStore = defineStore('vn', () => {
       const typeChanged = currentImageType.value !== null && currentImageType.value !== block.type;
 
       if (titleChanged || typeChanged) {
-        // 变化了：清除 manualOverride，更新当前显示
         clearManualOverride(block.title, block.type);
       } else {
-        // 无论是否覆盖，记录当前标题和类型
         currentImageTitle.value = block.title;
         currentImageType.value = block.type;
       }
 
-      // 2. 检查卡牌队列是否已有相同 prompt 的图片
+      // 2. 如果可以直接上舞台（title 匹配），优先查绑定图
+      if (canDirectDisplay && !manualOverrideCardId.value) {
+        const binding = sceneImageBindings.value[normalizedTitle];
+        if (binding) {
+          // 绑定图：优先从队列找，找不到则插入队列再展示
+          let boundCard = findBoundCardInQueue(normalizedTitle);
+          if (boundCard) {
+            console.info('[ImageGen] 绑定图从队列展示:', normalizedTitle);
+            if (block.type === 'background') stageBackgroundImage.value = boundCard.imageData;
+            else stageCgImage.value = boundCard.imageData;
+          } else {
+            // 不在队列，插入并展示
+            insertBindingToQueue(normalizedTitle);
+            // 立即取出刚插入的那张来展示（从队列尾部）
+            const inserted = imageCardQueue.value[imageCardQueue.value.length - 1];
+            if (inserted) {
+              if (block.type === 'background') stageBackgroundImage.value = inserted.imageData;
+              else stageCgImage.value = inserted.imageData;
+            }
+          }
+          continue; // 跳过生图
+        }
+      }
+
+      // 3. 检查卡牌队列是否已有相同 prompt 的图片
       const existing = imageCardQueue.value.find(c => c.prompt === block.prompt);
       if (existing) {
         console.info('[ImageGen] 使用已有图片:', block.title, 'directDisplay=', canDirectDisplay);
@@ -3729,6 +3905,9 @@ ${latestHint}
     getCurrentDisplayCg,
     // Retry panel
     retryPanelOpen,
+    albumPanelOpen,
+    openAlbumPanel,
+    closeAlbumPanel,
     retryMode,
     retryActiveTab,
     retryGeneratedImages,
@@ -3742,6 +3921,13 @@ ${latestHint}
     closeRetryPanel,
     setRetryActiveTab,
     importImageToRetry,
+    updateRetryImageTitle,
+    replaceRetryImageData,
+    getBindingAlbum,
+    insertBindingToQueue,
+    bindSceneImage,
+    unbindSceneImage,
+    getSceneBindings,
     getModuleLockReason,
     userCharacter,
     characterRoster,
