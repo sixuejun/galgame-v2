@@ -132,6 +132,34 @@ export const animalIslandTheme: ThemeDefinition = {
     '--theme-choice-button-padding': '0.8em 1em',
     '--theme-choice-button-gap': '0.6em',
 
+    // 选项按钮
+    '--theme-choice-btn-bg': 'rgba(255, 255, 255, 0.78)',
+    '--theme-choice-btn-border': 'rgba(160, 140, 180, 0.4)',
+    '--theme-choice-btn-shadow': '0 4px 16px rgba(160, 140, 180, 0.2)',
+    '--theme-choice-btn-selected-bg': 'rgba(246, 135, 179, 0.25)',
+    '--theme-choice-btn-selected-border': 'rgba(246, 135, 179, 0.6)',
+    '--theme-choice-btn-selected-shadow': '0 4px 20px rgba(246, 135, 179, 0.3)',
+    '--theme-choice-letter-color': '#d53f8c',
+    '--theme-choice-text-color': '#4a5568',
+    '--theme-choice-text-font-family': "'Nunito', 'PingFang SC', 'Microsoft YaHei', sans-serif",
+    '--theme-choice-text-font-size': '1em',
+    '--theme-choice-text-font-weight': '500',
+
+    // 输入面板
+    '--theme-input-backdrop': 'rgba(160, 140, 180, 0.2)',
+    '--theme-input-title-color': '#4a5568',
+    '--theme-input-send-btn-bg': 'rgba(246, 135, 179, 0.8)',
+    '--theme-input-send-btn-border-color': 'rgba(246, 135, 179, 0.5)',
+    '--theme-input-send-btn-color': '#ffffff',
+    '--theme-input-send-btn-disabled-bg': 'rgba(160, 140, 180, 0.2)',
+    '--theme-input-send-btn-disabled-color': 'rgba(74, 85, 104, 0.5)',
+    '--theme-input-textarea-color': '#4a5568',
+    '--theme-input-textarea-bg': 'rgba(255, 255, 255, 0.5)',
+    '--theme-input-textarea-border': 'rgba(160, 140, 180, 0.3)',
+    '--theme-input-textarea-placeholder-color': 'rgba(74, 85, 104, 0.45)',
+    '--theme-input-close-btn-color': 'rgba(74, 85, 104, 0.5)',
+    '--theme-input-close-btn-hover-color': '#4a5568',
+
     // 弹窗面板
     '--theme-panel-bg': 'rgba(255, 255, 255, 0.95)',
     '--theme-panel-border': 'rgba(160, 140, 180, 0.3)',

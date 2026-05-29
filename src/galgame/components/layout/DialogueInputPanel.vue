@@ -21,7 +21,7 @@
             <div class="dialogue-input-top-line shrink-0" :style="topLineStyle" />
 
             <!-- 头部 -->
-            <div class="dialogue-input-header shrink-0 flex items-center justify-between" :style="headerStyle">
+            <div class="dialogue-input-header flex shrink-0 items-center justify-between" :style="headerStyle">
               <div class="dialogue-input-title flex items-center gap-2" :style="titleStyle">
                 <i class="fa-solid fa-keyboard" style="color: var(--theme-accent, var(--rust)); font-size: 0.7rem" />
                 <span>自由输入</span>
@@ -29,8 +29,8 @@
               <button
                 class="dialogue-input-close flex cursor-pointer items-center justify-center"
                 :style="closeBtnStyle"
-                @click="handleClose"
                 aria-label="关闭"
+                @click="handleClose"
               >
                 <svg
                   width="12"
@@ -47,32 +47,32 @@
               </button>
             </div>
 
-            <!-- 输入区 -->
+            <!-- 输入区（包含文本框和发送按钮） -->
             <div class="dialogue-input-body shrink-0" :style="bodyStyle">
-              <textarea
-                ref="inputRef"
-                v-model="inputText"
-                class="dialogue-input-textarea no-scrollbar"
-                :style="textareaStyle"
-                placeholder="输入你想说的话..."
-                rows="3"
-                @keydown.enter.ctrl="handleSend"
-                @keydown.enter.exact.prevent
-                @keydown.escape="handleClose"
-              />
-            </div>
-
-            <!-- 底部操作栏 -->
-            <div class="dialogue-input-footer shrink-0 flex items-center justify-end" :style="footerStyle">
-              <button
-                class="dialogue-input-send-btn flex cursor-pointer items-center"
-                :style="sendBtnStyle"
-                :disabled="!inputText.trim()"
-                @click="handleSend"
-              >
-                <i class="fa-solid fa-paper-plane" style="font-size: 0.65rem; margin-right: 0.4em" />
-                <span>发送</span>
-              </button>
+              <div class="dialogue-input-textarea-wrapper" :style="textareaWrapperStyle">
+                <textarea
+                  ref="inputRef"
+                  v-model="inputText"
+                  class="dialogue-input-textarea no-scrollbar"
+                  :style="textareaStyle"
+                  placeholder="输入你想说的话..."
+                  rows="3"
+                  @keydown.enter.ctrl="handleSend"
+                  @keydown.enter.exact.prevent
+                  @keydown.escape="handleClose"
+                />
+                <!-- 悬浮发送按钮 -->
+                <button
+                  class="dialogue-input-send-btn flex cursor-pointer items-center"
+                  :style="sendBtnStyle"
+                  :disabled="!inputText.trim()"
+                  aria-label="发送"
+                  @click="handleSend"
+                >
+                  <i class="fa-solid fa-paper-plane" style="font-size: 0.65rem; margin-right: 0.4em" />
+                  <span>发送</span>
+                </button>
+              </div>
             </div>
 
             <!-- 底部装饰线 -->
@@ -112,15 +112,19 @@ watch(
   },
 );
 
-const panelSkin = computed(() => store.getComponentSkinForCurrent('choicePanel'));
+const panelSkin = computed(() => store.getComponentSkinForCurrent('inputPanel'));
 
 const panelStyle = computed(() => ({
   width: 'min(90vw, 32rem)',
   maxWidth: 'min(90vw, 32rem)',
-  background: 'var(--theme-input-panel-bg, rgba(35, 30, 25, 0.92))',
-  border: '1px solid var(--theme-input-panel-border, rgba(90, 79, 64, 0.55))',
-  borderRadius: 'var(--theme-input-panel-radius, 0px)',
-  boxShadow: 'var(--theme-input-panel-shadow, 0 8px 32px rgba(0,0,0,0.3))',
+  ...(panelSkin.value
+    ? { background: 'transparent', border: 'transparent', boxShadow: 'none' }
+    : {
+        background: 'var(--theme-input-panel-bg, rgba(35, 30, 25, 0.92))',
+        border: '1px solid var(--theme-input-panel-border, rgba(90, 79, 64, 0.55))',
+        borderRadius: 'var(--theme-input-panel-radius, 0px)',
+        boxShadow: 'var(--theme-input-panel-shadow, 0 8px 32px rgba(0,0,0,0.3))',
+      }),
 }));
 
 const topLineStyle = computed(() => ({
@@ -160,29 +164,33 @@ const bodyStyle = {
   padding: '0 0.75rem',
 };
 
+const textareaWrapperStyle = computed(() => ({
+  position: 'relative' as const,
+  width: '100%',
+}));
+
 const textareaStyle = computed(() => ({
   width: '100%',
   background: 'var(--theme-input-textarea-bg, transparent)',
   border: 'var(--theme-input-textarea-border, 1px solid rgba(90, 79, 64, 0.3))',
   borderRadius: 'var(--theme-input-textarea-radius, 0px)',
   outline: 'none',
-  resize: 'none',
+  resize: 'none' as const,
   fontFamily: 'var(--theme-font-body, serif)',
   fontSize: 'var(--theme-input-textarea-font-size, 1em)',
   lineHeight: 'var(--theme-input-textarea-line-height, 1.75)',
   color: 'var(--theme-input-textarea-color, rgba(212, 197, 160, 0.9))',
   letterSpacing: 'var(--theme-input-textarea-letter-spacing, 0.05em)',
   caretColor: 'var(--theme-input-textarea-caret-color, var(--theme-accent, var(--rust)))',
-  padding: 'var(--theme-input-textarea-padding, 0.5rem 0.75rem)',
-}));
-
-const footerStyle = computed(() => ({
-  padding: 'var(--theme-input-footer-padding, 0.5rem 0.75rem)',
+  padding: 'var(--theme-input-textarea-padding-top, 0.5rem) var(--theme-input-textarea-padding-right, 3rem) var(--theme-input-textarea-padding-bottom, 0.5rem) var(--theme-input-textarea-padding-left, 0.75rem)',
 }));
 
 const sendBtnStyle = computed(() => {
   const hasText = inputText.value.trim();
   return {
+    position: 'absolute' as const,
+    right: 'var(--theme-input-send-btn-right, 0.5rem)',
+    bottom: 'var(--theme-input-send-btn-bottom, 0.5rem)',
     padding: '0.3rem 0.65rem',
     background: hasText
       ? 'var(--theme-input-send-btn-bg, var(--theme-accent, var(--rust)))'

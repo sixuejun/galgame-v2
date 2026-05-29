@@ -991,6 +991,25 @@ export const useVNStore = defineStore('vn', () => {
     _flatLenOnInit = newBlocks.length;
   });
 
+  // 切换楼层时：清空弹幕，然后从新楼层读取并显示对应弹幕
+  let _prevFloorIndexForDanmaku = -1;
+  watch(currentBlockFlatIndex, () => {
+    if (!settings.value.danmakuEnabled) return;
+    const floorIdx = currentFloorIndex.value;
+    if (floorIdx === _prevFloorIndexForDanmaku) return;
+    _prevFloorIndexForDanmaku = floorIdx;
+
+    const unit = dialogues.value[floorIdx];
+    if (!unit) return;
+
+    // 立即清空旧弹幕
+    clearDanmaku();
+
+    if (unit.parsed && unit.danmaku.length > 0) {
+      displayDanmakuFromMessage(unit.message);
+    }
+  });
+
   // Parse a specific dialogue unit by index (lazy, cached)
   async function parseCurrentFloor(index: number) {
     const unit = dialogues.value[index];

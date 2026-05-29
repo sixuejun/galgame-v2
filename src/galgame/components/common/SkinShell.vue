@@ -3,8 +3,8 @@
     <img
       v-if="imageSrc && !imageError"
       :src="currentImage"
-      class="pointer-events-none absolute inset-0 h-full w-full select-none object-contain"
-      style="z-index: 0"
+      class="pointer-events-none absolute inset-0 select-none"
+      :style="{ zIndex: 0, width: '100%', height: '100%', objectFit: objectFit }"
       draggable="false"
       @load="handleImageLoad"
       @error="imageError = true"
@@ -23,6 +23,9 @@ const props = defineProps<{
   hovered?: boolean;
   active?: boolean;
   shellStyle?: Record<string, string>;
+  disableAspectRatio?: boolean;
+  /** 图片适配方式：cover 铺满（固定高度时使用）、contain 完整显示（保持比例）。默认 cover。 */
+  objectFit?: 'cover' | 'contain';
 }>();
 
 const imageError = ref(false);
@@ -37,13 +40,29 @@ const currentImage = computed(() => {
   return props.skin.shellImage ?? '';
 });
 
+const objectFit = computed(() => {
+  if (props.skin?.objectFit) return props.skin.objectFit;
+  const fromStyle = props.shellStyle?.objectFit as 'cover' | 'contain' | undefined;
+  if (fromStyle) return fromStyle;
+  const fromVar = getComputedStyle(document.documentElement)
+    .getPropertyValue('--theme-shell-object-fit')
+    .trim();
+  if (fromVar === 'contain' || fromVar === 'cover') return fromVar;
+  return props.objectFit ?? 'cover';
+});
+
 const shellContainerStyle = computed(() => {
+  const explicitHeight = props.shellStyle?.height;
+  const fit = objectFit.value;
   const style: Record<string, string> = {
     width: props.skin?.shellSize.width ?? '100%',
     height: props.skin?.shellSize.height ?? '100%',
     ...(props.shellStyle ?? {}),
   };
-  if (naturalAspectRatio.value) {
+  if (fit === 'contain') {
+    return style;
+  }
+  if (naturalAspectRatio.value && !props.disableAspectRatio && !explicitHeight) {
     style.aspectRatio = naturalAspectRatio.value;
   }
   return style;
@@ -68,10 +87,12 @@ function handleImageLoad(event: Event) {
 }
 
 watch(
-  () => props.skin?.shellImage,
+  () => [props.skin?.shellImage, props.disableAspectRatio],
   () => {
     imageError.value = false;
-    naturalAspectRatio.value = null;
+    if (props.disableAspectRatio) {
+      naturalAspectRatio.value = null;
+    }
   },
 );
 </script>

@@ -1,6 +1,8 @@
 import dialogueAvatarShellImage from '../assets/hedie-avatar-bubble.png?url';
 import characterPanelImage from '../assets/hedie-character-panel.png?url';
+import choiceButtonImage from '../assets/hedie-choice-panel.png?url';
 import dialogueBoxImage from '../assets/hedie-dialogue-box.png?url';
+import inputPanelImage from '../assets/hedie-input-panel.png?url';
 import leftCollapsedButtonImage from '../assets/hedie-left-collapsed-button.png?url';
 import leftExpandedButtonImage from '../assets/hedie-left-expanded-button.png?url';
 import dialogueNameTagImage from '../assets/hedie-name-tag.png?url';
@@ -162,18 +164,86 @@ export const hedieTheme: ThemeDefinition = {
     '--theme-button-content-blur': '0px', // 按钮内容区域背景模糊强度。
     '--theme-button-content-saturate': '115%', // 按钮内容区域饱和度滤镜。
 
-    // 选项面板：控制多选/分支选项浮层的位置、宽度和选项按钮排布。
+    // ========== 选项面板 ==========
+    // 控制选项列表浮层的位置、背景和整体排布。
     '--theme-choice-backdrop': 'rgba(26, 21, 32, 0.35)', // 选项出现时覆盖舞台的遮罩颜色。
     '--theme-choice-left': '50%', // 选项面板左侧定位基准。
-    '--theme-choice-bottom': 'clamp(6rem, 14vw, 11rem)', // 选项面板距离舞台底部的位置。
+    '--theme-choice-bottom': 'clamp(8rem, 18vw, 15rem)', // 选项面板距离舞台底部的位置。
+    '--theme-choice-bottom-portrait': 'clamp(6rem, 14vw, 11rem)', // 竖屏模式选项面板距离舞台底部的位置。
     '--theme-choice-width': '100%', // 选项面板宽度。
-    '--theme-choice-max-width': 'clamp(20rem, 42vw, 32rem)', // 选项面板最大宽度。
+    '--theme-choice-max-width': 'clamp(20rem, 42vw, 32rem)', // 选项面板最大宽度（单列）。
+    '--theme-choice-two-col-max-width': 'clamp(20rem, 60vw, 64rem)', // 选项面板最大宽度（双列）。
     '--theme-choice-padding-x': 'clamp(0.5rem, 1.5vw, 1rem)', // 选项面板左右内边距。
-    '--theme-choice-list-gap': 'clamp(0.5rem, 1vw, 0.75rem)', // 多个选项按钮之间的垂直间距。
-    '--theme-choice-translate-x': '-50%', // 选项面板水平位移，用于配合 left: 50% 居中。
-    '--theme-choice-translate-y': '0px', // 选项面板垂直位移。
-    '--theme-choice-button-padding': 'clamp(0.5rem, 1vw, 0.75rem)', // 单个选项按钮内边距。
-    '--theme-choice-button-gap': 'clamp(0.5rem, 1vw, 0.75rem)', // 单个选项按钮内部图标、序号、文字之间的间距。
+    '--theme-choice-list-gap': 'clamp(0.25rem, 0.8vw, 0.6rem)', // 多个选项按钮之间的垂直间距。
+    '--theme-choice-translate-x': '-50%', // 选项面板水平偏移。
+    '--theme-choice-translate-y': '0px', // 选项面板垂直偏移。
+
+    // ========== 单个选项按钮 ==========
+    // 按钮外壳（固定高度，图片适应方式）
+    '--theme-shell-object-fit': 'contain', // 图片适配方式：contain 完整显示不裁剪，cover 铺满裁剪。
+    '--theme-choice-btn-shell-height': 'clamp(3.6rem, 8.4vw, 6.6rem)', // 按钮外壳固定高度（contain 模式下高度由图片宽高比决定）。
+    // 序号与文字间距
+    '--theme-choice-btn-inner-gap': '0.1rem', // 序号与文字之间的间距。
+    // 序号区域左右内边距（决定序号与文字的距离）
+    '--theme-choice-btn-inner-padding-left': '0.5rem', // 序号左侧内边距。
+    '--theme-choice-btn-inner-padding-right': '0.25rem', // 序号右侧内边距。
+    // 文字区域上下内边距（在按钮内垂直居中文字）
+    '--theme-choice-btn-inner-padding-top': '0.5rem', // 文字区域上内边距。
+    '--theme-choice-btn-inner-padding-bottom': '0.5rem', // 文字区域下内边距。
+    // 文字区域高度（与按钮高度共同决定垂直居中效果）
+    '--theme-choice-btn-text-area-height': '3rem', // 文字区域固定高度，超出滚动。
+    // 按钮背景与边框（CSS 模式，与 PNG 叠加；PNG 外壳已承载视觉，可叠加半透明底色）
+    '--theme-choice-btn-bg': 'rgba(243, 234, 216, 0.0)',
+    '--theme-choice-btn-border': 'transparent',
+    '--theme-choice-btn-shadow': 'none',
+    '--theme-choice-btn-hover-bg': 'rgba(243, 234, 216, 0.0)',
+    '--theme-choice-btn-hover-border': 'transparent',
+    '--theme-choice-btn-hover-shadow': 'none',
+    '--theme-choice-btn-selected-bg': 'rgba(243, 234, 216, 0.0)',
+    '--theme-choice-btn-selected-border': 'transparent',
+    '--theme-choice-btn-selected-shadow': 'none',
+    // 选项序号
+    '--theme-choice-letter-color': 'rgba(110, 71, 54, 0.85)', // 选项序号颜色。
+    '--theme-choice-letter-color-hover': 'rgba(110, 71, 54, 1)', // 悬停时选项序号颜色。
+    '--theme-choice-letter-font-size': 'clamp(0.9rem, 1.5vw, 1.1rem)', // 选项序号字体大小。
+    '--theme-choice-letter-font-family': "'Noto Serif SC', 'Noto Serif', Georgia, serif", // 选项序号字体。
+    '--theme-choice-letter-font-weight': '600', // 选项序号字重。
+    // 选项文字
+    '--theme-choice-text-color': 'rgba(47, 36, 31, 0.9)', // 选项文字颜色。
+    '--theme-choice-text-color-hover': 'rgba(47, 36, 31, 1)', // 悬停时选项文字颜色。
+    '--theme-choice-text-color-selected': 'rgba(47, 36, 31, 1)', // 选中时选项文字颜色。
+    '--theme-choice-text-font-size': 'clamp(0.9rem, 1.5vw, 1.05rem)', // 选项文字字体大小。
+    '--theme-choice-text-font-weight': '400', // 选项文字字重。
+    '--theme-choice-text-font-family': "'Noto Serif SC', 'Noto Serif', Georgia, serif", // 选项文字字体。
+    '--theme-choice-text-line-height': '1.5', // 选项文字行高。
+    '--theme-choice-text-letter-spacing': '0.02em', // 选项文字字间距。
+    '--theme-choice-text-placeholder-color': 'rgba(92, 76, 68, 0.45)', // 自定义输入占位符颜色。
+    '--theme-choice-caret-color': 'var(--theme-accent, #6e4736)', // 自定义输入光标颜色。
+
+    // 自由输入选项悬浮发送按钮
+    '--theme-choice-send-btn-color': 'rgba(110, 70, 54, 0.7)',
+    '--theme-choice-send-btn-hover-color': 'rgba(110, 70, 54, 1)',
+    '--theme-choice-send-btn-disabled-color': 'rgba(160, 140, 130, 0.4)',
+
+    // 输入面板
+    '--theme-input-backdrop': 'rgba(26, 21, 32, 0.35)', // 输入面板遮罩颜色。
+    '--theme-input-title-color': 'rgba(74, 50, 40, 0.9)', // "自由输入"标题颜色（深棕色，适合浅色背景）。
+    '--theme-input-send-btn-bg': 'rgba(110, 70, 54, 0.85)', // 发送按钮背景色（偏棕）。
+    '--theme-input-send-btn-border-color': 'rgba(110, 70, 54, 0.6)', // 发送按钮边框色。
+    '--theme-input-send-btn-color': 'rgba(255, 250, 240, 0.95)', // 发送按钮文字色。
+    '--theme-input-send-btn-disabled-bg': 'rgba(180, 165, 155, 0.3)', // 发送按钮禁用态背景。
+    '--theme-input-send-btn-disabled-color': 'rgba(160, 140, 130, 0.5)', // 发送按钮禁用态文字色。
+    '--theme-input-textarea-color': 'rgba(74, 50, 40, 0.9)', // 输入框文字颜色（深棕）。
+    '--theme-input-textarea-bg': 'rgba(255, 252, 248, 0.1)', // 输入框背景（浅色半透明）。
+    '--theme-input-textarea-border-color': 'rgba(110, 70, 54, 0.3)', // 输入框边框颜色。
+    '--theme-input-textarea-border-width': '0.3px', // 输入框边框粗细。
+    '--theme-input-textarea-min-height': '7.1rem', // 输入框最小高度（控制高度）。
+    '--theme-input-textarea-padding-right': '0.5rem', // 输入框右侧内边距，为发送按钮留出空间。
+    '--theme-input-textarea-placeholder-color': 'rgba(130, 110, 100, 0.45)', // 输入框占位符颜色。
+    '--theme-input-send-btn-right': '1.1rem', // 发送按钮距输入区右侧的距离。
+    '--theme-input-send-btn-bottom': '0.9rem', // 发送按钮距输入区底部的距离。
+    '--theme-input-close-btn-color': 'rgba(130, 110, 100, 0.6)', // 关闭按钮颜色。
+    '--theme-input-close-btn-hover-color': 'rgba(110, 70, 54, 0.9)', // 关闭按钮悬停颜色。
 
     // 弹窗面板（通用）：控制设置、历史、角色信息等弹窗的背景、遮罩、滤镜。
     '--theme-panel-bg': 'rgba(20, 16, 28, 0)', // 弹窗 CSS 背景；当前透明，主要依赖 PNG。
@@ -341,15 +411,31 @@ export const hedieTheme: ThemeDefinition = {
         left: 'clamp(18px, 3vw, 36px)',
       },
     },
-    // 分支选项面板的图片外壳。控制选项列表外层大面板。
+    // 分支选项列表。每个选项按钮独立用 choiceButtonImage 包裹，列表本身仅控制排布和间距。
     choicePanel: {
-      shellImage: settingsPanelImage,
-      shellSize: { width: 'min(100%, clamp(18rem, 60vw, 50rem))', height: 'auto' },
+      shellImage: null,
+      shellSize: { width: '100%', height: 'auto' },
+      contentInset: { top: '0px', right: '0px', bottom: '0px', left: '0px' },
+    },
+    // 单个选项按钮的图片外壳。每个分支选项都用这张 PNG 包裹，object-cover 铺满固定高度。
+    choiceButton: {
+      shellImage: choiceButtonImage,
+      shellSize: { width: '100%', height: 'var(--theme-choice-btn-shell-height, clamp(3rem, 7vw, 5.5rem))' },
+      contentInset: { top: '15px', right: '25px', bottom: '0px', left: '0px' },
+      states: {
+        hover: choiceButtonImage,
+        active: choiceButtonImage,
+      },
+    },
+    // 自由输入面板的图片外壳。控制输入弹窗的背景图片。
+    inputPanel: {
+      shellImage: inputPanelImage,
+      shellSize: { width: 'min(108vw, 38rem)', height: 'auto' },
       contentInset: {
-        top: 'clamp(30px, 6vw, 60px)',
-        right: 'clamp(20px, 4vw, 45px)',
-        bottom: 'clamp(30px, 6vw, 60px)',
-        left: 'clamp(20px, 4vw, 45px)',
+        top: 'clamp(15px, 3vw, 30px)',
+        right: 'clamp(10px, 2vw, 22.5px)',
+        bottom: 'clamp(20px, 4vw, 40px)',
+        left: 'clamp(10px, 2vw, 22.5px)',
       },
     },
     // 角色信息面板的图片外壳。一般用于查看角色资料、立绘信息等。
@@ -404,6 +490,7 @@ export const hedieTheme: ThemeDefinition = {
         bottom: 'clamp(6px, 0.8vw, 12px)',
         left: 'clamp(6px, 0.8vw, 12px)',
       },
+      objectFit: 'contain',
     },
     // 右上快捷菜单收起态按钮外壳。通常显示为一个小按钮，点击后展开右侧菜单。
     quickMenuCollapsedRight: {
@@ -418,6 +505,7 @@ export const hedieTheme: ThemeDefinition = {
         bottom: 'clamp(6px, 0.8vw, 12px)',
         left: 'clamp(6px, 0.8vw, 12px)',
       },
+      objectFit: 'contain',
     },
     // 左上快捷菜单展开态外壳。控制展开后那条横向 PNG 菜单底图。
     quickMenuExpandedLeft: {
@@ -432,6 +520,7 @@ export const hedieTheme: ThemeDefinition = {
         bottom: 'clamp(6px, 1vw, 14px)',
         left: 'clamp(16px, 2.5vw, 32px)',
       },
+      objectFit: 'contain',
     },
     // 右上快捷菜单展开态外壳。控制展开后那条横向 PNG 菜单底图。
     quickMenuExpandedRight: {
@@ -446,6 +535,7 @@ export const hedieTheme: ThemeDefinition = {
         bottom: 'clamp(6px, 1vw, 14px)',
         left: 'clamp(16px, 2.5vw, 32px)',
       },
+      objectFit: 'contain',
     },
   },
 };

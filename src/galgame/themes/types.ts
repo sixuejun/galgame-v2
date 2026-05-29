@@ -2,6 +2,8 @@ export interface ComponentSkin {
   shellImage: string | null;
   shellSize: { width: string; height: string };
   contentInset: { top: string; right: string; bottom: string; left: string };
+  /** 图片适配方式：cover 铺满裁剪、contain 完整显示。默认 cover。 */
+  objectFit?: 'cover' | 'contain';
   states?: {
     hover?: string;
     active?: string;
@@ -18,7 +20,9 @@ export type ComponentKey =
   | 'dialogueNavNext'
   | 'button'
   | 'buttonExpanded'
+  | 'choiceButton'
   | 'choicePanel'
+  | 'inputPanel'
   | 'characterPanel'
   | 'settingsPanel'
   | 'historyPanel'

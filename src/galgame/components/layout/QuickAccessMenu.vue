@@ -36,6 +36,13 @@
             :skin-key="LEFT_EXPANDED_SKIN_KEY"
             @click="store.setOverlay('gameplay')"
           />
+          <CapsuleButton
+            icon="fa-paper-plane"
+            label="输入"
+            icon-side="left"
+            :skin-key="LEFT_EXPANDED_SKIN_KEY"
+            @click="store.setOverlay('input')"
+          />
         </div>
       </template>
     </div>
