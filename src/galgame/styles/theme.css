@@ -1,0 +1,389 @@
+/* === THEME LAYER CSS VARIABLES === */
+/* These variables establish the theme-layer and component-layer naming convention */
+/* Themes should set --theme-* variables, which cascade down to component variables */
+
+:root {
+  /* Theme Layer Variables - Base colors and typography */
+  /* (Themes set these in their cssVars) */
+
+  /* Component Layer Variables - Derived from theme variables */
+  /* These provide backward compatibility and default fallbacks */
+
+  /* --theme-* prefixed compatibility layer for old --vn-* variables */
+  --theme-bg: var(--vn-bg);
+  --theme-fg: var(--vn-fg);
+  --theme-muted: var(--vn-muted);
+  --theme-accent: var(--rust);
+  --theme-accent-soft: var(--rust-light);
+
+  /* Backward compatibility: map old --vn-* to --theme-* */
+  --vn-bg: var(--theme-bg);
+  --vn-fg: var(--theme-fg);
+  --vn-muted: var(--theme-muted);
+  --vn-border: rgba(90, 79, 64, 0.55);
+  --vn-panel-bg: var(--theme-panel-bg);
+  --vn-dialogue-bg: var(--theme-dialogue-bg);
+  --vn-choice-bg: var(--theme-choice-bg);
+  --vn-choice-hover: var(--theme-choice-hover);
+  --vn-choice-selected: var(--theme-choice-selected);
+}
+
+/* === NEWSPAPER VINTAGE THEME === */
+:root {
+  --paper-yellow: #d4c5a0;
+  --paper-light: #e0d5b8;
+  --paper-dark: #b8a880;
+  --ink-black: #2a2420;
+  --ink-faded: #4a4035;
+  --ink-light: #6b5f50;
+  --rust: #8b4513;
+  --rust-light: #a0522d;
+  --rust-faded: #6b3410;
+  --stain: #c4a265;
+  --crease: #bfb08a;
+
+  --vn-bg: #2a2420;
+  --vn-fg: #d4c5a0;
+  --vn-muted: #8b7d6b;
+  --vn-border: #5a4f40;
+  --vn-dialogue-bg: rgba(42, 36, 32, 0.92);
+  --vn-choice-bg: rgba(58, 51, 44, 0.95);
+  --vn-choice-hover: rgba(139, 69, 19, 0.3);
+  --vn-choice-selected: rgba(139, 69, 19, 0.5);
+  --vn-toast-bg: #d4c5a0;
+  --vn-toast-text: #2a2420;
+  --vn-panel-bg: rgba(51, 44, 38, 0.96);
+  --vn-success: #5a7a4a;
+  --vn-danger: #8b2500;
+}
+
+html,
+body {
+  margin: 0 !important;
+  padding: 0 !important;
+  background: var(--vn-bg);
+  color: var(--vn-fg);
+  font-family: 'Noto Serif SC', 'Noto Serif', Georgia, serif;
+}
+
+/* Global: hide all scrollbars */
+* {
+  scrollbar-width: none;
+}
+*::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Ink stain decoration */
+.ink-stain::before {
+  content: '';
+  position: absolute;
+  top: -10%;
+  right: -5%;
+  width: 40%;
+  height: 40%;
+  background: radial-gradient(ellipse at center, rgba(139, 69, 19, 0.15) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Column separator */
+.column-rule {
+  border-right: 1px solid var(--vn-border);
+  position: relative;
+}
+.column-rule::after {
+  content: '';
+  position: absolute;
+  top: 10%;
+  right: -1px;
+  width: 1px;
+  height: 80%;
+  background: linear-gradient(to bottom, transparent, var(--vn-muted) 20%, var(--vn-muted) 80%, transparent);
+  opacity: 0.3;
+}
+
+/* Headline rule */
+.headline-rule {
+  border-top: 2px solid var(--vn-fg);
+  border-bottom: 1px solid var(--vn-fg);
+  padding: 4px 0;
+  position: relative;
+  text-align: center;
+}
+.headline-rule::before {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--vn-fg);
+  opacity: 0.5;
+}
+
+/* Stamp / seal effect */
+.stamp-effect {
+  display: inline-block;
+  border: 2px solid var(--rust);
+  border-radius: 2px;
+  padding: 2px 8px;
+  transform: rotate(-2deg);
+  opacity: 0.8;
+  position: relative;
+}
+.stamp-effect::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border: 1px dashed var(--rust);
+  border-radius: 2px;
+  opacity: 0.4;
+}
+
+/* Toast clipping style */
+.toast-clipping {
+  background: var(--vn-toast-bg);
+  color: var(--vn-toast-text);
+  border: 1px solid var(--vn-border);
+  box-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+  transform: rotate(-0.5deg);
+  font-family: 'Noto Serif SC', Georgia, serif;
+}
+
+@keyframes toast-in {
+  0% {
+    opacity: 0;
+    transform: translateY(-20px) rotate(-0.5deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) rotate(-0.5deg);
+  }
+}
+@keyframes toast-out {
+  0% {
+    opacity: 1;
+    transform: translateY(0) rotate(-0.5deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-20px) rotate(-0.5deg);
+  }
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-fade-in-up {
+  animation: fade-in-up 0.4s ease-out forwards;
+}
+
+@keyframes cursor-blink {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  51%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/* === Danmaku === */
+@keyframes danmaku-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(-100% - 100vw));
+  }
+}
+.danmaku-track {
+  position: absolute;
+  left: 100%;
+  white-space: nowrap;
+  font-size: 0.8rem;
+  color: rgba(212, 197, 160, 0.45);
+  font-family: 'Noto Serif SC', serif;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  animation: danmaku-scroll linear forwards;
+}
+
+/* === 2048 Grid === */
+.grid-2048 {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  background: rgba(90, 79, 64, 0.35);
+  border-radius: 4px;
+  padding: 6px;
+}
+.tile-2048 {
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 900;
+  font-family: monospace;
+  border-radius: 3px;
+  transition: all 0.12s ease;
+  font-size: 1.1rem;
+}
+.tile-0 {
+  background: rgba(74, 64, 53, 0.25);
+}
+.tile-2 {
+  background: rgba(212, 197, 160, 0.2);
+  color: var(--vn-fg);
+}
+.tile-4 {
+  background: rgba(212, 197, 160, 0.3);
+  color: var(--vn-fg);
+}
+.tile-8 {
+  background: rgba(196, 162, 101, 0.4);
+  color: var(--vn-fg);
+}
+.tile-16 {
+  background: rgba(196, 162, 101, 0.55);
+  color: var(--vn-fg);
+}
+.tile-32 {
+  background: rgba(160, 82, 45, 0.4);
+  color: var(--paper-light);
+}
+.tile-64 {
+  background: rgba(160, 82, 45, 0.55);
+  color: var(--paper-light);
+}
+.tile-128 {
+  background: rgba(139, 69, 19, 0.5);
+  color: var(--paper-light);
+  font-size: 1rem;
+}
+.tile-256 {
+  background: rgba(139, 69, 19, 0.65);
+  color: var(--paper-light);
+  font-size: 1rem;
+}
+.tile-512 {
+  background: rgba(139, 69, 19, 0.8);
+  color: var(--paper-light);
+  font-size: 0.95rem;
+}
+.tile-1024 {
+  background: rgba(107, 52, 16, 0.8);
+  color: var(--paper-light);
+  font-size: 0.85rem;
+}
+.tile-2048 {
+  background: rgba(107, 52, 16, 0.95);
+  color: #ffd700;
+  font-size: 0.85rem;
+  text-shadow: 0 0 6px rgba(255, 215, 0, 0.4);
+}
+
+/* === Stock Chart === */
+.stock-chart-container {
+  position: relative;
+  height: 120px;
+  border: 1px solid rgba(90, 79, 64, 0.3);
+  background: rgba(42, 36, 32, 0.4);
+  border-radius: 2px;
+}
+
+/* === Provider status badges === */
+.provider-available {
+  color: var(--vn-success);
+}
+.provider-degraded {
+  color: var(--stain);
+}
+.provider-disabled {
+  color: var(--vn-muted);
+  opacity: 0.5;
+}
+
+/* === Module card === */
+.module-card {
+  border: 1px solid rgba(90, 79, 64, 0.4);
+  border-radius: 2px;
+  background: rgba(58, 51, 44, 0.3);
+  transition: all 0.2s;
+}
+.module-card:hover {
+  border-color: rgba(139, 69, 19, 0.4);
+  background: rgba(212, 197, 160, 0.05);
+}
+
+/* === Select option colors (for readability on system dropdowns) === */
+select option {
+  background: #2d2620;
+  color: #d4c5a0;
+}
+
+/* === Input field === */
+.vn-input {
+  background: rgba(74, 64, 53, 0.3);
+  border: 1px solid rgba(90, 79, 64, 0.4);
+  color: var(--vn-fg);
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  border-radius: 2px;
+  outline: none;
+  font-family: 'Noto Serif SC', serif;
+  width: 100%;
+}
+.vn-input:focus {
+  border-color: rgba(139, 69, 19, 0.5);
+}
+.vn-input::placeholder {
+  color: rgba(139, 125, 107, 0.5);
+}
+
+/* === Chat bubble === */
+.chat-bubble-user {
+  background: rgba(139, 69, 19, 0.2);
+  border: 1px solid rgba(139, 69, 19, 0.3);
+  border-radius: 2px 2px 2px 0;
+  padding: 8px 12px;
+  max-width: 80%;
+}
+.chat-bubble-ai {
+  background: rgba(58, 51, 44, 0.5);
+  border: 1px solid rgba(90, 79, 64, 0.3);
+  border-radius: 2px 2px 0 2px;
+  padding: 8px 12px;
+  max-width: 80%;
+}
+
+/* === Gold counter === */
+.gold-counter {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border: 1px solid rgba(196, 162, 101, 0.4);
+  background: rgba(196, 162, 101, 0.1);
+  border-radius: 2px;
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: var(--stain);
+}

@@ -1,0 +1,130 @@
+/* ========================================
+   高对比度主题（High Contrast Theme）
+   符合 WCAG AAA 标准，对比度 ≥ 7:1
+   适合视力障碍用户和无障碍设计
+   ======================================== */
+
+[data-theme='high-contrast'] {
+  /* 主色系 - 高对比度蓝色 */
+  --primary-blue: #0050d0;
+  --primary-blue-light: #0066ff;
+  --primary-blue-dark: #003da0;
+  --secondary-blue: #0080ff;
+  --secondary-blue-light: #3399ff;
+  --secondary-blue-dark: #0066cc;
+
+  /* 辅助色系 - 高对比度粉色 */
+  --accent-pink: #c00060;
+  --accent-pink-light: #ff0080;
+  --accent-pink-dark: #900048;
+
+  /* 紫色系 */
+  --purple: #6600cc;
+  --purple-light: #8000ff;
+  --purple-dark: #5000a0;
+
+  /* 金色系 */
+  --gold: #b38600;
+  --gold-light: #ffcc00;
+  --gold-dark: #806000;
+
+  /* 绿色系 */
+  --green: #008000;
+  --green-light: #00b300;
+  --green-dark: #006000;
+
+  /* 中性色系 - 纯黑白 */
+  --gray-50: #ffffff;
+  --gray-100: #f0f0f0;
+  --gray-200: #d0d0d0;
+  --gray-300: #b0b0b0;
+  --gray-400: #808080;
+  --gray-500: #606060;
+  --gray-600: #404040;
+  --gray-700: #303030;
+  --gray-800: #202020;
+  --gray-900: #000000;
+
+  /* 语义色 - 高对比度 */
+  --success: #008000;
+  --success-light: #00b300;
+  --success-dark: #006000;
+  --warning: #cc6600;
+  --warning-light: #ff8800;
+  --warning-dark: #994d00;
+  --error: #cc0000;
+  --error-light: #ff0000;
+  --error-dark: #990000;
+  --info: #0050d0;
+  --info-light: #0066ff;
+  --info-dark: #003da0;
+
+  /* 背景色 - 纯白 */
+  --bg-dark: #000000;
+  --bg-light: #ffffff;
+  --bg-primary: #ffffff;
+  --bg-secondary: #f0f0f0;
+  --bg-glass: rgba(255, 255, 255, 0.95);
+  --bg-glass-dark: rgba(0, 0, 0, 0.5);
+  --bg-glass-light: rgba(255, 255, 255, 1);
+  --bg-overlay: rgba(0, 0, 0, 0.7);
+
+  /* 文字色 - 纯黑 */
+  --text-dark: #000000;
+  --text-light: #ffffff;
+  --text-primary: #000000;
+  --text-secondary: #303030;
+  --text-muted: #606060;
+  --text-white: #ffffff;
+
+  /* 边框和阴影 - 高对比度 */
+  --border-color: #000000;
+  --border-tech: rgba(0, 80, 208, 0.8);
+  --border-light: rgba(0, 0, 0, 0.3);
+  --border-medium: rgba(0, 0, 0, 0.5);
+  --border-white: rgba(255, 255, 255, 0.8);
+  --glow-blue: rgba(0, 102, 255, 1);
+  --glow-pink: rgba(255, 0, 128, 1);
+  --glow-purple: rgba(128, 0, 255, 1);
+  --glow-gold: rgba(255, 204, 0, 1);
+
+  /* 进度条颜色 - 高对比度 */
+  --progress-resonance: #c00060;
+  --progress-dependency: #0050d0;
+  --progress-assets: #b38600;
+  --progress-miracle: #6600cc;
+  --progress-protocol: #008000;
+
+  /* 稀有度颜色 - 高对比度 */
+  --rarity-common: #606060;
+  --rarity-rare: #0050d0;
+  --rarity-epic: #6600cc;
+  --rarity-legendary: #b38600;
+}
+
+/* 高对比度主题的 body 背景 */
+[data-theme='high-contrast'] body {
+  background: #ffffff;
+  color: var(--text-dark);
+}
+
+/* 高对比度主题的滚动条样式 */
+[data-theme='high-contrast'] ::-webkit-scrollbar {
+  background: #f0f0f0;
+  border: 2px solid #000000;
+}
+
+[data-theme='high-contrast'] ::-webkit-scrollbar-thumb {
+  background: #606060;
+  border: 2px solid #000000;
+}
+
+[data-theme='high-contrast'] ::-webkit-scrollbar-thumb:hover {
+  background: #303030;
+}
+
+/* 高对比度主题的焦点样式 */
+[data-theme='high-contrast'] *:focus {
+  outline: 3px solid #0050d0;
+  outline-offset: 2px;
+}

@@ -1,0 +1,165 @@
+@import 'tailwindcss';
+
+/* ========== Doomsday Newspaper Theme ========== */
+:root {
+  /* Core palette: aged newspaper + rust + ash */
+  --color-paper: #d5c8a3;
+  --color-paper-dark: #b8a97e;
+  --color-ink: #2a2118;
+  --color-ink-light: #4a3f2f;
+  --color-rust: #8b4513;
+  --color-rust-glow: #a0522d;
+  --color-ash: #6b6358;
+  --color-blood: #6e1a0e;
+  --color-muted: #9e9484;
+  --color-highlight: #c9a94e;
+  --color-node-bg: #c2b690;
+  --color-node-border: #7a6e54;
+
+  /* Event node colors */
+  --color-encounter: #7b6e3e;
+  --color-trap: #8b2500;
+  --color-fortune: #4a6741;
+  --color-transfer: #3e5470;
+
+  /* Card */
+  --color-card-bg: #c8bb96;
+  --color-card-border: #5c5240;
+  --color-card-back: #3d3425;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #app {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: 'Noto Serif SC', 'Special Elite', Georgia, serif;
+  background-color: var(--color-paper);
+  color: var(--color-ink);
+  /* Newspaper texture via CSS */
+  background-image:
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 28px,
+      rgba(42, 33, 24, 0.03) 28px,
+      rgba(42, 33, 24, 0.03) 29px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      transparent,
+      transparent 28px,
+      rgba(42, 33, 24, 0.02) 28px,
+      rgba(42, 33, 24, 0.02) 29px
+    ),
+    radial-gradient(
+      ellipse at 20% 50%,
+      rgba(139, 69, 19, 0.06) 0%,
+      transparent 70%
+    ),
+    radial-gradient(
+      ellipse at 80% 30%,
+      rgba(42, 33, 24, 0.08) 0%,
+      transparent 60%
+    );
+}
+
+/* Noise overlay for grunge texture */
+#app::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.12;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 200px 200px;
+}
+
+/* Coffee stain decoration */
+#app::after {
+  content: '';
+  position: fixed;
+  bottom: -60px;
+  right: -40px;
+  width: 240px;
+  height: 240px;
+  border-radius: 50%;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(139, 69, 19, 0.08) 0%,
+    rgba(139, 69, 19, 0.04) 40%,
+    transparent 70%
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-paper-dark);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-ash);
+  border-radius: 3px;
+}
+
+/* Utility classes */
+.font-headline {
+  font-family: 'Noto Serif SC', serif;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+}
+
+.font-body {
+  font-family: 'Noto Serif SC', serif;
+  font-weight: 400;
+}
+
+.font-english {
+  font-family: 'Special Elite', 'Courier New', monospace;
+}
+
+.text-shadow-ink {
+  text-shadow: 1px 1px 2px rgba(42, 33, 24, 0.3);
+}
+
+/* Worn border effect */
+.border-worn {
+  border: 1.5px solid var(--color-node-border);
+  box-shadow:
+    inset 0 0 8px rgba(42, 33, 24, 0.1),
+    0 1px 3px rgba(42, 33, 24, 0.15);
+}
+
+/* Ink bleed animation */
+@keyframes ink-bleed {
+  0% { filter: blur(0px); opacity: 0.8; }
+  50% { filter: blur(0.5px); opacity: 1; }
+  100% { filter: blur(0px); opacity: 0.9; }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 4px rgba(201, 169, 78, 0.3); }
+  50% { box-shadow: 0 0 12px rgba(201, 169, 78, 0.6); }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* Vignette effect on the whole page */
+.vignette {
+  box-shadow: inset 0 0 120px rgba(42, 33, 24, 0.4);
+}

@@ -1,0 +1,108 @@
+/* ========================================
+   默认主题（Default Theme）
+   明亮、清新的蓝色渐变主题
+   ======================================== */
+
+[data-theme='default'] {
+  /* 主色系 - 蓝色渐变 */
+  --primary-blue: #0066cc;
+  --primary-blue-light: #4da3ff;
+  --primary-blue-dark: #0052a3;
+  --secondary-blue: #0099cc;
+  --secondary-blue-light: #5cd4ff;
+  --secondary-blue-dark: #0077a3;
+
+  /* 辅助色系 - 粉色渐变 */
+  --accent-pink: #d91a7a;
+  --accent-pink-light: #ff69b4;
+  --accent-pink-dark: #b8156a;
+
+  /* 紫色系 */
+  --purple: #6b4db8;
+  --purple-light: #9370db;
+  --purple-dark: #5a3d9e;
+
+  /* 金色系 */
+  --gold: #8b6914;
+  --gold-light: #ffd700;
+  --gold-dark: #6b5010;
+
+  /* 绿色系 */
+  --green: #0d8f68;
+  --green-light: #10b981;
+  --green-dark: #0a7555;
+
+  /* 中性色系 */
+  --gray-50: #f9fafb;
+  --gray-100: #f3f4f6;
+  --gray-200: #e5e7eb;
+  --gray-300: #d1d5db;
+  --gray-400: #9ca3af;
+  --gray-500: #6b7280;
+  --gray-600: #4b5563;
+  --gray-700: #374151;
+  --gray-800: #1f2937;
+  --gray-900: #111827;
+
+  /* 语义色 */
+  --success: #0d8f68;
+  --success-light: #10b981;
+  --success-dark: #0a7555;
+  --warning: #c77700;
+  --warning-light: #f59e0b;
+  --warning-dark: #a86400;
+  --error: #c62828;
+  --error-light: #ef4444;
+  --error-dark: #b71c1c;
+  --info: #1e5bb8;
+  --info-light: #3b82f6;
+  --info-dark: #1a4d9e;
+
+  /* 背景色 */
+  --bg-dark: #0a0a0f;
+  --bg-light: #f0f4f8;
+  --bg-primary: #ffffff;
+  --bg-secondary: #f9fafb;
+  --bg-glass: rgba(255, 255, 255, 0.75);
+  --bg-glass-dark: rgba(0, 0, 0, 0.35);
+  --bg-glass-light: rgba(255, 255, 255, 0.9);
+  --bg-overlay: rgba(0, 0, 0, 0.5);
+
+  /* 文字色 */
+  --text-dark: #2c3e50;
+  --text-light: #e8f4f8;
+  --text-primary: #1f2937;
+  --text-secondary: #6b7280;
+  --text-muted: #6b7280;
+  --text-white: #ffffff;
+
+  /* 边框和阴影 */
+  --border-color: #e5e7eb;
+  --border-tech: rgba(0, 128, 255, 0.3);
+  --border-light: rgba(0, 0, 0, 0.1);
+  --border-medium: rgba(0, 0, 0, 0.2);
+  --border-white: rgba(255, 255, 255, 0.3);
+  --glow-blue: rgba(0, 191, 255, 0.6);
+  --glow-pink: rgba(255, 105, 180, 0.6);
+  --glow-purple: rgba(147, 112, 219, 0.6);
+  --glow-gold: rgba(255, 215, 0, 0.6);
+
+  /* 进度条颜色 */
+  --progress-resonance: #ff69b4;
+  --progress-dependency: #4169e1;
+  --progress-assets: #ffd700;
+  --progress-miracle: #9370db;
+  --progress-protocol: #00ff00;
+
+  /* 稀有度颜色 */
+  --rarity-common: #6b7280;
+  --rarity-rare: #1e5bb8;
+  --rarity-epic: #6b4db8;
+  --rarity-legendary: #8b6914;
+}
+
+/* 默认主题的 body 背景 */
+[data-theme='default'] body {
+  background: #f5f9fc;
+  color: var(--text-dark);
+}

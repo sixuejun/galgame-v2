@@ -1,0 +1,121 @@
+/* ========================================
+   护眼主题（Eye Comfort Theme）
+   柔和的暖色调，降低蓝光，适合长时间阅读
+   ======================================== */
+
+[data-theme='eye-comfort'] {
+  /* 主色系 - 柔和的绿色（护眼） */
+  --primary-blue: #5a9a7c;
+  --primary-blue-light: #7db89a;
+  --primary-blue-dark: #3d7a5e;
+  --secondary-blue: #6ba88f;
+  --secondary-blue-light: #8fc4ad;
+  --secondary-blue-dark: #4d8a71;
+
+  /* 辅助色系 - 柔和的橙色 */
+  --accent-pink: #d4845f;
+  --accent-pink-light: #e5a584;
+  --accent-pink-dark: #c36a45;
+
+  /* 紫色系 - 柔和的紫色 */
+  --purple: #8b7ba8;
+  --purple-light: #a89bc4;
+  --purple-dark: #6e5d8c;
+
+  /* 金色系 - 柔和的金色 */
+  --gold: #c9a961;
+  --gold-light: #ddc184;
+  --gold-dark: #b59148;
+
+  /* 绿色系 - 护眼绿 */
+  --green: #5a9a7c;
+  --green-light: #7db89a;
+  --green-dark: #3d7a5e;
+
+  /* 中性色系 - 暖色调 */
+  --gray-50: #f8f6f3;
+  --gray-100: #f0ede8;
+  --gray-200: #e3dfd7;
+  --gray-300: #d1ccc1;
+  --gray-400: #a8a399;
+  --gray-500: #7f7a70;
+  --gray-600: #5f5b52;
+  --gray-700: #47443d;
+  --gray-800: #2f2d28;
+  --gray-900: #1a1916;
+
+  /* 语义色 - 柔和版本 */
+  --success: #5a9a7c;
+  --success-light: #7db89a;
+  --success-dark: #3d7a5e;
+  --warning: #d4a05f;
+  --warning-light: #e5b884;
+  --warning-dark: #c38845;
+  --error: #c97070;
+  --error-light: #dd9494;
+  --error-dark: #b55252;
+  --info: #6b8fa8;
+  --info-light: #8fadc4;
+  --info-dark: #4d718c;
+
+  /* 背景色 - 暖色调 */
+  --bg-dark: #1a1916;
+  --bg-light: #f8f6f3;
+  --bg-primary: #fdfcfa;
+  --bg-secondary: #f8f6f3;
+  --bg-glass: rgba(253, 252, 250, 0.85);
+  --bg-glass-dark: rgba(26, 25, 22, 0.4);
+  --bg-glass-light: rgba(253, 252, 250, 0.95);
+  --bg-overlay: rgba(26, 25, 22, 0.5);
+
+  /* 文字色 - 柔和对比 */
+  --text-dark: #3d3a33;
+  --text-light: #f0ede8;
+  --text-primary: #2f2d28;
+  --text-secondary: #7f7a70;
+  --text-muted: #a8a399;
+  --text-white: #fdfcfa;
+
+  /* 边框和阴影 - 柔和 */
+  --border-color: #e3dfd7;
+  --border-tech: rgba(90, 154, 124, 0.3);
+  --border-light: rgba(61, 58, 51, 0.1);
+  --border-medium: rgba(61, 58, 51, 0.2);
+  --border-white: rgba(253, 252, 250, 0.3);
+  --glow-blue: rgba(90, 154, 124, 0.5);
+  --glow-pink: rgba(212, 132, 95, 0.5);
+  --glow-purple: rgba(139, 123, 168, 0.5);
+  --glow-gold: rgba(201, 169, 97, 0.5);
+
+  /* 进度条颜色 - 柔和 */
+  --progress-resonance: #d4845f;
+  --progress-dependency: #6b8fa8;
+  --progress-assets: #c9a961;
+  --progress-miracle: #8b7ba8;
+  --progress-protocol: #5a9a7c;
+
+  /* 稀有度颜色 - 柔和 */
+  --rarity-common: #7f7a70;
+  --rarity-rare: #6b8fa8;
+  --rarity-epic: #8b7ba8;
+  --rarity-legendary: #c9a961;
+}
+
+/* 护眼主题的 body 背景 */
+[data-theme='eye-comfort'] body {
+  background: #f8f6f3;
+  color: var(--text-dark);
+}
+
+/* 护眼主题的滚动条样式 */
+[data-theme='eye-comfort'] ::-webkit-scrollbar {
+  background: #f8f6f3;
+}
+
+[data-theme='eye-comfort'] ::-webkit-scrollbar-thumb {
+  background: #d1ccc1;
+}
+
+[data-theme='eye-comfort'] ::-webkit-scrollbar-thumb:hover {
+  background: #a8a399;
+}

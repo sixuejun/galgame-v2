@@ -1,0 +1,370 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+/* === NEWSPAPER VINTAGE THEME === */
+:root {
+  /* Core newspaper palette */
+  --paper-yellow: #d4c5a0;
+  --paper-light: #e0d5b8;
+  --paper-dark: #b8a880;
+  --ink-black: #2a2420;
+  --ink-faded: #4a4035;
+  --ink-light: #6b5f50;
+  --rust: #8b4513;
+  --rust-light: #a0522d;
+  --rust-faded: #6b3410;
+  --stain: #c4a265;
+  --crease: #bfb08a;
+
+  /* Semantic tokens */
+  --background: #2a2420;
+  --foreground: #d4c5a0;
+  --card: #3a332c;
+  --card-foreground: #d4c5a0;
+  --popover: #332c26;
+  --popover-foreground: #d4c5a0;
+  --primary: #d4c5a0;
+  --primary-foreground: #2a2420;
+  --secondary: #4a4035;
+  --secondary-foreground: #d4c5a0;
+  --muted: #3a332c;
+  --muted-foreground: #8b7d6b;
+  --accent: #8b4513;
+  --accent-foreground: #e0d5b8;
+  --destructive: #8b2500;
+  --destructive-foreground: #e0d5b8;
+  --border: #5a4f40;
+  --input: #4a4035;
+  --ring: #8b4513;
+  --radius: 0.125rem;
+
+  /* Chart tokens */
+  --chart-1: #8b4513;
+  --chart-2: #a0522d;
+  --chart-3: #d4c5a0;
+  --chart-4: #6b5f50;
+  --chart-5: #c4a265;
+
+  /* Sidebar */
+  --sidebar: #332c26;
+  --sidebar-foreground: #d4c5a0;
+  --sidebar-primary: #8b4513;
+  --sidebar-primary-foreground: #e0d5b8;
+  --sidebar-accent: #4a4035;
+  --sidebar-accent-foreground: #d4c5a0;
+  --sidebar-border: #5a4f40;
+  --sidebar-ring: #8b4513;
+
+  /* Custom VN tokens */
+  --vn-dialogue-bg: rgba(42, 36, 32, 0.92);
+  --vn-dialogue-border: #5a4f40;
+  --vn-choice-bg: rgba(58, 51, 44, 0.95);
+  --vn-choice-hover: rgba(139, 69, 19, 0.3);
+  --vn-choice-selected: rgba(139, 69, 19, 0.5);
+  --vn-toast-bg: #d4c5a0;
+  --vn-toast-text: #2a2420;
+  --vn-overlay: rgba(42, 36, 32, 0.85);
+  --vn-panel-bg: rgba(51, 44, 38, 0.96);
+}
+
+@theme inline {
+  --font-sans: 'Noto Serif SC', 'Noto Serif', Georgia, serif;
+  --font-serif: 'Noto Serif SC', 'Noto Serif', Georgia, serif;
+  --font-mono: 'Noto Sans Mono', 'Courier New', monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Custom colors */
+  --color-paper: var(--paper-yellow);
+  --color-paper-light: var(--paper-light);
+  --color-paper-dark: var(--paper-dark);
+  --color-ink: var(--ink-black);
+  --color-ink-faded: var(--ink-faded);
+  --color-ink-light: var(--ink-light);
+  --color-rust: var(--rust);
+  --color-rust-light: var(--rust-light);
+  --color-rust-faded: var(--rust-faded);
+  --color-stain: var(--stain);
+  --color-crease: var(--crease);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+
+  /* Hide scrollbars globally but keep scrolling */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+/* === NEWSPAPER TEXTURE UTILITIES === */
+.paper-bg {
+  background-image: url('/images/paper-texture.jpg');
+  background-size: cover;
+  background-position: center;
+}
+
+.paper-dark-bg {
+  background-image: url('/images/paper-dark.jpg');
+  background-size: cover;
+  background-position: center;
+}
+
+/* Ink stain / blot effect via pseudo elements */
+.ink-stain::before {
+  content: '';
+  position: absolute;
+  top: -10%;
+  right: -5%;
+  width: 40%;
+  height: 40%;
+  background: radial-gradient(ellipse at center, rgba(139, 69, 19, 0.15) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Fold crease line */
+.fold-crease::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 1px;
+  height: 100%;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(191, 176, 138, 0.4) 20%,
+    rgba(191, 176, 138, 0.6) 50%,
+    rgba(191, 176, 138, 0.4) 80%,
+    transparent 100%
+  );
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Torn edge effect (top) */
+.torn-edge-top {
+  -webkit-mask-image: linear-gradient(to bottom,
+    transparent 0px,
+    black 3px,
+    black calc(100% - 0px),
+    black 100%
+  );
+  mask-image: linear-gradient(to bottom,
+    transparent 0px,
+    black 3px,
+    black calc(100% - 0px),
+    black 100%
+  );
+  border-top: 1px solid var(--border);
+  border-image: repeating-linear-gradient(
+    90deg,
+    var(--border) 0px,
+    var(--border) 4px,
+    transparent 4px,
+    transparent 8px
+  ) 1;
+}
+
+/* Vignette overlay */
+.vignette::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 50%, rgba(42, 36, 32, 0.6) 100%);
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* Newspaper column separator */
+.column-rule {
+  border-right: 1px solid var(--border);
+  position: relative;
+}
+.column-rule::after {
+  content: '';
+  position: absolute;
+  top: 10%;
+  right: -1px;
+  width: 1px;
+  height: 80%;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    var(--muted-foreground) 20%,
+    var(--muted-foreground) 80%,
+    transparent
+  );
+  opacity: 0.3;
+}
+
+/* Typewriter cursor blink */
+@keyframes cursor-blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+.typewriter-cursor::after {
+  content: '|';
+  animation: cursor-blink 1s infinite;
+  color: var(--rust);
+  font-weight: bold;
+}
+
+/* Newspaper headline decoration */
+.headline-rule {
+  border-top: 2px solid var(--foreground);
+  border-bottom: 1px solid var(--foreground);
+  padding: 4px 0;
+  position: relative;
+}
+.headline-rule::before {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--foreground);
+  opacity: 0.5;
+}
+
+/* Noise grain overlay */
+.noise-overlay {
+  position: relative;
+}
+.noise-overlay::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0.06;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 50;
+}
+
+/* Page tear effect for panels */
+.page-tear {
+  clip-path: polygon(
+    0% 0%, 2% 1%, 5% 0%, 8% 1%, 12% 0%, 15% 0.5%, 20% 0%,
+    25% 1%, 30% 0%, 35% 0.5%, 40% 0%, 45% 1%, 50% 0%,
+    55% 0.5%, 60% 0%, 65% 1%, 70% 0%, 75% 0.5%, 80% 0%,
+    85% 1%, 90% 0%, 95% 0.5%, 98% 0%, 100% 1%,
+    100% 100%, 0% 100%
+  );
+}
+
+/* Fade in animation */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-fade-in-up {
+  animation: fade-in-up 0.4s ease-out forwards;
+}
+
+/* Stamp/seal effect */
+.stamp-effect {
+  border: 2px solid var(--rust);
+  border-radius: 2px;
+  padding: 2px 8px;
+  transform: rotate(-2deg);
+  opacity: 0.8;
+  position: relative;
+}
+.stamp-effect::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border: 1px dashed var(--rust);
+  border-radius: 2px;
+  opacity: 0.4;
+}
+
+/* Water stain */
+.water-stain {
+  position: relative;
+}
+.water-stain::after {
+  content: '';
+  position: absolute;
+  bottom: 10%;
+  left: 5%;
+  width: 30%;
+  height: 30%;
+  background: radial-gradient(ellipse, rgba(196, 162, 101, 0.1) 0%, transparent 70%);
+  border-radius: 50%;
+  transform: rotate(15deg);
+  pointer-events: none;
+}
+
+/* Toast newspaper clipping style */
+.toast-clipping {
+  background: var(--vn-toast-bg);
+  color: var(--vn-toast-text);
+  border: 1px solid var(--border);
+  box-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+  transform: rotate(-0.5deg);
+  font-family: var(--font-serif);
+}
+
+@keyframes toast-in {
+  0% { opacity: 0; transform: translateY(-20px) rotate(-0.5deg); }
+  100% { opacity: 1; transform: translateY(0) rotate(-0.5deg); }
+}
+
+@keyframes toast-out {
+  0% { opacity: 1; transform: translateY(0) rotate(-0.5deg); }
+  100% { opacity: 0; transform: translateY(-20px) rotate(-0.5deg); }
+}

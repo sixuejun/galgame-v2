@@ -1,0 +1,538 @@
+gameData:
+  config:
+    phase: 渗透期
+    version: '1.3'
+
+    navButtons:
+      home:
+        name: 主页
+        icon: fa-home
+      status:
+        name: 状态
+        icon: fa-chart-line
+      shop:
+        name: 购物
+        icon: fa-shopping-cart
+      storage:
+        name: 存储
+        icon: fa-box
+      achievements:
+        name: 成就
+        icon: fa-trophy
+      review:
+        name: 回顾
+        icon: fa-history
+
+    home:
+      title: 伊甸园 - Eden System
+      subtitle: 一个只属于二人的完美世界
+      choiceHeader: 做出你的选择...
+
+    status:
+      title: 状态监控
+      tabs:
+        user:
+          id: user
+          name: '{{USER}}详情'
+          icon: fa-user
+        nanami:
+          id: nanami
+          name: ナナミ详情
+          icon: fa-robot
+
+    shop:
+      title: UNDO商店
+
+    storage:
+      title: 物品存储
+
+    achievements:
+      title: 成就记录
+
+    review:
+      title: 剧情回顾
+
+    cart:
+      name: '购物车A' # 购物车按钮名称
+      icon: 'fa-shopping-cart' # 购物车图标
+      title: '购物车A' # 购物车页面标题
+
+  story:
+    time: 清晨 7:45
+    location: 女校一楼走廊
+    weather: 晴朗
+    content: |
+      [img:https://image.pollinations.ai/prompt/anime classroom, morning sunlight, empty desks, peaceful atmosphere, visual novel style]
+        [txt:
+            走廊尽头的教室里，阳光透过窗户洒进来。
+            七海站在窗边，银色的长发在晨光中闪耀着柔和的光泽。
+            她转过身来，对你露出了**温柔的微笑**。
+
+            "早上好，"她*轻声说道*，"今天的天气真好呢。"
+
+            你注意到她的眼神中闪烁着~~一丝忧郁~~期待的光芒。
+        ]
+        [html:
+            <div style='background:rgba(15, 15, 25, 0.9); border:2px solid #ff69b4; border-radius:12px; padding:20px;
+            margin:20px 0; box-shadow:0 0 15px rgba(255, 105, 180, 0.3);'>
+            <h4 style='color:#ff69b4; margin-top:0; text-align:center;'><i class='fas fa-lock'></i>监控系统</h4>
+                <div style='display:grid; grid-template-columns:1fr 1fr; gap:15px; font-size:0.9em;'>
+                <div><strong style='color:#ffffff;'>占位符:</strong> <span style='color:#ff6b6b;'>62天 14小时 23分钟</span></div>
+                <div><strong style='color:#ffffff;'>占位符:</strong> <span style='color:#ffa500;'>今日第47次</span></div>
+                <div><strong style='color:#ffffff;'>占位符:</strong> <span style='color:#ff1493;'>98.5% (危险)</span></div>
+                <div><strong style='color:#ffffff;'>占位符:</strong> <span style='color:#87ceeb;'>持续中</span></div>
+                </div>
+                <div style='margin-top:15px; padding:10px; background:rgba(255, 69, 180, 0.1); border-radius:8px;'>
+                <small style='color:#ff69b4; font-style:italic;'>"今天看起来特别痛苦呢♡ 继续努力忍耐吧～" - 学生会长留言</small>
+                </div>
+            </div>
+        ]
+        [txt:
+            ## Markdown 语法示例
+
+            这里展示了各种 **Markdown** 语法的效果：
+
+            - **加粗文本**：使用 `**文本**` 或 `__文本__`
+            - *斜体文本*：使用 `*文本*` 或 `_文本_`
+            - ~~删除线文本~~：使用 `~~文本~~`
+            - ***加粗斜体***：使用 `***文本***`
+
+            > 这是一段引用文本，可以用来强调重要信息。
+
+            你可以组合使用这些语法，例如：**这是加粗的文字，*这部分还是斜体***。
+        ]
+  choices:
+    - text: 请ナナミ自我介绍
+    - text: 询问她的功能
+    - text: 让她开始日常服务
+
+  shop:
+    currency: 1000
+    currencyType: '￥' # 货币符号或名称
+    currencyDisplayMode: 'symbol' #  显示模式：'symbol' = 货币类型在前，'name' = 数值在前
+    items:
+      treasure_chest:
+        id: treasure_chest # 商品唯一 ID
+        name: 藏宝箱 # 商品名称
+        icon: 🎁 # 商品图标（Emoji）
+        description: 一个看起来很普通的箱子，或许藏着什么好东西。
+        price: 500 # 商品价格
+        category: consumable # 商品分类
+        effects: # 购买后的效果
+          shop.currency: # 效果目标：修改货币
+            operation: add # 操作类型：增加
+            value: 1000 # 增加数值
+            description: 金钱 # 效果描述
+
+      # 示例商品 2: 生命药水（带角色状态效果）
+      life_potion:
+        id: life_potion # 商品唯一 ID
+        name: 生命药水 # 商品名称
+        icon: 🧪 # 商品图标（Emoji）
+        description: 一瓶冒着气泡的红色液体，能恢复使用者的活力。
+        price: 200 # 商品价格
+        category: consumable # 商品分类
+        effects: # 购买后的效果
+          characters.user.psychologicalState.content.happiness.current: # 效果目标：修改角色幸福指数
+            operation: add # 操作类型：增加
+            value: 20 # 增加数值
+            description: 幸福指数 # 效果描述
+            maxPath: characters.user.psychologicalState.content.happiness.max # 最大值路径（防止超出上限）
+      # 示例商品 3: 高级女仆装（无效果）
+      maid_outfit_premium:
+        id: maid_outfit_premium # 商品唯一 ID
+        name: 高级女仆装 # 商品名称
+        icon: 👗 # 商品图标（Emoji）
+        description: 更加精致的女仆装，能够提升ナナミ的服务效率。采用特殊材料制作，触感更加真实。
+        price: 50000 # 商品价格
+        category: clothing # 商品分类
+
+      # 图标测试商品 1: Font Awesome 简单格式
+      magic_wand:
+        id: magic_wand
+        name: 魔法棒
+        icon: fa-magic # Font Awesome 简单格式（fa-xxx）
+        description: 一根散发着神秘光芒的魔法棒，Font Awesome图标测试。
+        price: 1500
+        category: tool
+
+      # 图标测试商品 2: Font Awesome 完整格式
+      shield_item:
+        id: shield_item
+        name: 防护盾
+        icon: fas fa-shield-alt # Font Awesome 完整格式（fas fa-xxx）
+        description: 坚固的防护盾牌，完整Font Awesome格式测试。
+        price: 800
+        category: equipment
+
+      # 图标测试商品 3: 字符串图标
+      star_badge:
+        id: star_badge
+        name: 星星徽章
+        icon: ★ # 字符串图标（单个字符）
+        description: 闪亮的星星徽章，字符串图标测试。
+        price: 300
+        category: decoration
+
+      # 图标测试商品 4: 特殊字符图标
+      heart_symbol:
+        id: heart_symbol
+        name: 爱心符号
+        icon: ♥ # 特殊字符图标
+        description: 红色的爱心符号，特殊字符测试。
+        price: 250
+        category: decoration
+
+      # 图标测试商品 5: 图片 URL 图标
+      custom_potion:
+        id: custom_potion
+        name: 自定义药水
+        icon: https://via.placeholder.com/64x64/6366f1/ffffff?text=P # 图片 URL
+        description: 带有自定义图标的特殊药水，图片URL测试。
+        price: 1200
+        category: consumable
+
+  storage:
+    inventory:
+      nanami_manual:
+        id: nanami_manual # 物品唯一 ID
+        name: ナナミ使用手册 # 物品名称
+        icon: 📖 # 物品图标（Emoji）
+        description: 详细介绍ナナミ的各项功能和使用方法的官方手册。
+        quantity: 1 # 物品数量
+        price: 0 # 物品价值（用于显示）
+        category: document # 物品分类
+
+      # 图标测试物品 1: Font Awesome 简单格式
+      key_item:
+        id: key_item
+        name: 神秘钥匙
+        icon: fa-key # Font Awesome 简单格式
+        description: 一把古老的钥匙，Font Awesome图标测试。
+        quantity: 1
+        price: 0
+        category: key
+
+      # 图标测试物品 2: Emoji 图标
+      gem_item:
+        id: gem_item
+        name: 宝石
+        icon: 💎 # Emoji 图标
+        description: 闪闪发光的宝石，Emoji图标测试。
+        quantity: 3 # 可以有多个
+        price: 1000
+        category: valuable
+
+      # 图标测试物品 3: 字符串图标
+      coin_item:
+        id: coin_item
+        name: 金币
+        icon: ○ # 字符串图标
+        description: 圆形的金币，字符串图标测试。
+        quantity: 50 # 可以有很多个
+        price: 10
+        category: currency
+
+      # 图标测试物品 4: 图片 URL 图标
+      photo_item:
+        id: photo_item
+        name: 照片
+        icon: https://via.placeholder.com/64x64/f59e0b/ffffff?text=📷 # 图片 URL
+        description: 珍贵的照片，图片URL图标测试。
+        quantity: 1
+        price: 0
+        category: memory
+
+      # 图标测试物品 5: Font Awesome Regular
+      sword_item:
+        id: sword_item
+        name: 圣剑
+        icon: far fa-sword # Font Awesome Regular 格式
+        description: 传说中的圣剑，Font Awesome Regular测试。
+        quantity: 1
+        price: 5000
+        category: weapon
+
+      # 优惠券物品 1: 百分比折扣券
+      coupon_20_off:
+        id: coupon_20_off # 物品唯一 ID
+        name: 8折优惠券 # 物品名称
+        icon: 🎫 # 物品图标
+        description: 购物满500元可使用，享受8折优惠，最高优惠200元。
+        quantity: 2 # 物品数量
+        price: 0 # 物品价值
+        category: coupon # 物品分类：优惠券
+        coupon: # 优惠券专属字段
+          type: percentage # 优惠券类型：百分比折扣
+          value: 20 # 折扣百分比（20% off = 8折）
+          minPurchase: 500 # 最低消费金额
+          maxDiscount: 200 # 最高优惠金额
+
+      # 优惠券物品 2: 固定金额满减券
+      coupon_100_off:
+        id: coupon_100_off # 物品唯一 ID
+        name: 满减券100元 # 物品名称
+        icon: 🎟️ # 物品图标
+        description: 购物满300元可使用，立减100元。
+        quantity: 1 # 物品数量
+        price: 0 # 物品价值
+        category: coupon # 物品分类：优惠券
+        coupon: # 优惠券专属字段
+          type: fixed # 优惠券类型：固定金额
+          value: 100 # 优惠金额
+          minPurchase: 300 # 最低消费金额
+
+      # 优惠券物品 3: 固定金额满减券（小额）
+      coupon_50_off:
+        id: coupon_50_off # 物品唯一 ID
+        name: 满减券50元 # 物品名称
+        icon: 🎁 # 物品图标
+        description: 购物满200元可使用，立减50元。
+        quantity: 3 # 物品数量
+        price: 0 # 物品价值
+        category: coupon # 物品分类：优惠券
+        coupon: # 优惠券专属字段
+          type: fixed # 优惠券类型：固定金额
+          value: 50 # 优惠金额
+          minPurchase: 200 # 最低消费金额
+
+  characters:
+    # ===== 角色 1: 玩家 (user) =====
+    user:
+      name: '{{USER}}' # 角色名称（{{USER}} 会被替换为实际用户名）
+
+      # ----- 基本信息数据块 -----
+      # 类型: details（键值对信息）
+      # 显示位置: StatusPage - user 标签页
+      basicInfo:
+        title: '{{USER}}基本信息' # 数据块标题
+        type: details # 数据块类型：键值对
+        content: # 数据块内容
+          name: # 字段 ID
+            key: name # 字段键名
+            label: 姓名 # 字段标签
+            value: '{{USER}}' # 字段值
+
+      # ----- 心理状态数据块 -----
+      # 类型: progress_bars（进度条）
+      # 显示位置: StatusPage - user 标签页
+      psychologicalState:
+        title: 心理状态 # 数据块标题
+        type: progress_bars # 数据块类型：进度条
+        content: # 数据块内容
+          happiness: # 状态 ID
+            current: 50 # 当前值
+            max: 100 # 最大值
+            description: 幸福指数 # 状态描述
+            barClass: resonance-bar # 进度条样式类名
+          dependency: # 状态 ID
+            current: 5000 # 当前值
+            max: 10000 # 最大值
+            description: 对ナナミ的依赖程度 # 状态描述
+            barClass: dependency-bar # 进度条样式类名
+
+      # ----- 沉溺特质数据块 -----
+      # 类型: traits（特质列表）
+      # 显示位置: StatusPage - user 标签页
+      addictionTraits:
+        title: 沉溺特质 # 数据块标题
+        type: traits # 数据块类型：特质列表
+        content: # 数据块内容
+          decisionOutsourcing: # 特质 ID
+            name: 决策能力外包 # 特质名称
+            unlocked: false # 是否解锁
+            description: 完全依赖ナナミ做决定 # 特质描述
+            icon: 🧠 # 特质图标
+          emotionalParasitism: # 特质 ID
+            name: 情感寄生 # 特质名称
+            unlocked: true # 是否解锁
+            description: 无法独立处理负面情绪 # 特质描述
+            icon: 💔 # 特质图标
+
+      # ----- 核心状态数据块 -----
+      # 类型: status_values（状态数值）
+      # 显示位置: StatusPage - user 标签页
+      coreStatus:
+        title: 核心状态 # 数据块标题
+        type: status_values # 数据块类型：状态数值
+        content: # 数据块内容
+          happiness: # 状态 ID
+            description: 幸福度 # 状态描述
+            current: 85 # 当前值
+          stress: # 状态 ID
+            description: 压力值 # 状态描述
+            current: 15 # 当前值
+          obedience: # 状态 ID
+            description: 服从度 # 状态描述
+            current: 95 # 当前值
+
+    # ===== 角色 2: ナナミ (nanami) =====
+    nanami:
+      name: ナナミ # 角色名称
+
+      # ----- 核心状态指标数据块 -----
+      # 类型: progress_bars（进度条）
+      # 显示位置: StatusPage - nanami 标签页
+      coreStatus:
+        title: 核心状态指标 # 数据块标题
+        type: progress_bars # 数据块类型：进度条
+        content: # 数据块内容
+          resonanceDepth: # 状态 ID
+            current: 0 # 当前值
+            max: 100000 # 最大值
+            description: 共鸣深度 # 状态描述
+            barClass: 'linear-gradient(to right, #4a00e0, #8e2de2)' # 进度条样式（CSS 渐变）
+
+  achievements:
+    # 示例成就 1: 未解锁的成就
+    first_contact:
+      id: first_contact # 成就唯一 ID
+      name: 第一次接触 # 成就名称
+      desc: 首次解冻一个冰封的人类。 # 成就描述
+      icon: fas fa-hand-sparkles # 成就图标（Font Awesome）
+      unlocked: false # 是否解锁
+      date: null # 解锁时间（未解锁时为 null）
+      rarity: common # 稀有度：普通
+
+    # 示例成就 2: 已解锁的成就（史诗）
+    genesis:
+      id: genesis # 成就唯一 ID
+      name: 创世纪 # 成就名称
+      desc: 开启冰封纪元，成为太阳之子。 # 成就描述
+      icon: fas fa-globe-americas # 成就图标（Font Awesome）
+      unlocked: true # 是否解锁
+      date: 纪元元年初始之日 # 解锁时间（可以是自定义文本）
+      rarity: epic # 稀有度：史诗
+
+    # 图标测试成就 1: Emoji 图标（传说）
+    emoji_test:
+      id: emoji_test
+      name: 表情符号测试
+      desc: 测试Emoji图标显示效果。
+      icon: 🎉 # Emoji 图标
+      unlocked: true
+      date: '2025-07-30T10:00:00' # ISO 8601 格式时间
+      rarity: legendary # 稀有度：传说
+
+    # 图标测试成就 2: 字符串图标（稀有）
+    string_test:
+      id: string_test
+      name: 字符串测试
+      desc: 测试纯字符串图标显示效果。
+      icon: ★ # 字符串图标
+      unlocked: true
+      date: null # 解锁时间可以为 null
+      rarity: Rare # 稀有度：稀有（注意大小写）
+
+    # 图标测试成就 3: 图片 URL 图标（传说）
+    image_test:
+      id: image_test
+      name: 图片测试
+      desc: 测试图片URL图标显示效果。
+      icon: https://via.placeholder.com/64x64/10b981/ffffff?text=🏆 # 图片 URL
+      unlocked: true
+      date: '2025-07-30T11:00:00'
+      rarity: legendary
+
+    # 进度测试成就 1: 单条件成就（普通）
+    rich_beginner:
+      id: rich_beginner
+      name: 初级富翁
+      desc: 积累 10000 货币。
+      icon: 💰
+      unlocked: false
+      date: null
+      rarity: common
+      schedule:
+        shop.currency:
+          desc: 货币数量
+          target: 10000
+
+    # 进度测试成就 2: 单条件成就（稀有）
+    rich_master:
+      id: rich_master
+      name: 财富大师
+      desc: 积累 100000 货币。
+      icon: 💎
+      unlocked: false
+      date: null
+      rarity: rare
+      schedule:
+        shop.currency:
+          desc: 货币数量
+          target: 100000
+
+    # 进度测试成就 3: 多条件成就（史诗）
+    balanced_life:
+      id: balanced_life
+      name: 平衡生活
+      desc: 同时达到高幸福指数和高共鸣深度。
+      icon: ⚖️
+      unlocked: false
+      date: null
+      rarity: epic
+      schedule:
+        characters.user.psychologicalState.content.happiness.current:
+          desc: 幸福指数
+          target: 80
+        characters.user.psychologicalState.content.resonanceDepth.current:
+          desc: 共鸣深度
+          target: 60
+
+    # 进度测试成就 4: 多条件成就（传说）
+    ultimate_achievement:
+      id: ultimate_achievement
+      name: 终极成就
+      desc: 达成所有条件的完美状态。
+      icon: 👑
+      unlocked: false
+      date: null
+      rarity: legendary
+      schedule:
+        shop.currency:
+          desc: 货币数量
+          target: 50000
+        characters.user.psychologicalState.content.happiness.current:
+          desc: 幸福指数
+          target: 100
+        characters.user.psychologicalState.content.resonanceDepth.current:
+          desc: 共鸣深度
+          target: 100
+
+    # 图标测试成就 4: Font Awesome 简单格式（史诗）
+    fa_simple_test:
+      id: fa_simple_test
+      name: 简单FA测试
+      desc: 测试简单Font Awesome格式。
+      icon: fa-crown # Font Awesome 简单格式
+      unlocked: true
+      date: '2025-07-30T11:00:00'
+      rarity: epic
+
+    # 图标测试成就 5: 特殊字符图标（稀有，未解锁）
+    special_char_test:
+      id: special_char_test
+      name: 特殊字符测试
+      desc: 测试特殊字符图标显示。
+      icon: ♦ # 特殊字符图标
+      unlocked: false # 未解锁
+      date: null
+      rarity: rare
+
+    # 图标测试成就 6: Font Awesome 品牌图标（普通）
+    brand_icon_test:
+      id: brand_icon_test
+      name: 品牌图标测试
+      desc: 测试Font Awesome品牌图标。
+      icon: fab fa-github # Font Awesome 品牌图标（fab 前缀）
+      unlocked: true
+      date: '2025-07-30T11:00:00'
+      rarity: common
+
+  summaries:
+    - time: '2025-10-09T14:25:00Z' # 摘要时间（ISO 8601 格式）
+      content: 玩家首次启动系统，ナナミ进行了自我介绍，系统初始化完成 # 摘要内容
+    - time: '2025-10-09T14:28:00Z'
+      content: 玩家查看了状态面板，了解了当前的各项指标和系统功能
+    - time: '2025-10-09T14:30:00Z'
+      content: 玩家询问了伊甸园系统的含义，ナナミ解释了系统的目的

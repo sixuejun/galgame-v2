@@ -1,0 +1,271 @@
+/* ========================================
+   工具样式
+   包含：动画、视觉效果、状态、全屏模式
+   ======================================== */
+
+/* ==================== 动画定义 ==================== */
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -1000px 0;
+  }
+  100% {
+    background-position: 1000px 0;
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes bounce {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes fullscreenEnter {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* ==================== 视觉效果工具类 ==================== */
+
+.glass-effect {
+  background: var(--bg-glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border-white);
+}
+
+.glass-effect-dark {
+  background: var(--bg-glass-dark);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.hover-lift {
+  transition:
+    transform var(--transition-base) var(--ease-out),
+    box-shadow var(--transition-base) var(--ease-out);
+}
+
+.hover-lift:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-lg);
+}
+
+.hover-scale {
+  transition: transform var(--transition-base) var(--ease-out);
+}
+
+.hover-scale:hover {
+  transform: scale(1.05);
+}
+
+.hover-glow {
+  transition: box-shadow var(--transition-base) var(--ease-out);
+}
+
+.hover-glow:hover {
+  box-shadow: var(--shadow-glow);
+}
+
+.fade-in {
+  animation: fadeIn var(--transition-base) var(--ease-out);
+}
+
+.fade-in-up {
+  animation: fadeInUp var(--transition-slow) var(--ease-out);
+}
+
+.slide-in-right {
+  animation: slideInRight var(--transition-slow) var(--ease-out);
+}
+
+.scale-in {
+  animation: scaleIn var(--transition-base) var(--ease-out);
+}
+
+.text-gradient {
+  background: linear-gradient(135deg, var(--primary-blue), var(--secondary-blue));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.text-gradient-pink {
+  background: linear-gradient(135deg, var(--accent-pink), var(--accent-pink-light));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ==================== 状态样式 ==================== */
+
+.loading,
+.error {
+  text-align: center;
+  padding: var(--spacing-2xl);
+  font-size: var(--text-lg);
+  color: white;
+  border-radius: var(--radius-xl);
+  margin: var(--spacing-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+.loading {
+  background: linear-gradient(135deg, var(--primary-blue), var(--secondary-blue));
+  animation: pulse 2s ease-in-out infinite;
+  position: relative;
+  overflow: hidden;
+}
+
+.loading::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+  animation: shimmer 2s infinite;
+}
+
+.error {
+  background: linear-gradient(135deg, var(--error), var(--error-dark));
+  box-shadow: 0 0 20px rgba(239, 68, 68, 0.4);
+}
+
+/* ==================== 全屏模式 ==================== */
+
+/* 模拟全屏容器样式 */
+.pseudo-fullscreen {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 9999 !important;
+  background: var(--bg-light);
+  overflow: auto;
+  margin: 0 !important;
+  padding: 0 !important;
+  animation: fullscreenEnter 0.3s var(--ease-out);
+}
+
+/* 全屏时的滚动条样式优化 */
+.pseudo-fullscreen::-webkit-scrollbar {
+  width: 12px;
+}
+
+.pseudo-fullscreen::-webkit-scrollbar-track {
+  background: var(--gray-100);
+}
+
+.pseudo-fullscreen::-webkit-scrollbar-thumb {
+  background: var(--primary-blue);
+  border-radius: var(--radius-full);
+}
+
+.pseudo-fullscreen::-webkit-scrollbar-thumb:hover {
+  background: var(--primary-blue-dark);
+}
+
+/* 响应式调整 */
+@media (max-width: 768px) {
+  .pseudo-fullscreen {
+    /* 移动端全屏时确保内容可滚动 */
+    -webkit-overflow-scrolling: touch;
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["./src/composables", "./src/services", "./src/stores", "./src/utils"],
+  "entryPointStrategy": "expand",
+  "out": "./docs/api",
+  "exclude": ["**/*.test.ts", "**/*.spec.ts", "**/node_modules/**", "**/dist/**"],
+  "excludePrivate": true,
+  "excludeProtected": false,
+  "excludeExternals": true,
+  "includeVersion": true,
+  "readme": "./README.md",
+  "name": "Eden System API Documentation",
+  "plugin": [],
+  "theme": "default",
+  "categorizeByGroup": true,
+  "categoryOrder": ["Composables", "Services", "Stores", "Utils", "*"],
+  "sort": ["source-order"],
+  "validation": {
+    "notExported": true,
+    "invalidLink": true,
+    "notDocumented": false
+  },
+  "treatWarningsAsErrors": false,
+  "treatValidationWarningsAsErrors": false,
+  "skipErrorChecking": true,
+  "cleanOutputDir": true,
+  "emit": "docs",
+  "githubPages": true,
+  "hideGenerator": false,
+  "searchInComments": true,
+  "searchInDocuments": true
+}

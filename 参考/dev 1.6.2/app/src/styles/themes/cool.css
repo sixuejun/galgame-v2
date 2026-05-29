@@ -1,0 +1,122 @@
+/* ========================================
+   冷色主题（Cool Theme）
+   蓝色、青色、紫色为主，专业商务风格
+   适合长时间工作，冷静专业的视觉效果
+   ======================================== */
+
+[data-theme='cool'] {
+  /* 主色系 - 冷蓝色 */
+  --primary-blue: #0077cc;
+  --primary-blue-light: #3399ff;
+  --primary-blue-dark: #005599;
+  --secondary-blue: #0099cc;
+  --secondary-blue-light: #33bbff;
+  --secondary-blue-dark: #007799;
+
+  /* 辅助色系 - 青紫色 */
+  --accent-pink: #6666cc;
+  --accent-pink-light: #8888ff;
+  --accent-pink-dark: #4444aa;
+
+  /* 紫色系 */
+  --purple: #6633cc;
+  --purple-light: #8855ff;
+  --purple-dark: #4422aa;
+
+  /* 金色系 - 冷金色 */
+  --gold: #6699cc;
+  --gold-light: #88bbff;
+  --gold-dark: #4477aa;
+
+  /* 绿色系 - 青绿色 */
+  --green: #0099aa;
+  --green-light: #00ccdd;
+  --green-dark: #007788;
+
+  /* 中性色系 - 冷灰色 */
+  --gray-50: #f5f8fa;
+  --gray-100: #e8f0f5;
+  --gray-200: #d0e0eb;
+  --gray-300: #b8d0e0;
+  --gray-400: #8899aa;
+  --gray-500: #667788;
+  --gray-600: #445566;
+  --gray-700: #334455;
+  --gray-800: #223344;
+  --gray-900: #112233;
+
+  /* 语义色 - 冷色调 */
+  --success: #0099aa;
+  --success-light: #00ccdd;
+  --success-dark: #007788;
+  --warning: #6699cc;
+  --warning-light: #88bbff;
+  --warning-dark: #4477aa;
+  --error: #cc4466;
+  --error-light: #ff6688;
+  --error-dark: #aa3355;
+  --info: #0077cc;
+  --info-light: #3399ff;
+  --info-dark: #005599;
+
+  /* 背景色 - 冷色调 */
+  --bg-dark: #0a1520;
+  --bg-light: #e8f0f5;
+  --bg-primary: #f5f8fa;
+  --bg-secondary: #e8f0f5;
+  --bg-glass: rgba(245, 248, 250, 0.8);
+  --bg-glass-dark: rgba(10, 21, 32, 0.4);
+  --bg-glass-light: rgba(245, 248, 250, 0.95);
+  --bg-overlay: rgba(10, 21, 32, 0.6);
+
+  /* 文字色 - 冷色调 */
+  --text-dark: #223344;
+  --text-light: #e8f0f5;
+  --text-primary: #223344;
+  --text-secondary: #667788;
+  --text-muted: #8899aa;
+  --text-white: #ffffff;
+
+  /* 边框和阴影 - 冷色调 */
+  --border-color: #d0e0eb;
+  --border-tech: rgba(0, 119, 204, 0.4);
+  --border-light: rgba(34, 51, 68, 0.1);
+  --border-medium: rgba(34, 51, 68, 0.2);
+  --border-white: rgba(245, 248, 250, 0.3);
+  --glow-blue: rgba(51, 153, 255, 0.7);
+  --glow-pink: rgba(136, 136, 255, 0.7);
+  --glow-purple: rgba(136, 85, 255, 0.7);
+  --glow-gold: rgba(136, 187, 255, 0.7);
+
+  /* 进度条颜色 - 冷色调 */
+  --progress-resonance: #6666cc;
+  --progress-dependency: #0077cc;
+  --progress-assets: #6699cc;
+  --progress-miracle: #6633cc;
+  --progress-protocol: #0099aa;
+
+  /* 稀有度颜色 - 冷色调 */
+  --rarity-common: #8899aa;
+  --rarity-rare: #0077cc;
+  --rarity-epic: #6633cc;
+  --rarity-legendary: #6699cc;
+}
+
+/* 冷色主题的 body 背景 */
+[data-theme='cool'] body {
+  background: linear-gradient(135deg, #e8f0f5 0%, #d0e0eb 100%);
+  color: var(--text-dark);
+}
+
+/* 冷色主题的滚动条样式 */
+[data-theme='cool'] ::-webkit-scrollbar {
+  background: #e8f0f5;
+}
+
+[data-theme='cool'] ::-webkit-scrollbar-thumb {
+  background: #b8d0e0;
+}
+
+[data-theme='cool'] ::-webkit-scrollbar-thumb:hover {
+  background: #8899aa;
+}

@@ -1,0 +1,14 @@
+/* ========================================
+   样式主入口文件
+
+   已优化：从 13 个文件合并为 3 个文件
+   - base.css: CSS 变量、重置样式、字体排版
+   - components.css: 按钮、卡片、表单、滚动条、容器、页面
+   - utilities.css: 动画、视觉效果、状态、全屏模式
+   - themes/: 主题系统（默认、黑夜、护眼等主题）
+   ======================================== */
+
+@import './base.css';
+@import './components.css';
+@import './utilities.css';
+@import './themes/index.css';

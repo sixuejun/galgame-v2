@@ -1,0 +1,92 @@
+{
+  "name": "eden-system-vue",
+  "private": true,
+  "version": "1.6.2",
+  "type": "module",
+  "description": "伊甸园 - Eden System - 互动式故事游戏系统",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "type-check": "vue-tsc --noEmit",
+    "format": "prettier --write \"src/**/*.{js,ts,vue,json,css,md}\"",
+    "format:check": "prettier --check \"src/**/*.{js,ts,vue,json,css,md}\"",
+    "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --fix",
+    "lint:check": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts",
+    "test": "vitest",
+    "test:ui": "vitest --ui",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "audit": "pnpm audit",
+    "docs": "typedoc",
+    "docs:serve": "pnpm docs && npx http-server docs/api -p 8080 -o",
+    "analyze:deps": "madge --circular --extensions ts --ts-config tsconfig.json src",
+    "analyze:deps:graph": "madge --image deps-graph.svg --extensions ts --ts-config tsconfig.json src",
+    "analyze:deps:json": "madge --json --extensions ts --ts-config tsconfig.json src > deps-analysis.json",
+    "prepare": "husky"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "lint-staged": {
+    "*.{vue,js,jsx,cjs,mjs,ts,tsx,cts,mts}": [
+      "eslint --fix"
+    ],
+    "*.{json,md,yml,yaml}": [
+      "prettier --write"
+    ]
+  },
+  "keywords": [
+    "vue3",
+    "typescript",
+    "vite",
+    "game"
+  ],
+  "author": "Eden System Team",
+  "license": "MIT",
+  "packageManager": "pnpm@10.19.0",
+  "pnpm": {
+    "overrides": {
+      "glob@>=10.2.0 <10.5.0": ">=10.5.0",
+      "js-yaml@<3.14.2": ">=3.14.2",
+      "tmp@<=0.2.3": ">=0.2.4"
+    }
+  },
+  "dependencies": {
+    "dompurify": "^3.3.0",
+    "js-yaml": "^4.1.1",
+    "marked": "11.2.0",
+    "pinia": "^3.0.3"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^20.1.0",
+    "@commitlint/config-conventional": "^20.0.0",
+    "@eslint/js": "^9.38.0",
+    "@types/js-yaml": "^4.0.9",
+    "@typescript-eslint/eslint-plugin": "^8.46.2",
+    "@typescript-eslint/parser": "^8.46.2",
+    "@vitejs/plugin-vue": "^6.0.1",
+    "@vitest/coverage-v8": "4.0.3",
+    "@vitest/ui": "^4.0.3",
+    "@vue/test-utils": "^2.4.6",
+    "eslint": "^9.38.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-vue": "^10.5.1",
+    "globals": "^16.4.0",
+    "happy-dom": "^20.0.8",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.6",
+    "madge": "^8.0.0",
+    "prettier": "^3.6.2",
+    "terser": "^5.44.0",
+    "typedoc": "^0.28.14",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.12",
+    "vite-plugin-singlefile": "^2.3.0",
+    "vitest": "^4.0.3",
+    "vue": "^3.5.22",
+    "vue-eslint-parser": "^10.2.0",
+    "vue-tsc": "^3.1.2"
+  }
+}

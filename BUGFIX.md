@@ -1,0 +1,172 @@
+# Galgame Bugfix Log
+
+## [2026-05-29] 界面部分初始化失败：两处 import 路径错误
+
+### 问题描述
+
+Galgame 界面在酒馆中**能显示但无法操作**，点击、输入均无响应，Vue 响应式系统实际处于半瘫痪状态。
+
+Console 中出现：
+```
+Cannot find module './store'        ← 某个组件
+Cannot find module './SkinShell'   ← 另一个组件
+Cannot read properties of undefined (reading 'length')
+```
+
+HTML 渲染成功、CSS 加载完成，但 JS 逻辑在 import 阶段即崩溃，导致 Vue setup() 中途失败、reactive 链断裂。
+
+### 根因
+
+Webpack 对 `./xxx` 相对路径的解析基于**当前文件所在目录**，而非 TypeScript 类型检查时的路径。
+
+两处组件中的 import 路径写错了层级：
+
+**1. `components/common/SkinShell.vue`**（第 19 行）：
+```typescript
+import type { ComponentSkin } from './themes';
+// 错：./themes 在 common/ 下不存在
+// 对：../../themes 才是根目录的 themes/
+```
+
+**2. `components/module/BoardGameModule.vue`**（第 346 行）：
+```typescript
+import type { GameEvent, MapNode } from './boardgame/types';
+// 错：./boardgame 在 module/ 下不存在
+// 对：../../boardgame/types 才是根目录的 boardgame/types
+```
+
+### 修复
+
+```typescript
+// SkinShell.vue
+import type { ComponentSkin } from '../../themes';
+
+// BoardGameModule.vue
+import type { GameEvent, MapNode } from '../../boardgame/types';
+```
+
+### 教训
+
+**Webpack 的 `Cannot find module` 在构建产物中表现为运行时异常，导致 Vue setup() 中断，界面看起来"活着"但所有响应式全部失效。**
+
+- TypeScript 类型检查不会验证模块文件是否真实存在
+- 相对路径 `../xxx` 中的 `./` 指向**当前文件所在目录**，不是"看起来近似的目录"
+- `components/common/` 下的文件引用 `themes/` 需要 `../../themes`（两级回退）
+- `components/module/` 下的文件引用 `boardgame/` 需要 `../../boardgame`（两级回退）
+
+防范措施：
+1. 每次新增组件后，用 webpack 构建确认无 `Cannot find module` 错误
+2. 构建产物中若出现 `webpackMissingModule` 运行时异常，说明某处 import 路径仍然错误
+3. 优先使用 TsconfigPathsPlugin 配置的 `@/` 别名路径，避免手写多层 `../..`
+
+## [2026-05-29] 界面无法渲染：undefined.length 崩溃
+
+### 问题描述
+
+Galgame 界面在酒馆中完全不渲染，game iframe 的 body 始终为空，Vue app 无法挂载。
+
+### 根因
+
+`App.vue` 第 222 行引用了 `store.currentMessageBlocks`：
+
+```typescript
+if (store.currentMessageBlocks.length === 0) {
+  return parseChoices(context.message);
+}
+```
+
+但 `useVNStore()` 中根本不存在 `currentMessageBlocks` 这个 computed/属性。Pinia 对不存在的状态属性返回 `undefined`，直接调用 `.length` 导致：
+
+```
+Cannot read properties of undefined (reading 'length')
+```
+
+该错误在 Vue 渲染阶段抛出，导致整个 App.vue 的 setup 执行失败，Vue app 永远无法挂载到 `#app` 元素上。
+
+### 修复
+
+改为安全的存在性判断：
+
+```typescript
+// 只有在没有当前结构块时，才回退到旧的 <roleplay_options> 格式
+if (!store.currentBlock) {
+  return parseChoices(context.message);
+}
+```
+
+### 教训
+
+**Pinia store 中不存在的属性返回 `undefined`，绝不会报错——直到你在它上面调用方法。**
+
+- `store.missingProperty` → `undefined`（不报错）
+- `store.missingProperty.length` → `TypeError: Cannot read properties of undefined`（运行时崩溃）
+
+防范措施：
+
+1. **TypeScript 类型检查**：在 store 的 return 语句中显式列出所有导出属性，缺少的属性会在编译时报错
+2. **可选链**：`store.foo?.length ?? 0`
+3. **默认值**：`ref([])` 而不是 `ref()`（`ref()` 初始值是 `undefined`，`ref([])` 初始值是空数组）
+4. **每次引用 store 属性前，先确认它存在于 store 的 return 语句中**
+
+## [2026-05-29] 界面无法挂载：组件 import 路径全部写错
+
+### 问题描述
+
+Galgame 界面在酒馆中完全不渲染，game iframe 的 body 始终为空，Vue app 无法挂载。检查构建输出发现大量 `Cannot find module` 错误。
+
+### 根因
+
+大量 Vue 组件文件中的相对 import 路径使用了错误的基础路径。
+
+项目目录结构如下（`store.ts` 在根目录，`SkinShell.vue` 在 `components/common/`）：
+
+```
+src/galgame/
+├── store.ts                     ← 根目录
+├── components/
+│   ├── common/
+│   │   ├── SkinShell.vue      ← 错误地用 ./SkinShell.vue 导入
+│   │   ├── CapsuleButton.vue   ← 错误地用 ./store 导入
+│   │   └── ...
+│   ├── dialogue/
+│   │   ├── DialogueBox.vue     ← 错误地用 ./store、./components/dialogue/BlacktextOverlay.vue 导入
+│   │   └── ...
+│   ├── panel/
+│   │   ├── SettingsPanel.vue   ← 错误地用 ./store、./themes、./ApiTaskConfigPanel.vue 导入
+│   │   └── ...
+│   ├── stage/
+│   │   └── StageArea.vue       ← 错误地用 ./components/stage/BackgroundLayer.vue 导入
+│   └── module/
+│       └── BoardGameModule.vue ← 错误地用 ./boardgame/boardGameStore 导入
+└── index.ts                    ← 错误地用 ./theme.css 导入（应为 ./styles/theme.css）
+```
+
+所有 `src/galgame/components/**/*.vue` 中的 import 路径都用了错误的基础路径 `./`，导致 webpack 构建时大量 `Cannot find module` 错误。这些错误在 webpack 构建产物中表现为 `webpackMissingModule` 运行时异常，导致整个 bundle 加载失败，Vue app 无法挂载。
+
+### 修复
+
+统一修正所有 import 路径，遵循相对路径原则：
+
+| 文件位置 | 导入目标 | 正确路径 |
+|---|---|---|
+| `components/**/*.vue` | `store.ts`（根目录） | `../../store` |
+| `components/**/*.vue` | `SkinShell.vue`（`common/`） | `../common/SkinShell.vue` |
+| `components/**/*.vue` | 同目录 Vue 组件 | `./ComponentName.vue` |
+| `components/**/*.vue` | 主题模块（根目录） | `../../themes` |
+| `components/**/*.vue` | 类型定义（根目录） | `../../types/message` |
+| `index.ts` | `styles/theme.css` | `./styles/theme.css` |
+
+### 教训
+
+**webpack 的 `Cannot find module` 错误在构建产物中表现为 `webpackMissingModule` 运行时异常——即使 TypeScript 类型检查通过，构建时也可能失败。**
+
+- TypeScript 只做静态类型检查，不验证模块文件是否真实存在
+- 相对路径写错时，TypeScript 编译器不会报错（类型检查通过），但 webpack 打包时会失败
+- 构建产物（dist/index.js）中的 `webpackMissingModule` 函数调用会导致运行时崩溃
+
+防范措施：
+
+1. **保持 TypeScript 类型与实际文件结构同步**：模块移动后，所有 import 路径必须同步更新
+2. **使用绝对路径或别名**：将 `@/store`、`@/components` 等配置为 webpack alias，避免长串相对路径
+3. **构建后检查产物**：运行 `pnpm build` 后，确认构建成功且无 `webpackMissingModule` 关键字
+4. **IDE 实时反馈**：确保 IDE 的 TypeScript/语言服务正确配置了 `tsconfig.json` 的 `paths` 和 `baseUrl`，以便在编写时就能发现路径错误

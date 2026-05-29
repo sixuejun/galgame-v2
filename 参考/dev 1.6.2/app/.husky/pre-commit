@@ -1,0 +1,17 @@
+# 切换到 app 目录
+cd "$(dirname "$0")/.." || {
+  echo "❌ Failed to change directory to app"
+  exit 1
+}
+
+echo "➡️  Running pre-commit hooks..."
+
+# 运行 lint-staged (包含 ESLint、Prettier 和增量类型检查)
+echo "🔍 Running lint-staged..."
+pnpm lint-staged || {
+  echo "❌ Lint-staged failed. Commit aborted."
+  exit 1
+}
+
+echo "✅ Pre-commit hooks passed successfully!"
+echo "💡 Tip: Full test suite and type check will run on pre-push"

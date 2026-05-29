@@ -1,0 +1,161 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+@layer base {
+  :root {
+    --background: 38 35% 82%;
+    --foreground: 30 10% 18%;
+    --card: 38 30% 78%;
+    --card-foreground: 30 10% 18%;
+    --popover: 38 30% 78%;
+    --popover-foreground: 30 10% 18%;
+    --primary: 25 30% 25%;
+    --primary-foreground: 38 35% 88%;
+    --secondary: 35 20% 65%;
+    --secondary-foreground: 30 10% 18%;
+    --muted: 35 18% 70%;
+    --muted-foreground: 30 8% 40%;
+    --accent: 12 40% 35%;
+    --accent-foreground: 38 35% 88%;
+    --destructive: 5 50% 30%;
+    --destructive-foreground: 38 35% 88%;
+    --border: 30 20% 55%;
+    --input: 30 20% 55%;
+    --ring: 25 30% 25%;
+    --radius: 0.25rem;
+
+    --chart-1: 12 40% 35%;
+    --chart-2: 35 20% 65%;
+    --chart-3: 30 10% 18%;
+    --chart-4: 38 30% 78%;
+    --chart-5: 25 30% 25%;
+
+    --sidebar-background: 38 30% 78%;
+    --sidebar-foreground: 30 10% 18%;
+    --sidebar-primary: 25 30% 25%;
+    --sidebar-primary-foreground: 38 35% 88%;
+    --sidebar-accent: 35 20% 65%;
+    --sidebar-accent-foreground: 30 10% 18%;
+    --sidebar-border: 30 20% 55%;
+    --sidebar-ring: 25 30% 25%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Newspaper texture overlay */
+.paper-texture {
+  position: relative;
+}
+
+.paper-texture::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url('/tiles/tile-bg.jpg');
+  background-size: cover;
+  background-position: center;
+  opacity: 0.15;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Fold crease lines */
+.fold-lines::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, transparent 49.5%, rgba(120, 90, 50, 0.12) 49.5%, rgba(120, 90, 50, 0.12) 50.5%, transparent 50.5%),
+    linear-gradient(0deg, transparent 49.5%, rgba(120, 90, 50, 0.12) 49.5%, rgba(120, 90, 50, 0.12) 50.5%, transparent 50.5%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Ink stain spots */
+.ink-stain {
+  position: relative;
+}
+
+.ink-stain::before {
+  content: '';
+  position: absolute;
+  width: 80px;
+  height: 80px;
+  background: radial-gradient(ellipse at center, rgba(80, 60, 30, 0.1) 0%, transparent 70%);
+  border-radius: 50%;
+  top: -20px;
+  right: -10px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Distressed border effect */
+.distressed-border {
+  border: 2px solid hsl(30, 20%, 55%);
+  box-shadow:
+    inset 0 0 30px rgba(80, 60, 30, 0.15),
+    0 0 10px rgba(80, 60, 30, 0.1);
+}
+
+/* Tile image styling */
+.tile-image {
+  filter: sepia(0.3) contrast(1.1) brightness(0.95);
+  mix-blend-mode: multiply;
+}
+
+/* Vintage text shadow */
+.ink-text {
+  text-shadow: 0.5px 0.5px 0px rgba(80, 60, 30, 0.3);
+}
+
+/* Keyframe for tile appearance */
+@keyframes tile-appear {
+  from {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes tile-pop {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+
+.tile-new {
+  animation: tile-appear 0.2s ease-out;
+}
+
+.tile-merged {
+  animation: tile-pop 0.3s ease-out;
+}
+
+/* Noise grain overlay */
+.noise-overlay::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  opacity: 0.04;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 9999;
+}

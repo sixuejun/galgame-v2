@@ -1,0 +1,5 @@
+# 切换到 app 目录
+cd "$(dirname "$0")/.." || exit 1
+
+# 使用 commitlint 验证提交消息
+npx --no -- commitlint --edit "$1"

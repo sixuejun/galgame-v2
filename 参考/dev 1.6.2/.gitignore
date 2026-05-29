@@ -1,0 +1,16 @@
+参考资料/
+外部项目/
+doc/
+.vscode/
+*.log
+*.zip
+*.7z
+.env
+.env.development
+.env.production
+!.env.example
+*.zip
+
+app/docs/api/
+
+app/.lighthouseci
