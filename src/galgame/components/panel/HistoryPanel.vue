@@ -59,16 +59,16 @@
           <button
             class="flex h-6 w-6 cursor-pointer items-center justify-center transition-colors"
             :style="{
-              color: previewIndex > 0 ? 'var(--theme-text-muted)' : 'var(--theme-text-faint, rgba(139,125,107,0.3))',
+              color: store.historyDisplayIndex > 0 ? 'var(--theme-text-muted)' : 'var(--theme-text-faint, rgba(139,125,107,0.3))',
             }"
-            :disabled="previewIndex <= 0"
+            :disabled="store.historyDisplayIndex <= 0"
             @click="prevPage"
           >
             <i class="fa-solid fa-chevron-left text-xs" />
           </button>
           <input
             type="number"
-            :value="previewIndex + 1"
+            :value="store.historyDisplayIndex + 1"
             :min="1"
             :max="totalFloors"
             class="w-12 bg-transparent text-center outline-none"
@@ -93,11 +93,11 @@
             class="flex h-6 w-6 cursor-pointer items-center justify-center transition-colors"
             :style="{
               color:
-                previewIndex < totalFloors - 1
+                store.historyDisplayIndex < totalFloors - 1
                   ? 'var(--theme-text-muted)'
                   : 'var(--theme-text-faint, rgba(139,125,107,0.3))',
             }"
-            :disabled="previewIndex >= totalFloors - 1"
+            :disabled="store.historyDisplayIndex >= totalFloors - 1"
             @click="nextPage"
           >
             <i class="fa-solid fa-chevron-right text-xs" />
@@ -137,7 +137,7 @@
             :style="{
               borderBottom: '1px solid var(--theme-history-row-border, rgba(90,79,64,0.1))',
               background:
-                index === previewIndex ? 'var(--theme-history-active-bg, rgba(139,69,19,0.1))' : 'transparent',
+                index === activeBlockIndex ? 'var(--theme-history-active-bg, rgba(139,69,19,0.1))' : 'transparent',
             }"
             @click="goToLine(index)"
           >
@@ -180,7 +180,7 @@
                 </p>
               </div>
               <div
-                v-if="index === previewIndex"
+                v-if="index === activeBlockIndex"
                 class="mt-1.5 shrink-0"
                 style="width: 6px; height: 6px; background: var(--theme-accent, var(--rust)); transform: rotate(45deg)"
               />
@@ -207,10 +207,6 @@ import SkinShell from '../common/SkinShell.vue';
 import { useVNStore } from '../../store';
 import type { MessageBlock } from '../../types/message';
 
-const emit = defineEmits<{
-  goToLine: [index: number];
-}>();
-
 const store = useVNStore();
 const scrollRef = ref<HTMLDivElement | null>(null);
 
@@ -225,13 +221,25 @@ const visibleFloorIndices = computed(() => {
 });
 
 const totalFloors = computed(() => visibleFloorIndices.value.length);
+
+// 历史面板翻页索引，直接使用 store 中的独立状态（翻页不会触发主界面跳转）
+const historyDisplayIndex = computed(() => store.historyDisplayIndex);
+
 // 当前预览楼层在 dialogues 中的实际索引
 const previewIndex = computed(() => {
   const visible = visibleFloorIndices.value;
-  const displayIdx = store.previewDialogueIndex;
+  const displayIdx = store.historyDisplayIndex;
   return visible[displayIdx] ?? 0;
 });
 const previewFloor = computed(() => store.dialogues[previewIndex.value] ?? null);
+
+// 当前楼层内的高亮块索引（由翻页按钮同步）
+const activeBlockIndex = ref(0);
+
+// 同步高亮块：当 previewIndex 变化时，重置到该楼层的第一块
+watch(previewIndex, () => {
+  activeBlockIndex.value = 0;
+});
 
 // Ensure preview floor is parsed when previewing
 watch(
@@ -258,23 +266,23 @@ const historyLines = computed<{ speaker?: string; text: string }[]>(() => {
 });
 
 function prevPage() {
-  const displayIdx = store.previewDialogueIndex;
-  if (displayIdx > 0) {
-    store.previewDialogueIndex = displayIdx - 1;
+  const idx = store.historyDisplayIndex;
+  if (idx > 0) {
+    store.historyDisplayIndex = idx - 1;
   }
 }
 
 function nextPage() {
-  const displayIdx = store.previewDialogueIndex;
-  if (displayIdx < totalFloors.value - 1) {
-    store.previewDialogueIndex = displayIdx + 1;
+  const idx = store.historyDisplayIndex;
+  if (idx < totalFloors.value - 1) {
+    store.historyDisplayIndex = idx + 1;
   }
 }
 
 function onPageInput(e: Event) {
   const val = parseInt((e.target as HTMLInputElement).value);
   if (!isNaN(val)) {
-    store.previewDialogueIndex = Math.max(0, Math.min(val - 1, totalFloors.value - 1));
+    store.historyDisplayIndex = Math.max(0, Math.min(val - 1, totalFloors.value - 1));
   }
 }
 
@@ -284,9 +292,7 @@ function jumpToFloor() {
 }
 
 function goToLine(index: number) {
-  // 1. Navigate to this floor
   store.navigateFloorTo(previewIndex.value);
-  // 2. Jump to the corresponding block within the floor
   store.currentBlockIndex = index;
   store.setOverlay('none');
 }

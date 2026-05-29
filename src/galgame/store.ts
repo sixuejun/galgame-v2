@@ -859,6 +859,44 @@ export const useVNStore = defineStore('vn', () => {
   // 待跳转楼层索引（parseCurrentFloor 完成后 watcher 据此决定跳到该楼层的最后块）
   let _pendingJumpFloorIndex: number | null = null;
 
+  // 是否正在浏览历史面板（浏览时不触发主界面自动跟随，且 watcher 不会误跳）
+  let _browsingHistory = false;
+
+  // 历史面板的翻页索引（独立于 previewDialogueIndex，翻页不触发主界面跳转）
+  const historyDisplayIndex = ref(0);
+
+  /**
+   * 进入历史浏览模式：暂停主界面的自动跟随，watcher 跳过初始化跳转。
+   * @param latestFloorIndex 当前最新楼层在 dialogues 中的物理索引，用于初始化翻页位置
+   */
+  function enterHistoryBrowse(latestFloorIndex: number) {
+    _browsingHistory = true;
+    historyDisplayIndex.value = Math.max(0, latestFloorIndex);
+  }
+
+  /**
+   * 退出历史浏览模式。
+   */
+  function exitHistoryBrowse() {
+    _browsingHistory = false;
+  }
+
+  /**
+   * 在历史面板中设置当前块索引（只更新块，不跳转到楼层）。
+   * 调用此方法不会触发主界面的楼层切换。
+   */
+  function setHistoryBlockIndex(blockIndex: number) {
+    const flat = allBlocksFlat.value;
+    if (flat.length === 0) return;
+    // 找到 previewIndex 对应楼层内的第 blockIndex 个块的扁平索引
+    const floorIdx = previewDialogueIndex.value;
+    const targets = flat.filter(b => b.floorIndex === floorIdx);
+    const target = targets[blockIndex];
+    if (target) {
+      currentBlockFlatIndex.value = flat.indexOf(target);
+    }
+  }
+
   // 从扁平索引派生的当前楼层/块索引（供兼容层使用）
   const currentFloorIndex = computed(() => allBlocksFlat.value[currentBlockFlatIndex.value]?.floorIndex ?? 0);
   const currentBlockInnerIndex = computed(() => allBlocksFlat.value[currentBlockFlatIndex.value]?.blockIndex ?? 0);
@@ -943,11 +981,11 @@ export const useVNStore = defineStore('vn', () => {
       }
       currentBlockFlatIndex.value = targetIdx;
       _pendingJumpFloorIndex = null;
-    } else if (_flatLenOnInit === 0) {
+    } else if (_flatLenOnInit === 0 && !_browsingHistory) {
       // First meaningful fill (init): jump to FIRST block (latest floor's first block)
       // 目标体验：进入界面时先显示最新消息的第一块，而不是直接跳到最后（常常是 choice）。
       currentBlockFlatIndex.value = 0;
-    } else if (currentBlockFlatIndex.value >= newBlocks.length) {
+    } else if (currentBlockFlatIndex.value >= newBlocks.length && !_browsingHistory) {
       currentBlockFlatIndex.value = newBlocks.length - 1;
     }
     _flatLenOnInit = newBlocks.length;
@@ -1036,9 +1074,8 @@ export const useVNStore = defineStore('vn', () => {
       // 解析新楼层（user/隐藏楼层会被 allBlocksFlat 过滤，无需特殊处理）
       await parseCurrentFloor(newIndex);
 
-      // 只有当用户在“最新位置”时，才自动跟随新楼层。
-      // 这里用“追加前是否处于最后一个可见 block”作为判断，避免历史浏览时被强行跳走。
-      if (wasAtLastBeforeAppend) {
+      // 只有当用户在"最新位置"且不在浏览历史时，才自动跟随新楼层。
+      if (wasAtLastBeforeAppend && !_browsingHistory) {
         // 目标体验：新楼层到达后，进入该楼层的第一个块（而不是停在旧的 choice）。
         const flatAfter = allBlocksFlat.value;
         const firstIdxOfNewFloor = flatAfter.findIndex(x => x.floorIndex === newIndex);
@@ -3756,9 +3793,22 @@ ${latestHint}
   // ====== UI Actions ======
 
   function setOverlay(panel: OverlayPanel) {
+    const wasHistory = activeOverlay.value === 'history';
     activeOverlay.value = panel;
     leftMenuExpanded.value = false;
     rightMenuExpanded.value = false;
+
+    if (panel === 'history' && !wasHistory) {
+      // 打开历史面板：找到最新可见楼层的物理索引
+      const visible = dialogues.value
+        .map((unit, i) => ({ unit, i }))
+        .filter(({ unit }) => unit.role !== 'user' && !unit.isHidden)
+        .map(({ i }) => i);
+      const latestIdx = visible.length > 0 ? visible[visible.length - 1]! : 0;
+      enterHistoryBrowse(latestIdx);
+    } else if (wasHistory && panel !== 'history') {
+      exitHistoryBrowse();
+    }
   }
 
   function toggleLeftMenu() {
@@ -3928,6 +3978,10 @@ ${latestHint}
     navigateBlock,
     navigateFloorTo,
     allBlocksFlat,
+    enterHistoryBrowse,
+    exitHistoryBrowse,
+    historyDisplayIndex,
+    setHistoryBlockIndex,
     currentFloorIndex,
     currentBlockInnerIndex,
     getVisibleBlockCountInFloor,
