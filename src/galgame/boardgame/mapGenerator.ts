@@ -22,8 +22,11 @@ function mulberry32(seed: number): () => number {
  *   - Each cell has fixed (row, col) coordinates
  *   - Movement is only to adjacent cells (up/down/left/right)
  *   - Creates a winding path through sparse grid space
+ *
+ * @param seed - Random seed for reproducible generation
+ * @param route - Route length: 'short' (~30-40 cells), 'medium' (~55-75), 'long' (~90-112)
  */
-export function generateMap(seed: number): MapConfig {
+export function generateMap(seed: number, route: 'short' | 'medium' | 'long' = 'medium'): MapConfig {
   const rng = mulberry32(seed);
   const rand = () => rng();
   const ri = (a: number, b: number) => a + Math.floor(rand() * (b - a + 1));
@@ -48,7 +51,13 @@ export function generateMap(seed: number): MapConfig {
   };
 
   // ── 1. Generate main path using random walk ──────────────────
-  const pathLength = ri(15, 50);
+  const PATH_LENGTHS: Record<'short' | 'medium' | 'long', [number, number]> = {
+    short: [30, 40],
+    medium: [55, 75],
+    long: [90, 112],
+  };
+  const [minLen, maxLen] = PATH_LENGTHS[route];
+  const pathLength = ri(minLen, maxLen);
 
   // Start position
   let curRow = 0;
@@ -109,6 +118,11 @@ export function generateMap(seed: number): MapConfig {
   }
 
   // ── 2. Add minimal branches (only 1-2 short branches) ────────
+  const BRANCH_LENGTHS: Record<'short' | 'medium' | 'long', [number, number]> = {
+    short: [2, 3],
+    medium: [3, 4],
+    long: [4, 5],
+  };
   const branchCount = ri(1, 2);
 
   for (let b = 0; b < branchCount; b++) {
@@ -118,7 +132,8 @@ export function generateMap(seed: number): MapConfig {
     const startIdx = Math.floor(pathCells.length * 0.3);
     const endIdx = Math.floor(pathCells.length * 0.7);
     const branchRoot = pathCells[ri(startIdx, endIdx)]!;
-    const branchLen = ri(2, 3); // Very short branches
+    const [branchMin, branchMax] = BRANCH_LENGTHS[route];
+    const branchLen = ri(branchMin, branchMax);
 
     let br = branchRoot.row;
     let bc = branchRoot.col;
@@ -196,11 +211,13 @@ export function generateMap(seed: number): MapConfig {
   // - encounter: 遭遇，中性倾向 (35%)
   // - trap: 陷阱，偏负面 (15%)
   // - fortune: 意外之喜，偏正面 (10%)
+  // - battle: 战斗格子，高风险高收益 (7%) —— 占比不宜过高以避免战斗过密
   const typePool: NodeType[] = [
     ...Array<NodeType>(40).fill('empty' as NodeType),
     ...Array<NodeType>(35).fill('encounter' as NodeType),
     ...Array<NodeType>(15).fill('trap' as NodeType),
     ...Array<NodeType>(10).fill('fortune' as NodeType),
+    ...Array<NodeType>(7).fill('battle' as NodeType),
   ];
 
   // ── 相邻约束：禁止三个及以上相同事件格子相连 ───────────────────

@@ -1,0 +1,454 @@
+$1
+```
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        .contract-float-text {
+            width: 100%;
+            box-sizing: border-box;
+            background: transparent;
+            border: none;
+            outline: none;
+            resize: none;
+            font-family: "Songti SC", "Shippori Mincho", serif;
+            font-size: 13px;
+            line-height: 1.6;
+            color: inherit;
+            padding: 4px 2px;
+            overflow-y: hidden;
+            display: block;
+        }
+        .contract-float-text::placeholder {
+            color: rgba(150, 130, 110, 0.6);
+            font-style: italic;
+        }
+
+        .contract-overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(255, 255, 255, 0.72);
+            border-radius: 0;
+            z-index: 200;
+            display: none;
+            align-items: center;
+            justify-content: center;
+        }
+        .contract-overlay.active { display: flex; }
+        .contract-loader { position: relative; width: 100px; height: 100px; }
+        .c-paper {
+            position: absolute; top: 5%; left: 25%;
+            width: 50px; height: 65px; background: #f5edd8;
+            border: 2px solid #ddd; border-radius: 0; padding: 8px;
+            box-shadow: 2px 2px 8px rgba(0,0,0,0.05); overflow: hidden;
+            display: flex; flex-direction: column; gap: 6px; box-sizing: border-box;
+        }
+        .c-line { height: 3px; background: #e0e0e0; border-radius: 2px; width: 100%; }
+        .c-line.short { width: 60%; }
+        .c-scan-bar {
+            position: absolute; top: 0; left: 0; width: 100%; height: 4px;
+            background: rgba(33,150,243,0.2); border-bottom: 2px solid #2196f3;
+            animation: c-scan-move 2.5s infinite ease-in-out;
+        }
+        .c-magnifier {
+            position: absolute; width: 28px; height: 28px;
+            border: 3px solid #333; border-radius: 50%;
+            top: 15%; left: 40%; background: rgba(255,255,255,0.2); z-index: 2;
+            animation: c-magnifier-move 2.5s infinite ease-in-out;
+        }
+        .c-magnifier::after {
+            content: ''; position: absolute; top: 100%; left: 80%;
+            width: 14px; height: 5px; background: #333;
+            transform: rotate(45deg); transform-origin: top left; border-radius: 3px;
+        }
+        .c-loading-text {
+            position: absolute; bottom: -30px; width: 200%; left: -50%;
+            text-align: center; font-family: "Songti SC", "Shippori Mincho", serif;
+            font-size: 14px; font-weight: 500; color: #444; letter-spacing: 2px;
+            animation: c-pulse 1.5s infinite ease-in-out;
+        }
+        @keyframes c-scan-move {
+            0%, 100% { top: 10%; opacity: 0; } 10%, 90% { opacity: 1; } 50% { top: 85%; }
+        }
+        @keyframes c-magnifier-move {
+            0%, 100% { transform: translate(0, 0); } 30% { transform: translate(15px, 20px); }
+            60% { transform: translate(-10px, 35px); } 80% { transform: translate(-15px, 10px); }
+        }
+        @keyframes c-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+
+        :root { --paper: #f5edd8; --ink: #2c1e0f; --red: #C73E3A; }
+        body {
+            margin: 0; padding: 10px; font-family: "Songti SC", serif;
+            background: transparent; color: var(--ink);
+            min-height: 400px; box-sizing: border-box;
+        }
+        .paper-sheet { background: #f5edd8; padding: 20px; border: 1px solid #ccc; border-radius: 0; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .app-header { text-align: center; font-weight: bold; border-bottom: 3px double #8d6e63; margin-bottom: 20px; padding-bottom: 5px; color: #555; font-size: 14px;}
+        .c-title { text-align: center; font-size: 24px; font-weight: 900; margin: 10px 0 25px 0; text-decoration: underline; letter-spacing: 2px;}
+
+        .form-row { margin-bottom: 15px; display: flex; align-items: baseline; }
+
+        .label { font-weight: bold; margin-right: 5px; white-space: nowrap; }
+
+        ::placeholder { color: #d0d0d0; opacity: 1; font-weight: normal;}
+        ::-webkit-input-placeholder { color: #d0d0d0; }
+        :-ms-input-placeholder { color: #d0d0d0; }
+
+        .input-line {
+            border: none; border-bottom: 1px solid var(--ink); background: transparent;
+            outline: none; font-family: "KaiTi", serif; font-size: 18px; font-weight: bold;
+            flex: 1;
+            padding: 0 5px; color: #000;
+            min-width: 0;
+        }
+        .input-line:focus { border-bottom: 2px solid var(--red); background: rgba(0,0,0,0.02); }
+
+        .textarea-line {
+            width: 100%; border: none; background: repeating-linear-gradient(to bottom, transparent 0, transparent 31px, #ccc 32px);
+            line-height: 32px; font-size: 16px; font-family: "KaiTi", serif; outline: none; height: 96px; resize: none; margin-top: 5px; color: #333;
+        }
+
+        .sign-area { display: flex; justify-content: space-between; margin-top: 30px; position: relative; padding-bottom: 10px;}
+
+        .stamp-wrapper {
+            position: relative;
+            width: 90px;
+            height: 90px;
+        }
+
+        .stamp-placeholder {
+            width: 70px; height: 70px;
+            border: 2px dashed #ccc;
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            color: #ccc; font-size: 12px;
+            margin-top: 10px;
+            cursor: pointer;
+            transition: all 0.3s;
+            user-select: none;
+        }
+
+        .stamp-placeholder:hover {
+            border-color: var(--red);
+            color: var(--red);
+            background: rgba(183, 28, 28, 0.05);
+        }
+
+        .stamp-mark {
+            position: absolute; top: 0; left: -10px; width: 90px; height: 90px;
+            border: 4px solid var(--red); border-radius: 50%; color: var(--red);
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            font-weight: 900; transform: scale(2); opacity: 0; pointer-events: none; z-index: 10;
+            background: rgba(255,255,255,0.9);
+        }
+        .stamp-mark.active { animation: stampFall 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+        @keyframes stampFall { 0% { transform: rotate(-20deg) scale(2.5); opacity: 0; } 100% { transform: rotate(-20deg) scale(1); opacity: 0.9; } }
+
+        .info-section {
+            margin-top: 30px;
+            border-top: 1px dashed #ccc;
+            padding-top: 10px;
+        }
+        .info-toggle {
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            color: #555;
+            user-select: none;
+            margin-bottom: 10px;
+        }
+        .info-toggle:hover { color: #000; }
+
+        .info-content { display: block; }
+
+        .tags-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+
+        .info-tag {
+            border: 1px solid #333;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+            border-radius: 2px;
+            transition: 0.2s;
+            background: #f5edd8;
+        }
+
+        .info-tag.selected {
+            background: #f0f0f0;
+            border-color: #000;
+            color: #000;
+            font-weight: bold;
+        }
+
+        .info-tag:not(.selected) {
+            border-color: #ccc;
+            color: #aaa;
+            border-style: dashed;
+        }
+
+        .other-row {
+            display: flex;
+            align-items: baseline;
+            width: 100%;
+        }
+        .other-label {
+            font-size: 14px;
+            color: #333;
+            margin-right: 5px;
+            white-space: nowrap;
+        }
+        .other-input {
+            flex: 1;
+            border: none;
+            border-bottom: 1px solid #ccc;
+            outline: none;
+            font-family: "KaiTi", serif;
+            font-size: 14px;
+            padding: 0 5px;
+            background: transparent;
+        }
+        .other-input:focus {
+            border-bottom-color: var(--red);
+        }
+    </style>
+</head>
+<body>
+
+<textarea class="contract-float-text" id="contract-prelude" placeholder="可以在此处输入前置情节(如有)" rows="2"></textarea>
+<div class="paper-sheet" style="position:relative;">
+    <div class="contract-overlay" id="contract-overlay">
+        <div class="contract-loader">
+            <div class="c-paper">
+                <div class="c-scan-bar"></div>
+                <div class="c-line"></div><div class="c-line"></div>
+                <div class="c-line short"></div><div class="c-line"></div>
+                <div class="c-line short"></div>
+            </div>
+            <div class="c-magnifier"></div>
+            <div class="c-loading-text">合同审阅中...</div>
+        </div>
+    </div>
+    <div class="app-header">主从契约法术卷轴·现代版(系统友情提供)</div>
+    <div class="c-title">劳 动 合 同</div>
+
+    <div class="form-row">
+        <span class="label">甲方(雇佣方)：</span>
+        <input type="text" class="input-line" id="inp-name" placeholder="(请签署姓名)" autocomplete="off">
+    </div>
+
+    <div class="form-row">
+        <span class="label">乙方(劳动方)：</span>
+        <span style="font-family:'KaiTi'; border-bottom:1px solid #ccc; padding:0 80px;">       </span>
+    </div>
+
+    <div style="font-weight:bold; font-size:14px; margin-top:10px;">工作内容：</div>
+    <textarea class="textarea-line" id="inp-job" placeholder="选填，可自由填写"></textarea>
+
+    <div style="font-weight:bold; font-size:14px; margin-top:10px;">劳动报酬及其它约定：</div>
+    <textarea class="textarea-line" id="inp-pay" placeholder="选填，可自由填写"></textarea>
+
+    <div class="info-section">
+        <div class="info-toggle" id="toggle-btn">▲ 员工信息录入 (点击展开/收起)</div>
+        <div class="info-content" id="info-box">
+            <div class="tags-container" id="tags-area">
+                </div>
+            <div class="other-row">
+                <span class="other-label">其它:</span>
+                <input type="text" class="other-input" id="inp-other" placeholder="如添加多个属性，用顿号分隔">
+            </div>
+        </div>
+    </div>
+
+    <div class="sign-area">
+        <div>
+            <div style="font-size:12px; color:#666; margin-bottom:10px;">甲方盖章(完成填写后点此确认)</div>
+
+            <div class="stamp-wrapper">
+                <div class="stamp-mark" id="stamp-anim">
+                    <div style="font-size:32px; line-height:1;">★</div>
+                    <div style="font-size:10px;">承認</div>
+                </div>
+                <div class="stamp-placeholder" id="stamp-trigger">盖章处</div>
+            </div>
+
+        </div>
+        <div style="text-align:right;">
+            <div style="font-size:12px; color:#666; margin-bottom:20px;">乙方签字/手印</div>
+            <div id="sign-preview" style="font-family:'KaiTi'; font-size:24px; min-width:80px; border-bottom:1px solid #000; display:inline-block; height:30px;"></div>
+        </div>
+    </div>
+</div>
+<textarea class="contract-float-text" id="contract-epilogue" placeholder="可以在此处输入后置情节(如有)，点击【盖章】继续剧情" rows="2"></textarea>
+
+<script>
+    const infoConfig = [
+        { label: "姓名", content: "" },
+        { label: "刀种", content: "" },
+        { label: "职业", content: "" },
+        { label: "外貌", content: "发色、瞳色、特质(如有)" },
+        { label: "性格", content: "MBTI" },
+        { label: "擅长", content: "" },
+        { label: "喜好", content: "如口味、偏好行为等" },
+        { label: "出身经历", content: "概括简写" },
+        { label: "受教育程度", content: "低/中/高" },
+        { label: "雇佣经过", content: "概括简写" },
+        { label: "工作内容", content: "在万事屋的工作内容，简写" },
+        { label: "{{user}}允诺报酬", content: "双方协商的最终结果" }
+    ];
+
+    const defaultSelected = ["姓名", "刀种", "外貌", "性格", "职业", "雇佣经过", "出身经历", "{{user}}允诺报酬", "工作内容"];
+    let isSigning = false;
+
+    document.querySelectorAll('.contract-float-text').forEach(ta => {
+        ta.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = this.scrollHeight + 'px';
+        });
+    });
+
+    $(document).ready(function() {
+
+        const tagContainer = $('#tags-area');
+        infoConfig.forEach((item, index) => {
+            const isSelected = defaultSelected.includes(item.label);
+
+            const tag = $('<div></div>')
+                .addClass('info-tag')
+                .text(item.label)
+                .attr('data-content', item.content)
+                .attr('data-label', item.label);
+
+            if(isSelected) {
+                tag.addClass('selected');
+            }
+
+            tag.on('click', function() {
+                $(this).toggleClass('selected');
+            });
+
+            tagContainer.append(tag);
+        });
+
+        $('#toggle-btn').on('click', function() {
+            $('#info-box').slideToggle(200);
+            const text = $(this).text();
+            $(this).text(text.includes('▼') ? text.replace('▼', '▲') : text.replace('▲', '▼'));
+        });
+
+        $('#stamp-trigger').on('click', async function() {
+            await doSign();
+        });
+    });
+
+    async function doSign() {
+        if (isSigning) return;
+        const overlay = document.getElementById('contract-overlay');
+        overlay.classList.add('active');
+
+        const name = $('#inp-name').val().trim();
+        const job = $('#inp-job').val().trim() || "未定";
+        const pay = $('#inp-pay').val().trim() || "未定";
+
+        if (!name) {
+            if(window.toastr) toastr.warning("请先签署姓名");
+            else alert("请先签署姓名");
+            return;
+        }
+
+        isSigning = true;
+
+        const stamp = $('#stamp-anim');
+        stamp.removeClass('active');
+        void stamp[0].offsetWidth;
+        stamp.addClass('active');
+
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        let infoData = [];
+
+        // 1. 收集选中的标签
+        $('.info-tag.selected').each(function() {
+            const label = $(this).attr('data-label');
+            const content = $(this).attr('data-content');
+            const val = content ? `(${content})` : "";
+            infoData.push(`${label}:${val}`);
+        });
+
+        // 2. 收集"其它"输入，按顿号分割
+        const otherVal = $('#inp-other').val().trim();
+        if(otherVal) {
+            const parts = otherVal.split(/[、]/);
+            parts.forEach(part => {
+                const trimmed = part.trim();
+                if (trimmed) {
+                    // 修改点：给拆分出的属性末尾加上冒号 ":"
+                    infoData.push(trimmed + ":");
+                }
+            });
+        }
+
+        const infoString = infoData.length > 0 ? "【" + infoData.join("|") + "】" : "";
+
+        try {
+            const msgs = await getChatMessages(-1);
+            if (!msgs || msgs.length === 0) throw new Error("未找到当前楼层");
+
+            const lastMsg = msgs[0];
+
+            const contractContent = `
+<合同当前内容>
+  劳动合同
+    甲方: ${name}
+    乙方:
+    乙方签名/手印:
+    工作内容: ${job}
+    劳动报酬及其它约定: ${pay}
+</合同当前内容>`;
+
+            const prelude = document.getElementById('contract-prelude').value.trim();
+            const epilogue = document.getElementById('contract-epilogue').value.trim();
+
+            // 将合同内容追加到AI旧消息（供渲染合同卡片用）
+            await setChatMessages([{
+                message_id: lastMsg.message_id,
+                message: lastMsg.message + '\n' + contractContent
+            }], { refresh: 'none' });
+
+            // 将指令作为用户消息发送（确保AI遵从）
+            let userMsg = '';
+            if (prelude) userMsg += prelude + '\n\n';
+            userMsg += '> [系统事件] 合同已签署，等待乙方确认。';
+            if (epilogue) userMsg += '\n\n' + epilogue;
+            userMsg += '\n<sys>以上合同内容已附在上条消息中。在本轮正文中：①将双方最终协商补充完整的合同内容按<合同当前内容>格式插入正文合适位置（如原内容有改变可删改，员工可主动提出诉求）②插入关于雇佣该员工的成就弹窗③在<yorozuya_status>前输出<New_Employee_Profile>【' + infoString.slice(1,-1) + '】</New_Employee_Profile>，使用概括性语言记录长期不变的角色设定</sys>';
+
+            if(window.toastr) toastr.success("甲方填写完毕，等待回应...");
+
+            // 通过输入框发送用户消息并自动触发AI回复
+            var sent = false;
+            try {
+                var box = window.parent.document.getElementById('send_textarea');
+                if (box) { box.value = userMsg; box.dispatchEvent(new Event('input',{bubbles:true})); box.focus(); var btn = window.parent.document.getElementById('send_but'); if(btn) setTimeout(function(){btn.click();},300); sent = true; }
+            } catch(e) {}
+            if (!sent) { try { var box2 = document.getElementById('send_textarea'); if (box2) { box2.value = userMsg; box2.dispatchEvent(new Event('input',{bubbles:true})); box2.focus(); var btn2 = document.getElementById('send_but'); if(btn2) setTimeout(function(){btn2.click();},300); sent = true; } } catch(e2) {} }
+            if (!sent) { await triggerSlash('/trigger'); }
+
+        } catch (e) {
+            overlay.classList.remove('active');
+            console.error(e);
+            isSigning = false;
+            alert("环境调用失败，请检查是否安装了 JS Slash Runner 插件。\n错误信息: " + e.message);
+        }
+    }
+</script>
+
+</body>
+</html>
+```
+$2

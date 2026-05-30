@@ -1,0 +1,17 @@
+{
+    "id": "b50d0bed-ff40-4a25-9ada-14feb4283324",
+    "scriptName": "[界面]前端界面状态栏",
+    "disabled": false,
+    "runOnEdit": false,
+    "findRegex": "<StatusPlaceHolderImpl/>",
+    "trimStrings": [],
+    "replaceString": "```\n<body>\n<script>\n$('body').load('https://testingcf.jsdelivr.net/gh/StageDog/tavern_helper_template/dist/角色卡示例/界面/状态栏/index.html')\n</script>\n</body>\n```",
+    "placement": [
+        2
+    ],
+    "substituteRegex": 0,
+    "minDepth": null,
+    "maxDepth": null,
+    "markdownOnly": true,
+    "promptOnly": false
+}

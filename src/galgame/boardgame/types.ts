@@ -1,7 +1,7 @@
 // ===== Board Game Types =====
 
 // 格子类型（仅作为"结果倾向权重"）
-export type NodeType = 'start' | 'empty' | 'encounter' | 'trap' | 'fortune' | 'end';
+export type NodeType = 'start' | 'empty' | 'encounter' | 'trap' | 'fortune' | 'battle' | 'end';
 
 // 事件倾向
 export type EventTendency = 'negative' | 'positive' | 'neutral';

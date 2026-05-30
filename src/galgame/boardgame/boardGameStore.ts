@@ -9,7 +9,8 @@ export const useBoardGameStore = defineStore('boardGame', () => {
 
   // ── Seed & Map ───────────────────────────────────────────────
   const seed = ref(1337);
-  const mapConfig = ref<MapConfig>(generateMap(1337));
+  const route = ref<'short' | 'medium' | 'long'>('medium');
+  const mapConfig = ref<MapConfig>(generateMap(1337, 'medium'));
 
   // ── Player ───────────────────────────────────────────────────
   const currentNodeId = ref<string>(mapConfig.value.startNodeId);
@@ -59,9 +60,10 @@ export const useBoardGameStore = defineStore('boardGame', () => {
 
   // ── Actions ──────────────────────────────────────────────────
 
-  function regenerateMap(newSeed?: number) {
+  function regenerateMap(newSeed?: number, newRoute?: 'short' | 'medium' | 'long') {
     if (newSeed !== undefined) seed.value = newSeed;
-    mapConfig.value = generateMap(seed.value);
+    if (newRoute !== undefined) route.value = newRoute;
+    mapConfig.value = generateMap(seed.value, route.value);
     resetGame();
   }
 
@@ -91,6 +93,8 @@ export const useBoardGameStore = defineStore('boardGame', () => {
    * 从事件池中抽取一张匹配格子类型的卡，用掉即删除
    */
   function drawEventFromPool(nodeType: string): GameEvent | null {
+    // battle 格子不走事件池
+    if (nodeType === 'battle') return null;
     const filtered = eventPool.value.filter(e => e.nodeType === nodeType || nodeType === 'encounter');
     if (filtered.length === 0) {
       // 池空了，回退到手动事件
@@ -164,7 +168,13 @@ export const useBoardGameStore = defineStore('boardGame', () => {
 
     if (stepsRemaining.value <= 0) {
       // Only trigger event when steps are exhausted (and not on end point)
-      if (node && node.type !== 'empty' && node.type !== 'start' && node.type !== 'end') {
+      if (node && node.type === 'battle') {
+        // battle 格子走战斗流程，不进入事件池
+        currentEventNodeType.value = 'battle';
+        addLog(`⚔ 遭遇战斗！`);
+        // 战斗流程由 dispatchEngine.handleBattleNode 处理
+        phase.value = 'idle'; // 临时设为 idle，等待战斗 UI
+      } else if (node && node.type !== 'empty' && node.type !== 'start' && node.type !== 'end') {
         // Will trigger event - store node type for potential AI generation
         currentEventNodeType.value = node.type;
         triggerEvent(node);
@@ -304,6 +314,7 @@ export const useBoardGameStore = defineStore('boardGame', () => {
   return {
     phase,
     seed,
+    route,
     mapConfig,
     currentNodeId,
     stats,

@@ -1,0 +1,3163 @@
+(function() {
+    // --- 核心配置 ---
+    const CONFIG = {
+        id: 'th-inventory-v96-returning-guest', // 版本号更新
+
+        customIconUrl: 'https://files.catbox.moe/i0uqx0.png',
+
+        domBallId: 'th-fixed-ball-ui',
+        domPanelId: 'th-fixed-panel-ui',
+        domStyleId: 'th-fixed-style-ui',
+        domStorageId: 'th-fixed-storage-popup-ui',
+        domEditId: 'th-fixed-edit-popup-ui',
+
+        varDataKey: 'inventory_data',
+        varMapKey: 'inventory_db_map',
+        varMaxIdKey: 'inventory_max_id',
+        varAchieveKey: 'achievement_data',
+        varStorageKey: 'inventory_storage_list',
+        varPriceKey: 'inventory_price_board',
+        varStaffItemsKey: 'inventory_staff_items',
+        varPriceSlotsKey: 'inventory_price_slots',
+        varNoticeKey: 'inventory_notice_text',
+
+        // 【新增】来访者信息的变量名
+        varGuestKey: 'guest_group_info',
+        varGuestLogKey: 'guest_log_archive',
+        guestLogPromptId: 'th_guest_log_prompt',
+        guestLogDepth: 5,
+        maxGuestLogEntries: 999,       // 存储上限（用户可在来客簿Tab查看）
+        maxGuestLogPromptEntries: 8,  // AI prompt注入上限（控制token）
+        varRenoKey: 'inventory_renovation_list', // 基建记录
+
+        promptId: 'th_inventory_system_prompt',
+        pricePromptId: 'th_price_board_prompt',
+        staffPromptId: 'th_staff_prompt',
+        guestPromptId: 'th_guest_info_prompt',
+        departurePromptId: 'th_departure_trigger_prompt',
+        infraPromptId: 'th_infra_history_prompt', // 基建记录Prompt
+
+        inventoryDepth: 4,
+        priceBoardDepth: 3,
+        staffDepth: 3,
+        guestPromptDepth: 3,
+        infraDepth: 3, // 基建记录注入深度
+
+        varStaffKey: 'inventory_staff_data',           // 【新增】员工数据持久化
+        varCheckpointKey: 'inventory_scan_checkpoint', // 【新增】增量扫描检查点
+        varImportBaseKey: 'inventory_import_base',     // 导入基准（独立存储，不受clearCheckpoint影响）
+        checkpointInterval: 25,                        // 全量扫后自动保存检查点的间隔楼数
+
+        // --- 缩放与夜间模式配置 ---
+        scaleKey: 'th_inventory_ui_scale_v1',
+        nightModeKey: 'th_inventory_night_mode_v1',
+
+        debounceDelay: 800,
+        toggleButtonName: '🌸 显隐悬浮球',
+
+        regexLineAdd: /CMD:ADD\s*(.*)/gi,
+        regexLineMod: /CMD:MOD\s*(.*)/gi,
+        regexLineDel: /CMD:DEL\s*(.*)/gi,
+        regexGuestDel: /CMD:DEL_GUEST\s*[|:：]\s*(.*?)(?=<|$|\n)/gi,
+        regexStaffDel: /CMD:DEL_STAFF\s*[|:：]\s*(.*?)(?=<|$|\n)/gi,
+        regexAchievement: /【.*?成就.*?[：:]\s*[（(](.*?)[)）]\s*([\s\S]*?)\s*(?=[|｜\s,]*?(?:触发)?条件).*?条件.*?[：:]\s*([\s\S]*?)\s*(?=[|｜\s,]*?奖励).*?奖励.*?[：:]\s*([\s\S]*?)\s*(?=[|｜\s,]*?(?:系统)?评价).*?评价.*?[：:]\s*([\s\S]*?)\s*】/g,
+
+        // 1. 块匹配：定位 <New_Employee_Profile> 区域
+        regexStaffBlock: /<New_Employee_Profile>\s*[\s\S]*?【([\s\S]*?)】[\s\S]*?<\/New_Employee_Profile>/gi,
+        // 2. 键值对匹配
+        regexStaffKV: /([^|｜【]+?)\s*[：:]\s*([\s\S]*?)(?=(?:\s*[|｜])|(?:\s*】)|$)/g,
+
+        // 基建修缮扫描
+        regexStatusDate: /\[STATUS\]\s*(.*?)\s*[|｜]/i,
+        regexRenovation: /(?:>\s*)?\[系统事件\].*?花费了(\d+)小判.*?修缮[：:]\s*(.+)/gi,
+
+        // 价目板初始化扫描
+        regexPriceBoard: /<Init_Price_Board>\s*([\s\S]*?)<\/Init_Price_Board>/i
+    };
+
+    let debounceTimer = null;
+    let priceSaveTimer = null;
+    let isInitializingPriceBoard = false;
+    let isPanelOpen = false;
+    let isStorageOpen = false;
+    let isBallVisible = true;
+    let initRetryCount = 0;
+
+    // --- 缩放变量 ---
+    let uiScale = 1.0;
+    try {
+        const saved = localStorage.getItem(CONFIG.scaleKey);
+        if (saved) uiScale = parseFloat(saved);
+    } catch(e) {}
+
+    // --- 夜间模式变量 ---
+    let isNightMode = false;
+    try {
+        const savedMode = localStorage.getItem(CONFIG.nightModeKey);
+        isNightMode = (savedMode === 'true');
+    } catch(e) {}
+
+    let currentWorldDate = "";
+
+    // === 按需渲染脏标记 ===
+    // 记录哪些Tab的数据在上次渲染后发生了变化，切换到该Tab时才真正渲染DOM
+    const dirtyTabs = new Set(['inventory', 'staff', 'achievement', 'price', 'infra', 'guest']);
+
+    // 价目Tab子视图：'board'=价目表，'shelf'=货架&公告
+    let priceSubView = 'board';
+
+    // =================================================================
+    // === 核心工具函数 ===
+    // =================================================================
+
+    function loadTwemoji() {
+        if (window.twemoji) return;
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/@twemoji/api@latest/dist/twemoji.min.js';
+        script.crossOrigin = 'anonymous';
+        document.head.appendChild(script);
+    }
+
+    function loadGoogleFonts() {
+        if (document.getElementById('th-google-font')) return;
+        const link = document.createElement('link');
+        link.id = 'th-google-font';
+        link.href = 'https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@700&display=swap';
+        link.rel = 'stylesheet';
+        document.head.appendChild(link);
+    }
+
+    function parseEmoji(element) {
+        if (window.twemoji && element) {
+            requestAnimationFrame(() => {
+                try {
+                    window.twemoji.parse(element, { folder: 'svg', ext: '.svg' });
+                } catch (e) { console.error('Twemoji error:', e); }
+            });
+        }
+    }
+
+    function smartParse(rawStr) {
+        if (!rawStr) return [];
+        let str = rawStr.replace(/<[^>]+>/g, '').trim();
+        str = str.replace(/[（）]/g, m => m === '（' ? '(' : ')');
+        if (str.startsWith('|') || str.startsWith('｜') || str.startsWith('/')) str = str.substring(1);
+        if (str.endsWith('|') || str.endsWith('｜') || str.endsWith('/')) str = str.substring(0, str.length - 1);
+        const separator = str.includes('|') ? '|' : (str.includes('｜') ? '｜' : '/');
+        const parts = str.split(separator);
+        return parts.map(p => { let s = p.trim(); if (s.startsWith('(') && s.endsWith(')')) s = s.substring(1, s.length - 1).trim(); return s; }).filter(p => p !== "");
+    }
+
+    function getEventPos(e) {
+        const evt = e.originalEvent || e;
+        if (evt.touches && evt.touches.length > 0) {
+            return { x: evt.touches[0].clientX, y: evt.touches[0].clientY };
+        }
+        if (evt.changedTouches && evt.changedTouches.length > 0) {
+            return { x: evt.changedTouches[0].clientX, y: evt.changedTouches[0].clientY };
+        }
+        return { x: evt.clientX, y: evt.clientY };
+    }
+
+    function updateUIScale(newScale) {
+        if (newScale) {
+            uiScale = parseFloat(newScale.toFixed(1));
+            if (uiScale < 0.5) uiScale = 0.5;
+            if (uiScale > 2.0) uiScale = 2.0;
+            localStorage.setItem(CONFIG.scaleKey, uiScale);
+        }
+        const pct = Math.round(uiScale * 100) + '%';
+        $('#th-scale-text').text(pct);
+        const transformVal = `translateX(-50%) scale(${uiScale})`;
+        $(`#${CONFIG.domPanelId}, #${CONFIG.domStorageId}, #${CONFIG.domDetailId}, #${CONFIG.domEditId}`).css({
+            'transform': transformVal,
+            'transform-origin': 'top center'
+        });
+    }
+
+    function toggleNightMode() {
+        isNightMode = !isNightMode;
+        localStorage.setItem(CONFIG.nightModeKey, isNightMode);
+        applyNightMode();
+    }
+
+    function applyNightMode() {
+        const ids = [CONFIG.domPanelId, CONFIG.domStorageId, CONFIG.domEditId];
+        const $btn = $('#th-night-toggle');
+        if (isNightMode) {
+            ids.forEach(id => $('#' + id).addClass('th-night-mode'));
+            $('#th-detail-popup-ui').addClass('th-night-mode');
+            $btn.text('🌙');
+            $btn.attr('title', '切换至日间模式');
+        } else {
+            ids.forEach(id => $('#' + id).removeClass('th-night-mode'));
+            $('#th-detail-popup-ui').removeClass('th-night-mode');
+            $btn.text('☀️');
+            $btn.attr('title', '切换至夜间模式');
+        }
+    }
+
+    // 【新增】来访者信息解析函数
+        function parseGuestData(content) {
+    const results = [];
+
+    // 第一层：提取所有 <Guest_Info> 块
+    const blockRegex = /<Guest_Info>([\s\S]*?)<\/Guest_Info>/gi;
+    let blockMatch;
+
+    while ((blockMatch = blockRegex.exec(content)) !== null) {
+        const blockContent = blockMatch[1];
+
+        // 第二层：按"住宿日期:"切割，每次出现就是一个新来访者
+        // 用 lookahead 保留"住宿日期:"在每段开头
+        const chunks = blockContent.split(/(?=\r?\n(?:住宿|停留)日期[:：])/);
+
+        chunks.forEach(chunk => {
+            chunk = chunk.trim();
+            if (!chunk || !chunk.match(/(?:住宿|停留)日期[:：]/)) return;
+
+            const dateMatch = chunk.match(/(?:住宿|停留)日期[:：]\s*(.*?)\s*~\s*(.*?)(?:\r?\n|$)/);
+            if (!dateMatch) return;
+
+            const purposeMatch = chunk.match(/(?:团队|来访)目的[:：]\s*(.*?)(?:\r?\n|$)/);
+            // 重要角色：抓到"其它/他角色"出现之前，或段落结尾
+            const rolesMatch = chunk.match(/重要角色.*?[:：]([\s\S]*?)(?=\r?\n其[它他]角色|$)/);
+            // 其它角色：从标签后到段落结尾
+            const othersMatch = chunk.match(/其[它他]角色.*?[:：]\s*([\s\S]*?)$/);
+
+            const rolesList = [];
+            const rawRoles = rolesMatch ? rolesMatch[1] : "";
+            if (rawRoles) {
+                const blocks = rawRoles.match(/【[\s\S]*?】/g) || [];
+                blocks.forEach(b => {
+                    var r = {};
+                    b.replace(/[【】]/g, "").split(/[|｜]/).forEach(p => {
+                        var arr = p.split(/[:：]/);
+                        if (arr.length >= 2) r[arr[0].trim()] = arr.slice(1).join(':').trim();
+                    });
+                    r['room'] = "";
+                    rolesList.push(r);
+                });
+            }
+
+            results.push({
+                date_range: dateMatch[1].trim() + " ~ " + dateMatch[2].trim(),
+                purpose: purposeMatch ? purposeMatch[1].trim() : "",
+                roles: rolesList,
+                others: othersMatch && othersMatch[1].trim() && othersMatch[1].trim() !== '无' ? othersMatch[1].trim() : "",
+                others_room: "",
+                pending_payment: "",
+                note: ""
+            });
+        });
+    }
+
+    return results; // 始终返回数组
+}
+
+// 【新增】生成来访者团体的唯一ID（防重复/防覆盖关键）
+    function getGuestGroupID(data) {
+        // 逻辑：用 "住宿日期 + 领头人姓名" 作为唯一标识
+        // 如果没有角色信息，就用 "住宿日期 + 目的"
+        let keyPart = "Unknown";
+        if (data.roles && data.roles.length > 0) {
+            // 尝试获取角色列表里第一个人的姓名
+            keyPart = data.roles[0]['姓名'] || data.roles[0]['Name'] || '未知';
+        } else {
+            keyPart = data.purpose.substring(0, 10); // 取目的的前10个字
+        }
+        // 生成 ID，例如: "霜降1日~2日_萨尔瓦托雷"
+        return `${data.date_range}_${keyPart}`;
+    }
+
+
+    function getVars() {
+        try {
+            if (typeof TavernHelper !== 'undefined') {
+                return TavernHelper.getVariables({ type: 'chat' }) || {};
+            }
+            return {};
+        } catch (e) {
+            console.warn("getVars failed", e);
+            return {};
+        }
+    }
+
+    function getMaxId() { const val = getVars()[CONFIG.varMaxIdKey]; return typeof val === 'number' ? val : 0; }
+    function getDbMap() { return getVars()[CONFIG.varMapKey] || {}; }
+
+    // =================================================================
+    // === 逻辑功能函数 ===
+    // =================================================================
+
+    function getPriceData() {
+        const data = getVars()[CONFIG.varPriceKey];
+        if (!Array.isArray(data) || data.length === 0) {
+            return [ { name: "", price: "" }, { name: "", price: "" }, { name: "", price: "" }, { name: "", price: "" }, { note: "" } ];
+        }
+        const last = data[data.length - 1];
+        if (!last || typeof last.note === 'undefined') {
+            data.push({ note: "" });
+        }
+        return data;
+    }
+
+    function getPriceSlotsData() {
+        const data = getVars()[CONFIG.varPriceSlotsKey];
+        if (!Array.isArray(data) || data.length < 6) {
+            return [ { id: null, price: "" }, { id: null, price: "" }, { id: null, price: "" }, { id: null, price: "" }, { id: null, price: "" }, { id: null, price: "" } ];
+        }
+        return data;
+    }
+
+    function savePriceData() {
+        // 价目板行数据：只有在价目板视图时才从 DOM 读，否则从变量读（防止切换子视图时丢数据）
+        let newData;
+        if (priceSubView === 'board' && $('#th-list-price .th-price-row.normal').length > 0) {
+            newData = [];
+            $('#th-list-price .th-price-row.normal').each(function() {
+                const name = $(this).find('.name-input').val().trim();
+                const price = $(this).find('.price-input').val().trim();
+                if (name || price) newData.push({ name, price });
+            });
+            const note = $('#th-list-price .th-price-row.special .note-input').val().trim();
+            newData.push({ note });
+        } else {
+            // 货架视图或面板关闭时，直接用变量里的旧值，不覆盖
+            newData = getPriceData();
+        }
+
+        // 槽位定价：只有在货架视图时才从 DOM 读
+        const slotsData = getPriceSlotsData();
+        if (priceSubView === 'shelf') {
+            $('#th-shelf-slots-inner .th-price-slot-input').each(function(index) {
+                const val = $(this).val().trim();
+                if (slotsData[index]) slotsData[index].price = val;
+            });
+        }
+
+        if (typeof TavernHelper !== 'undefined') {
+            TavernHelper.insertOrAssignVariables({
+                [CONFIG.varPriceKey]: newData,
+                [CONFIG.varPriceSlotsKey]: slotsData
+            }, { type: 'chat' });
+        }
+        refreshPricePrompt(newData, slotsData);
+    }
+
+    /** 如果有未保存的价目数据，立即同步保存（防止 re-render 丢失编辑） */
+    function flushPriceSave() {
+        if (priceSaveTimer) {
+            clearTimeout(priceSaveTimer);
+            priceSaveTimer = null;
+            savePriceData();
+        }
+    }
+
+    /** 将当前价目表导出为 JSON 文件 */
+    function exportPriceData() {
+        flushPriceSave();
+        const listData = getPriceData();
+        const slotsData = getPriceSlotsData();
+        const exportObj = { version: 1, priceList: listData, priceSlots: slotsData };
+        const json = JSON.stringify(exportObj, null, 2);
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'price_board.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    /** 从 JSON 文件导入价目表并覆盖当前数据 */
+    function importPriceData() {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json,application/json';
+        input.onchange = function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(evt) {
+                try {
+                    const obj = JSON.parse(evt.target.result);
+                    let listData = null, slotsData = null;
+                    if (obj.version === 1 && Array.isArray(obj.priceList)) {
+                        listData = obj.priceList;
+                        slotsData = obj.priceSlots || null;
+                    } else if (Array.isArray(obj)) {
+                        // 兼容直接存 priceList 数组的旧格式
+                        listData = obj;
+                    } else {
+                        alert('价目表文件格式不正确，无法导入。');
+                        return;
+                    }
+                    if (typeof TavernHelper !== 'undefined') {
+                        const toSave = { [CONFIG.varPriceKey]: listData };
+                        if (slotsData) toSave[CONFIG.varPriceSlotsKey] = slotsData;
+                        TavernHelper.insertOrAssignVariables(toSave, { type: 'chat' });
+                    }
+                    renderPriceBoard();
+                } catch(err) {
+                    alert('读取文件失败：' + err.message);
+                }
+            };
+            reader.readAsText(file, 'utf-8');
+        };
+        document.body.appendChild(input);
+        input.click();
+        document.body.removeChild(input);
+    }
+
+    function addPriceRow() {
+        const currentData = getPriceData();
+        const noteData = currentData.pop();
+        currentData.push({ name: "", price: "" });
+        currentData.push(noteData);
+
+        if (typeof TavernHelper !== 'undefined') {
+            TavernHelper.insertOrAssignVariables({ [CONFIG.varPriceKey]: currentData }, { type: 'chat' });
+        }
+        renderPriceBoard();
+    }
+
+function normalize(str) {
+    return String(str || "").replace(/\s+/g, "").replace(/[（(][^)）]*[)）]/g, "").replace(/[、，,。.·・\-]/g, "").normalize("NFKC");
+}
+
+function extractDateKey(str) {
+    if (!str) return "";
+    const lastRi = str.lastIndexOf("日");
+    if (lastRi === -1) return normalize(str);
+    const lastYue = str.lastIndexOf("月", lastRi);
+    if (lastYue === -1) return normalize(str);
+    const monthPart = str.substring(Math.max(0, lastYue - 2), lastYue);
+    const dayPart = str.substring(lastYue + 1, lastRi);
+    return normalize(monthPart + dayPart);
+}
+
+    function checkDeparturePrompt(guestList) {
+        const normalize = (str) => {
+            if (!str) return "";
+            return String(str).replace(/\s+/g, "").replace(/[（(][^)）]*[)）]/g, "").replace(/[、，,。.·・\-]/g, "").normalize("NFKC").trim();
+        };
+
+        // 获取 MVU 变量 (保持不变)
+        let rawToday = "";
+        try {
+            const mvuInterface = window.Mvu || (window.parent && window.parent.Mvu);
+            if (mvuInterface) {
+                const mvuData = mvuInterface.getMvuData({ type: 'message', message_id: 'latest' });
+                if (mvuData && mvuData.stat_data && mvuData.stat_data['当前时间']) rawToday = mvuData.stat_data['当前时间'];
+                else {
+                    const chatData = mvuInterface.getMvuData({ type: 'chat' });
+                    if (chatData && chatData.stat_data && chatData.stat_data['当前时间']) rawToday = chatData.stat_data['当前时间'];
+                }
+            }
+        } catch (e) { console.error(e); }
+
+        const cleanToday = normalize(rawToday);
+        if (!cleanToday) return;
+
+        let triggerLines = [];
+
+        if (Array.isArray(guestList)) {
+            guestList.forEach(g => {
+                const effectiveDateStr = g.custom_date || g.date_range;
+                if (!effectiveDateStr) return;
+
+                const rangeParts = effectiveDateStr.split(/[~～]/);
+                if (rangeParts.length >= 2) {
+                    const rawCheckOut = rangeParts[1];
+                    const cleanCheckOut = extractDateKey(rawCheckOut);
+                    const todayKey = extractDateKey(rawToday);
+
+                    let groupName = "未知来访者";
+                    if (g.roles && g.roles.length > 0) {
+                        groupName = g.roles[0]['姓名'] || g.roles[0]['Name'] || "某来访者";
+                    }
+                    let othersStr = g.others ? `${g.others}` : "";
+
+                    if (cleanCheckOut === todayKey) {
+                        // 退房日=今天：首次触发，设置标记
+                        g.departure_prompted = true;
+                        triggerLines.push(`注意，今日计划离开的来访者团体有：${groupName}（${othersStr}），请自然合理的安排离店剧情，并在正文末尾输出<Guest_Departure>标签。`);
+                    } else if (g.departure_prompted) {
+                        // 退房日已过但来客仍未离店：持续提醒
+                        triggerLines.push(`注意，${groupName}（${othersStr}）的预定退房日已过但仍未离店。请在本轮安排其离店，并输出<Guest_Departure>标签。如果剧情中住宿已延长，请用户在住客记录面板中更新日期。`);
+                    }
+                }
+            });
+        }
+
+        // 注入 Prompt (保持不变)
+        if (triggerLines.length > 0) {
+            // if(window.toastr) toastr.success("触发离店剧情!", "系统");
+            const content = `<Story_Guidance>\n[剧情引导]\n${triggerLines.join('\n')}\n</Story_Guidance>`;
+            const injection = { id: CONFIG.departurePromptId, position: 'in_chat', depth: 2, role: 'system', content: content, should_scan: true };
+            if (typeof injectPrompts !== 'undefined') injectPrompts([injection]);
+        } else {
+            if (typeof uninjectPrompts !== 'undefined') uninjectPrompts([CONFIG.departurePromptId]);
+        }
+    }
+
+    // =================================================================
+    // === 刷新 AI 可见的来访者 Prompt (支持手动修改与备注) ===
+    // =================================================================
+    function _notNA(v) { return v && !/^n\/?\.?a\.?$/i.test(v.trim()) ? v : ''; }
+    function archiveGuest(guest, messageText, currentArchive) {
+            if (!Array.isArray(currentArchive)) currentArchive = [];
+            var role = (guest.roles && guest.roles[0]) || {};
+            var outcome = '已离店', note = '', departureDarkfall = '', departureAppearance = '', departurePersonality = '', departureIntimacy = '', departureMasterRel = '';
+            var _archiveName = normalize(role['姓名'] || role['Name'] || '');
+            var depMatch = messageText.match(/<Guest_Departure>\s*(.*?)\s*<\/Guest_Departure>/i);
+            if (depMatch) {
+                var _dmName = normalize(depMatch[1].split('|')[0]);
+                if (_dmName !== _archiveName) depMatch = null;
+            }
+            if (!depMatch) {
+                try {
+                    var _allMsgs = getChatMessages('0-{{lastMessageId}}');
+                    if (_allMsgs && _allMsgs.length > 0) {
+                        for (var _mi = _allMsgs.length - 1; _mi >= Math.max(0, _allMsgs.length - 5); _mi--) {
+                            var _mt = _allMsgs[_mi].message || _allMsgs[_mi].mes || '';
+                            var _allDep = _mt.matchAll(/<Guest_Departure>\s*(.*?)\s*<\/Guest_Departure>/gi);
+                            for (var _dm of _allDep) {
+                                var _candidateName = normalize(_dm[1].split('|')[0]);
+                                if (_candidateName === _archiveName) { depMatch = _dm; break; }
+                            }
+                            if (depMatch) break;
+                        }
+                    }
+                } catch(_e) {}
+            }
+            if (depMatch) {
+                var parts = depMatch[1].split('|');
+                if (parts[1]) outcome = parts[1].trim();
+                if (parts[2]) note = parts[2].trim();
+                if (parts[3]) departureDarkfall = parts[3].trim();
+                if (parts[4]) departureAppearance = parts[4].trim();
+                if (parts[5]) departurePersonality = parts[5].trim();
+                if (parts[6]) departureIntimacy = parts[6].trim();
+                if (parts[7]) departureMasterRel = parts[7].trim();
+            }
+            var _dateRange = guest.custom_date || guest.date_range || '';
+            var _isDuplicate = currentArchive.some(function(entry) {
+                return normalize(entry.name) === _archiveName && entry.date_range === _dateRange;
+            });
+            if (_isDuplicate) return currentArchive;
+            currentArchive.push({
+                name: role['姓名'] || role['Name'] || '未知',
+                type: _notNA(role['刀种']) || _notNA(role['职业']) || '',
+                affiliation: _notNA(role['隶属']) || '',
+                date_range: guest.custom_date || guest.date_range || '',
+                purpose: guest.custom_purpose || guest.purpose || '',
+                outcome: outcome,
+                note: note,
+                departure_darkfall: departureDarkfall,
+                departure_appearance: departureAppearance,
+                departure_personality: departurePersonality,
+                departure_intimacy: departureIntimacy,
+                departure_master_rel: departureMasterRel,
+                roleCount: guest.roles ? guest.roles.length : 1,
+                others: guest.others || '',
+                roles: guest.roles ? guest.roles.map(function(r) {
+                    var copy = {};
+                    Object.keys(r).forEach(function(k) { if (k !== 'room') copy[k] = r[k]; });
+                    return copy;
+                }) : []
+            });
+            if (currentArchive.length > CONFIG.maxGuestLogEntries) {
+                currentArchive = currentArchive.slice(-CONFIG.maxGuestLogEntries);
+            }
+            return currentArchive;
+        }
+
+        function refreshGuestLogPrompt(archive) {
+            if (!archive || archive.length === 0) {
+                if (typeof uninjectPrompts !== 'undefined') uninjectPrompts([CONFIG.guestLogPromptId]);
+                return;
+            }
+            var promptLimit = CONFIG.maxGuestLogPromptEntries || 8;
+            var promptArchive = archive.length > promptLimit ? archive.slice(-promptLimit) : archive;
+            var nums = '①②③④⑤⑥⑦⑧';
+            var content = '<Guest_Log>\n来客簿：已离店的过往来访者记录(最近' + promptArchive.length + '组)。此处仅供回头客识别用，这些角色当前不在万事屋内。若同名角色再次到店，沿用此处记录的基本设定。\n';
+            promptArchive.forEach(function(e, i) {
+                var nameStr = e.name;
+                var _t = (e.type && !/^n\/?\.?a\.?$/i.test(e.type.trim())) ? e.type : '';
+                var _a = (e.affiliation && !/^n\/?\.?a\.?$/i.test(e.affiliation.trim())) ? e.affiliation : '';
+                if (_t || _a) {
+                    nameStr += '(' + [_t, _a].filter(Boolean).join('·') + ')';
+                }
+                if (e.roleCount > 1) {
+                    nameStr += '+' + ((e.roleCount || 1) - 1) + '人';
+                }
+                if (e.others) {
+                    nameStr += '+' + e.others;
+                }
+                content += (nums[i] || (i+1)+'.') + nameStr + '|' + e.date_range + '|' + e.purpose + '|' + e.outcome;
+                if (e.note) content += '|' + e.note;
+                if (e.departure_darkfall) content += '|离店暗堕:' + e.departure_darkfall;
+                content += '\n';
+            });
+            content += '</Guest_Log>';
+            if (typeof injectPrompts !== 'undefined') {
+                injectPrompts([{
+                    id: CONFIG.guestLogPromptId,
+                    position: 'chat',
+                    depth: CONFIG.guestLogDepth,
+                    role: 'system',
+                    content: content,
+                    should_scan: false
+                }]);
+            }
+        }
+
+    // === 来客簿Tab渲染 ===
+    function renderGuestLog(archive) {
+        const $list = $('#th-list-guest');
+        $list.empty();
+        if (!archive || archive.length === 0) {
+            $list.html('<div style="text-align:center; color:#888; margin-top:20px;">暂无来客记录<br><span style="font-size:10px;">来访者离店后会自动记录在此</span></div>');
+            return;
+        }
+        var nums = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳';
+        var html = '';
+        for (var i = archive.length - 1; i >= 0; i--) {
+            var e = archive[i];
+            var nameStr = e.name || '未知';
+            if (_notNA(e.type) || _notNA(e.affiliation)) {
+                nameStr += '<span style="opacity:0.7; font-size:11px;"> (' + [_notNA(e.type), _notNA(e.affiliation)].filter(Boolean).join('\u00b7') + ')</span>';
+            }
+            if (e.roleCount > 1) {
+                nameStr += '<span style="opacity:0.6; font-size:10px;"> +' + ((e.roleCount || 1) - 1) + '人</span>';
+            }
+            if (e.others) {
+                nameStr += '<span style="opacity:0.6; font-size:10px;"> +' + e.others + '</span>';
+            }
+            var outcomeColor = (e.outcome && e.outcome.indexOf('失败') >= 0) ? '#c44' : '#5a7a5a';
+            html += '<div style="border-bottom:1px dashed rgba(160,110,80,0.2); padding:8px 4px; margin-bottom:4px;">';
+            html += '<div style="font-size:13px; font-weight:700; color:var(--th-inv-text,#3A3226);">' + (nums[archive.length - 1 - i] || '') + ' ' + nameStr + '</div>';
+            html += '<div style="font-size:11px; color:#666; margin-top:3px;">' + (e.date_range || '?') + ' | ' + (e.purpose || '?') + '</div>';
+            html += '<div style="font-size:11px; color:' + outcomeColor + '; margin-top:2px;">\u2192 ' + (e.outcome || '已离店') + '</div>';
+            if (e.note) {
+                html += '<div style="font-size:10px; color:#888; font-style:italic; margin-top:2px;">\u201c' + e.note + '\u201d</div>';
+            }
+            html += '</div>';
+        }
+        $list.html(html);
+        parseEmoji($list[0]);
+    }
+
+        function refreshGuestPrompt(guestList, archive) {
+        // 如果没人，清除 Prompt
+        if (!guestList || guestList.length === 0) {
+            if (typeof uninjectPrompts !== 'undefined') uninjectPrompts([CONFIG.guestPromptId]);
+            return;
+        }
+
+        // 构建 archive 索引：normalize(name)+'|'+normalize(affiliation) → [entries]
+        const archiveIndex = {};
+        if (archive && archive.length > 0) {
+            archive.forEach(function(entry) {
+                if (!entry.roles || entry.roles.length === 0) {
+                    // 无角色详情时用顶层 name+affiliation
+                    const aName = normalize(entry.name || '');
+                    const aAff = normalize(entry.affiliation || '');
+                    if (aName) {
+                        const key = aName + '|' + aAff;
+                        if (!archiveIndex[key]) archiveIndex[key] = [];
+                        archiveIndex[key].push(entry);
+                    }
+                } else {
+                    entry.roles.forEach(function(r) {
+                        const aName = normalize(r['姓名'] || r['Name'] || '');
+                        const aAff = normalize(r['隶属'] || '');
+                        if (aName) {
+                            const key = aName + '|' + aAff;
+                            if (!archiveIndex[key]) archiveIndex[key] = [];
+                            archiveIndex[key].push(entry);
+                        }
+                    });
+                }
+            });
+        }
+
+        let content = `<Current_Guest_Group_Info>\n`;
+        content += `此处记录了当前正在万事屋内的来访者团体信息。若信息有更新，请以最新信息为准。\n`;
+
+        guestList.forEach((g, i) => {
+            // --- 1. 优先使用手动修改的数据 ---
+            const displayDate = g.custom_date || g.date_range || "未知日期";
+            const displayPurpose = g.custom_purpose || g.purpose || "未知目的";
+
+            // --- 2. 整合备注与欠费 ---
+            let statusParts = [];
+            if (g.note) statusParts.push(`备注: ${g.note}`);
+            if (g.pending_payment && g.pending_payment != "0") statusParts.push(`待支付: ${g.pending_payment}`);
+
+            const statusStr = statusParts.length > 0 ? ` [${statusParts.join(' | ')}]` : "";
+
+            content += `\n【团体 ${i + 1}】\n`;
+            content += `时间: ${displayDate}\n`;
+            content += `事由: ${displayPurpose}${statusStr}\n`;
+
+            // --- 3. 角色详情 ---
+            if (g.roles && g.roles.length > 0) {
+                content += `成员:\n`;
+                g.roles.forEach(r => {
+                    const rName = r['姓名'] || r['Name'] || "未知角色";
+                    const rRoom = r.room ? `房号:${r.room}` : "未分配房间";
+
+                    let attrs = [];
+                    attrs.push(`姓名:${rName}`);
+                    if (r['隶属']) attrs.push(`隶属:${r['隶属']}`);
+                    if (r['刀种'] && _notNA(r['刀种'])) attrs.push(`刀种:${r['刀种']}`);
+                    if (r['性别']) attrs.push(`性别:${r['性别']}`);
+                    if (r['职业'] && _notNA(r['职业'])) attrs.push(`职业:${r['职业']}`);
+                    if (r['来访身份']) attrs.push(`来访身份:${r['来访身份']}`);
+                    if (r['性取向'] && _notNA(r['性取向'])) attrs.push(`性取向:${r['性取向']}`);
+                    if (r['刀主关系'] && _notNA(r['刀主关系'])) attrs.push(`刀主关系:${r['刀主关系']}`);
+                    if (r['本丸职责'] && _notNA(r['本丸职责'])) attrs.push(`本丸职责:${r['本丸职责']}`);
+                    if (r['刀主灰度'] && _notNA(r['刀主灰度'])) attrs.push(`刀主灰度:${r['刀主灰度']}`);
+                    if (r['统御风格'] && _notNA(r['统御风格'])) attrs.push(`统御风格:${r['统御风格']}`);
+                    if (r['本丸状况'] && _notNA(r['本丸状况'])) attrs.push(`本丸状况:${r['本丸状况']}`);
+                    if (r['身份认同'] && _notNA(r['身份认同'])) attrs.push(`身份认同:${r['身份认同']}`);
+                    if (r['性格概述']) attrs.push(`性格概述:${r['性格概述']}`);
+                    if (r['暗堕关联']) attrs.push(`暗堕关联:${r['暗堕关联']}`);
+                    if (r['亲密倾向'] && _notNA(r['亲密倾向'])) attrs.push(`亲密倾向:${r['亲密倾向']}`);
+                    attrs.push(rRoom);
+                    const appearance = r['外形描写'] || "";
+
+                    content += `  【${attrs.join('|')}】\n`;
+                    if (appearance) {
+                        content += `    外形描写:${appearance}\n`;
+                    }
+                });
+            }
+
+            // --- 4. 其他背景板 ---
+            if (g.others) {
+                const oRoom = g.others_room ? ` (房号:${g.others_room})` : "";
+                content += `  + 其他随行人员: ${g.others}${oRoom}\n`;
+            }
+
+            // --- 5. 回头客档案：检查当前团体角色是否匹配 archive ---
+            if (g.roles && Object.keys(archiveIndex).length > 0) {
+                let matchedEntries = [];
+                let matchedKeys = new Set();
+                g.roles.forEach(r => {
+                    const rName = normalize(r['姓名'] || r['Name'] || '');
+                    const rAff = normalize(r['隶属'] || '');
+                    if (rName) {
+                        const key = rName + '|' + rAff;
+                        if (archiveIndex[key] && !matchedKeys.has(key)) {
+                            matchedKeys.add(key);
+                            archiveIndex[key].forEach(e => matchedEntries.push(e));
+                        }
+                    }
+                });
+                if (matchedEntries.length > 0) {
+                    content += `  📋回头客档案(过往来访记录，该角色当前在店内):\n`;
+                    matchedEntries.forEach(e => {
+                        let line = `    ${e.name}`;
+                        if (_notNA(e.type) || _notNA(e.affiliation)) line += `(${[_notNA(e.type), _notNA(e.affiliation)].filter(Boolean).join('·')})`;
+                        line += `|${e.date_range}|${e.purpose}|${e.outcome}`;
+                        if (e.note) line += `|${e.note}`;
+                        if (e.departure_darkfall) line += `|离店暗堕:${e.departure_darkfall}`;
+                        content += line + `\n`;
+                        let details = [];
+                        if (e.departure_appearance && e.departure_appearance !== '同来时') details.push(`外形:${e.departure_appearance}`);
+                        if (e.departure_personality && e.departure_personality !== '同来时') details.push(`性格:${e.departure_personality}`);
+                        if (e.departure_intimacy) details.push(`亲密:${e.departure_intimacy}`);
+                        if (e.departure_master_rel) details.push(`与主人关系:${e.departure_master_rel}`);
+                        if (details.length > 0) content += `      离店状态→${details.join('|')}\n`;
+                    });
+                }
+            }
+        });
+
+        content += `\n</Current_Guest_Group_Info>`;
+
+        const injection = {
+            id: CONFIG.guestPromptId || 'th_guest_info_prompt',
+            position: 'chat',
+            depth: CONFIG.guestPromptDepth || 3,
+            role: 'system',
+            content: content,
+            should_scan: true
+        };
+
+        if (typeof injectPrompts !== 'undefined') injectPrompts([injection]);
+    }
+
+    function refreshPricePrompt(listData = null, slotsData = null) {
+        if (!listData) listData = getPriceData();
+        if (!slotsData) slotsData = getPriceSlotsData();
+
+        let boardLines = [];
+
+        const count = listData.length - 1;
+        for (let i = 0; i < count; i++) {
+            if (listData[i] && listData[i].name && listData[i].price) {
+                boardLines.push(`${listData[i].name}-${listData[i].price}`);
+            }
+        }
+
+        const noteObj = listData[listData.length - 1];
+        if (noteObj) {
+            const noteContent = noteObj.note ? `(${noteObj.note})` : '';
+            boardLines.push(`主人特别慰藉${noteContent}-面议`);
+        }
+
+        // 货架商品：独立区块，放在主人特别慰藉后面
+        const fullInventory = getVars()[CONFIG.varDataKey] || [];
+        let shelfLines = [];
+        slotsData.forEach(slot => {
+            if (slot.id) {
+                const item = fullInventory.find(it => it.id === slot.id);
+                if (item) {
+                    const priceStr = slot.price ? slot.price : "定价待定";
+                    const descStr = item.desc ? `(${item.desc})` : '';
+                    shelfLines.push(`${item.name}${descStr}-${priceStr}`);
+                }
+            }
+        });
+
+        // 公告板内容
+        const noticeText = getVars()[CONFIG.varNoticeKey] || '';
+
+        if (boardLines.length === 0 && shelfLines.length === 0 && !noticeText) {
+            if (typeof uninjectPrompts !== 'undefined') uninjectPrompts([CONFIG.pricePromptId]);
+            return;
+        }
+
+        let promptContent = `\n<Tavern_Tariff>\n`;
+        if (boardLines.length > 0) {
+            promptContent += `[万事屋价目板]\n${boardLines.join('\n')}\n`;
+        }
+        if (shelfLines.length > 0) {
+            promptContent += `[万事屋商品架]\n${shelfLines.join('\n')}\n`;
+        }
+        if (noticeText) {
+            promptContent += `[公告板]\n${noticeText}\n`;
+        }
+        promptContent += `</Tavern_Tariff>\n`;
+
+        if (typeof uninjectPrompts !== 'undefined') uninjectPrompts([CONFIG.pricePromptId]);
+        const injection = { id: CONFIG.pricePromptId, position: 'in_chat', depth: CONFIG.priceBoardDepth, role: 'system', content: promptContent, should_scan: true };
+        if (typeof injectPrompts !== 'undefined') injectPrompts([injection]);
+    }
+
+    function onPriceInputChange() {
+        const $input = $(this);
+        const val = $input.val();
+        const placeholder = $input.attr('placeholder');
+
+        if ($input.hasClass('th-price-input')) {
+            let $measure = $('#th-input-measure');
+            if ($measure.length === 0) {
+                $measure = $('<span id="th-input-measure"></span>').css({
+                    position: 'absolute', visibility: 'hidden', whiteSpace: 'pre',
+                    fontSize: '14px', fontWeight: 'bold', fontFamily: 'inherit'
+                });
+                $measure.appendTo('#' + CONFIG.domPanelId);
+            }
+            $measure.text(val || placeholder || '____');
+            const width = $measure.width() + 12;
+            $input.css('width', width + 'px');
+        }
+
+        if (!isInitializingPriceBoard) {
+            if (priceSaveTimer) clearTimeout(priceSaveTimer);
+            priceSaveTimer = setTimeout(() => { savePriceData(); }, 1000);
+        }
+    }
+
+    function moveToStorage(id) {
+        const storageList = getVars()[CONFIG.varStorageKey] || [];
+        if (!storageList.includes(id)) {
+            storageList.push(id);
+            if (typeof TavernHelper !== 'undefined') {
+                TavernHelper.insertOrAssignVariables({ [CONFIG.varStorageKey]: storageList }, { type: 'chat' });
+            }
+            // if(window.toastr) toastr.success('放入杂物间', '系统');
+            performScan();
+        }
+    }
+
+    function retrieveFromStorage(id) {
+        let storageList = getVars()[CONFIG.varStorageKey] || [];
+        storageList = storageList.filter(sid => sid !== id);
+        if (typeof TavernHelper !== 'undefined') {
+            TavernHelper.insertOrAssignVariables({ [CONFIG.varStorageKey]: storageList }, { type: 'chat' });
+        }
+        // if(window.toastr) toastr.success('物品已取出', '系统');
+        closeDetailPopup();
+        performScan();
+    }
+
+    function moveStorageToStaff(itemId, staffName) {
+        let storageList = getVars()[CONFIG.varStorageKey] || [];
+        let staffMap = getVars()[CONFIG.varStaffItemsKey] || {};
+        storageList = storageList.filter(sid => sid !== itemId);
+        if (!staffMap[staffName]) staffMap[staffName] = [];
+        if (!staffMap[staffName].includes(itemId)) {
+            if (staffMap[staffName].length >= 2) {
+                if(window.toastr) toastr.warning(`${staffName} 手里拿不下了`, '系统');
+                return;
+            }
+            staffMap[staffName].push(itemId);
+        }
+        if (typeof TavernHelper !== 'undefined') {
+            TavernHelper.insertOrAssignVariables({ [CONFIG.varStorageKey]: storageList, [CONFIG.varStaffItemsKey]: staffMap }, { type: 'chat' });
+        }
+        // if(window.toastr) toastr.success(`物品已分配给 ${staffName}`, '系统');
+        performScan();
+    }
+
+    function moveStaffToStorage(itemId, staffName) {
+        let storageList = getVars()[CONFIG.varStorageKey] || [];
+        let staffMap = getVars()[CONFIG.varStaffItemsKey] || {};
+        if (staffMap[staffName]) staffMap[staffName] = staffMap[staffName].filter(sid => sid !== itemId);
+        if (!storageList.includes(itemId)) storageList.push(itemId);
+        if (typeof TavernHelper !== 'undefined') {
+            TavernHelper.insertOrAssignVariables({ [CONFIG.varStorageKey]: storageList, [CONFIG.varStaffItemsKey]: staffMap }, { type: 'chat' });
+        }
+        //if(window.toastr) toastr.success('物品已收回杂物间', '系统');
+        performScan();
+    }
+
+    function moveItemToPriceSlot(itemId, slotIndex, sourceSlotIndex = null) {
+        let slotsData = getPriceSlotsData();
+        let storageList = getVars()[CONFIG.varStorageKey] || [];
+
+        // 目标槽有其他物品时，把它退回杂物间
+        if (slotsData[slotIndex].id && slotsData[slotIndex].id !== itemId) {
+            storageList.push(slotsData[slotIndex].id);
+        }
+
+        // 货架→货架搬移：清除来源槽，防止物品"分身"
+        if (sourceSlotIndex !== null && sourceSlotIndex !== slotIndex) {
+            slotsData[sourceSlotIndex].id = null;
+            slotsData[sourceSlotIndex].price = "";
+        }
+
+        slotsData[slotIndex].id = itemId;
+
+        storageList = storageList.filter(sid => sid !== itemId);
+
+        if (typeof TavernHelper !== 'undefined') {
+            TavernHelper.insertOrAssignVariables({
+                [CONFIG.varPriceSlotsKey]: slotsData,
+                [CONFIG.varStorageKey]: storageList
+            }, { type: 'chat' });
+        }
+
+        //if(window.toastr) toastr.success('物品已上架', '系统');
+        performScan();
+    }
+
+    function removeItemFromPriceSlot(slotIndex) {
+        let slotsData = getPriceSlotsData();
+        let storageList = getVars()[CONFIG.varStorageKey] || [];
+
+        const itemId = slotsData[slotIndex].id;
+        if (!itemId) return;
+
+        slotsData[slotIndex].id = null;
+        slotsData[slotIndex].price = "";
+
+        if (!storageList.includes(itemId)) storageList.push(itemId);
+
+        if (typeof TavernHelper !== 'undefined') {
+            TavernHelper.insertOrAssignVariables({
+                [CONFIG.varPriceSlotsKey]: slotsData,
+                [CONFIG.varStorageKey]: storageList
+            }, { type: 'chat' });
+        }
+
+        //if(window.toastr) toastr.success('物品已下架', '系统');
+        performScan();
+    }
+
+    async function appendUpdateToChat(text, successMsg) {
+        try {
+            const messages = getChatMessages('0-{{lastMessageId}}');
+            let targetMsg = null;
+            for (let i = messages.length - 1; i >= 0; i--) { if (messages[i].role === 'assistant') { targetMsg = messages[i]; break; } }
+            if (targetMsg) {
+                await setChatMessages([{ message_id: targetMsg.message_id, message: targetMsg.message + "\n" + text }], { refresh: 'affected' });
+                if(window.toastr) toastr.success(successMsg, '系统');
+                closeDetailPopup();
+                closeEditPopup();
+                performScan();
+            }
+        } catch (e) { console.error(e); }
+    }
+
+    async function deleteItemAction(id, name) {
+        if (!confirm(`🗑️ 确定要丢弃 [${name}] 吗？`)) return;
+        const deleteCommand = `<Item>\nCMD:DEL | ${id}\n</Item>`;
+        await appendUpdateToChat(deleteCommand, `已丢弃 ${name}`);
+    }
+
+    function openEditPopup(title, content, onSave) {
+        const $popup = $('#' + CONFIG.domEditId);
+        if ($popup.length === 0) return;
+
+        $popup.find('.edit-title').text(title);
+        $popup.find('textarea').val(content);
+
+        $popup.find('.save-btn').off('click').on('click', () => {
+            const newContent = $popup.find('textarea').val();
+            onSave(newContent);
+        });
+
+        $popup.css('display', 'flex').hide().fadeIn(150);
+    }
+
+    function closeEditPopup() { $('#' + CONFIG.domEditId).fadeOut(150); }
+
+    function editItemAction(item) {
+        const template = `<Item>\nCMD:MOD | ${item.id} | ${item.icon} | ${item.name} | ${item.desc || '新描述'}\n</Item>`;
+        openEditPopup(`编辑道具: ${item.name}`, template, (newText) => {
+            appendUpdateToChat(newText, "道具修改指令已发送");
+        });
+    }
+
+    function editStaffAction(staffName, staffData) {
+        let contentStr = '';
+        for (const [key, value] of Object.entries(staffData)) {
+            if (key === '_items') continue;
+            contentStr += `${key}：${value} | `;
+        }
+        if (contentStr.endsWith(' | ')) contentStr = contentStr.slice(0, -3);
+
+        const template = `<New_Employee_Profile>\n【${contentStr}】\n</New_Employee_Profile>`;
+
+        openEditPopup(`编辑员工: ${staffName}`, template, (newText) => {
+            appendUpdateToChat(newText, "员工信息修改已发送");
+        });
+    }
+
+    async function deleteStaffAction(staffName) {
+        if (!confirm(`🗑️ 确定要解雇 [${staffName}] 吗？`)) return;
+        const deleteCommand = `<Employee>\nCMD:DEL_STAFF | ${staffName}\n</Employee>`;
+        await appendUpdateToChat(deleteCommand, `已解雇 ${staffName}`);
+    }
+
+    // =================================================================
+    // === 核心扫描逻辑 ===
+    // mode: 'full'（全量，用于删改楼） | 'incremental'（增量，仅新消息）
+    // forceCheckpoint: true 时强制在扫描后保存检查点（手动建立检查点时使用）
+    // =================================================================
+    function performScan(mode, forceCheckpoint) {
+        if (mode === undefined) mode = 'full';
+        if (forceCheckpoint === undefined) forceCheckpoint = false;
+
+        let allMessages;
+        if (typeof getChatMessages !== 'undefined') allMessages = getChatMessages('0-{{lastMessageId}}');
+        else if (typeof TavernHelper !== 'undefined') allMessages = TavernHelper.getChatMessages('0-{{lastMessageId}}');
+        if (!allMessages) return;
+
+        // ---- 增量扫描：确定起点，并从检查点恢复初始状态 ----
+        let scanFromIndex = 0;
+        let checkpoint = null;
+
+        let maxId = getMaxId();
+        const dbMap = getDbMap();
+        let currentInventory = [];
+        const usedMapKeys = new Set();
+        const achievementMap = new Map();
+        const staffMap = new Map();
+        let renovationList = [];
+        currentWorldDate = "";
+
+        if (mode === 'incremental') {
+            checkpoint = getCheckpoint();
+            if (checkpoint && checkpoint.message_id != null) {
+                // 找到检查点之后第一条消息的下标
+                const cpMsgId = checkpoint.message_id;
+                scanFromIndex = allMessages.findIndex(m => m.message_id > cpMsgId);
+                if (scanFromIndex === -1) scanFromIndex = allMessages.length; // 没有新消息
+
+                // 从检查点恢复状态
+                maxId = checkpoint.maxId || 0;
+                Object.assign(dbMap, checkpoint.dbMap || {});
+                // 把检查点里所有 dbMap 的 key 都标记为"使用中"，防止被清理
+                Object.keys(checkpoint.dbMap || {}).forEach(k => usedMapKeys.add(k));
+                if (checkpoint.inventory) currentInventory = [...checkpoint.inventory];
+                if (checkpoint.achievements) checkpoint.achievements.forEach(a => achievementMap.set(a.name, a));
+                if (checkpoint.staff) checkpoint.staff.forEach(s => {
+                    const name = s['姓名'] || s['Name'] || s['name'];
+                    if (name) staffMap.set(name, s);
+                });
+                if (checkpoint.renovationList) renovationList = [...checkpoint.renovationList];
+                if (checkpoint.worldDate) currentWorldDate = checkpoint.worldDate;
+            } else {
+                // 没有检查点，退化为全量扫描
+                mode = 'full';
+                scanFromIndex = 0;
+            }
+        }
+
+        // 全量扫描 + 导入基准：若存在 is_import_base 检查点，以导入数据为初始状态
+        // 这确保即使聊天记录里没有 CMD:ADD，导入的物品也不会被全量扫描清零
+        if (mode === 'full') {
+            // 读取独立存储的导入基准（删楼触发的 clearCheckpoint 不会清掉它）
+            let _importBase = null;
+            try { if (typeof TavernHelper !== 'undefined') _importBase = TavernHelper.getVariables({ type: 'chat' })[CONFIG.varImportBaseKey] || null; } catch(e) {}
+            if (_importBase) {
+                currentInventory = [...(_importBase.inventory || [])];
+                maxId = _importBase.maxId || maxId;
+                Object.assign(dbMap, _importBase.dbMap || {});
+                Object.keys(_importBase.dbMap || {}).forEach(k => usedMapKeys.add(k));
+                if (_importBase.achievements) _importBase.achievements.forEach(a => achievementMap.set(a.name, a));
+                if (_importBase.staff) _importBase.staff.forEach(s => { const n = s['姓名']||s['Name']||s['name']; if(n) staffMap.set(n, s); });
+                if (_importBase.renovationList) renovationList = [...(_importBase.renovationList)];
+            }
+        }
+
+        // --- 1. 建立历史档案（保存用户手动编辑的来访者数据，如备注、欠费等）---
+        let historicalMap = {};
+        let cleanIdMap = {};
+
+        if (typeof TavernHelper !== 'undefined') {
+            const currentVars = TavernHelper.getVariables({ type: 'chat' });
+            const savedGuests = currentVars[CONFIG.varGuestKey];
+            let listToLoad = [];
+            if (Array.isArray(savedGuests)) listToLoad = savedGuests;
+            else if (savedGuests && typeof savedGuests === 'object') listToLoad = [savedGuests];
+
+            listToLoad.forEach(g => {
+                const rawId = getGuestGroupID(g);
+                historicalMap[rawId] = g;
+                cleanIdMap[normalize(rawId)] = g;
+            });
+        }
+
+        // 增量模式：以检查点快照的来访者状态为起点，再用最新手动编辑覆盖一遍
+        let activeGuestBook = {};
+        if (mode === 'incremental' && checkpoint && checkpoint.activeGuestBook) {
+            Object.entries(checkpoint.activeGuestBook).forEach(([id, guest]) => {
+                // 用最新 historicalMap 中的手动编辑数据覆盖（防止检查点建立后用户又手动改了）
+                const savedGuest = historicalMap[id] || cleanIdMap[normalize(id)];
+                if (savedGuest) {
+                    guest.pending_payment = savedGuest.pending_payment;
+                    guest.note = savedGuest.note || "";
+                    guest.others_room = savedGuest.others_room || "";
+                    guest.custom_date = savedGuest.custom_date;
+                    guest.custom_purpose = savedGuest.custom_purpose;
+                    if (savedGuest.roles && guest.roles) {
+                        const savedRolesMap = {};
+                        savedGuest.roles.forEach(r => { const n = r['姓名'] || r['Name']; if (n) savedRolesMap[normalize(n)] = r; });
+                        guest.roles.forEach(nr => { const n = nr['姓名'] || nr['Name']; if (n && savedRolesMap[normalize(n)]) nr.room = savedRolesMap[normalize(n)].room || ""; });
+                    }
+                }
+                activeGuestBook[id] = guest;
+            });
+        }
+
+        // 来客簿归档（全量扫描时重置，防止重复归档；增量扫描时继承已有数据）
+        var guestLogArchive = (mode === 'full') ? [] : (getVars()[CONFIG.varGuestLogKey] || []);
+
+        // --- 2. 扫描循环（增量模式只扫 scanFromIndex 之后的消息）---
+        const messagesToScan = mode === 'incremental' ? allMessages.slice(scanFromIndex) : allMessages;
+        for (const msg of messagesToScan) {
+            const text = msg.message || msg.mes || "";
+            if (!text) continue;
+
+            // 追踪当前世界日期
+            if (text.includes('[STATUS]')) {
+                const dateMatch = text.match(CONFIG.regexStatusDate);
+                if (dateMatch && dateMatch[1]) currentWorldDate = dateMatch[1].trim();
+            }
+
+            // 扫描基建修缮记录
+            if (text.includes('修缮')) {
+                CONFIG.regexRenovation.lastIndex = 0;
+                for (const m of text.matchAll(CONFIG.regexRenovation)) {
+                    renovationList.push({
+                      date: currentWorldDate || "未知日期",
+    cost: m[1],
+    detail: m[2].replace(/。\s*$/, "").trim()
+                    });
+                }
+            }
+
+            const foundGuests = parseGuestData(text);
+foundGuests.forEach(foundGuest => {
+    const rawId = getGuestGroupID(foundGuest);
+    const cleanId = normalize(rawId);
+
+    // --- 去重保护：基于姓名+隶属匹配，防止同一客人被重复记录或属性被覆盖 ---
+    // 同名刀可能来自不同本丸，因此需要姓名+隶属共同判定
+    const newIdentities = new Set();
+    if (foundGuest.roles) {
+        foundGuest.roles.forEach(r => {
+            const n = normalize(r['姓名'] || r['Name'] || '');
+            const a = normalize(r['隶属'] || '');
+            if (n) newIdentities.add(n + '|' + a);
+        });
+    }
+
+    // 检查是否有不同 ID 但同一角色（姓名+隶属）的记录（日期格式变化等）
+    let existingKey = null;
+    if (newIdentities.size > 0) {
+        Object.keys(activeGuestBook).forEach(k => {
+            if (k === rawId || normalize(k) === cleanId) return;
+            const existing = activeGuestBook[k];
+            if (existing.roles) {
+                for (const r of existing.roles) {
+                    const eName = normalize(r['姓名'] || r['Name'] || '');
+                    const eAff = normalize(r['隶属'] || '');
+                    if (eName && newIdentities.has(eName + '|' + eAff)) { existingKey = k; return; }
+                }
+            }
+        });
+    }
+
+    if (existingKey) {
+        const _existGuest = activeGuestBook[existingKey];
+        if (_existGuest && _existGuest.pending_departure) {
+            guestLogArchive = archiveGuest(_existGuest, _existGuest._departure_text || '', guestLogArchive);
+            delete activeGuestBook[existingKey];
+        } else {
+            return;
+        }
+    }
+
+    // 同 ID 已存在 → 保留首次角色属性，只同步用户编辑
+    let oldData = historicalMap[rawId] || cleanIdMap[cleanId];
+    const existingSameId = activeGuestBook[rawId] || activeGuestBook[Object.keys(activeGuestBook).find(k => normalize(k) === cleanId)];
+
+    if (existingSameId) {
+        if (existingSameId.pending_departure) {
+            guestLogArchive = archiveGuest(existingSameId, existingSameId._departure_text || '', guestLogArchive);
+            const _sameKey = Object.keys(activeGuestBook).find(k => k === rawId || normalize(k) === cleanId);
+            if (_sameKey) delete activeGuestBook[_sameKey];
+        } else {
+        if (oldData) {
+            existingSameId.pending_payment = oldData.pending_payment;
+            existingSameId.note = oldData.note || "";
+            existingSameId.others_room = oldData.others_room || "";
+            existingSameId.custom_date = oldData.custom_date;
+            existingSameId.custom_purpose = oldData.custom_purpose;
+            if (oldData.roles && existingSameId.roles) {
+                const savedRolesMap = {};
+                oldData.roles.forEach(r => { const n = r['姓名'] || r['Name']; if (n) savedRolesMap[normalize(n)] = r; });
+                existingSameId.roles.forEach(nr => {
+                    const nn = normalize(nr['姓名'] || nr['Name'] || '');
+                    if (nn && savedRolesMap[nn]) nr.room = savedRolesMap[nn].room || "";
+                });
+            }
+        }
+        return; // 不覆盖，保留首次数据
+    }
+    }
+
+    // 全新客人：正常写入
+    if (oldData) {
+        foundGuest.pending_payment = oldData.pending_payment;
+        foundGuest.note = oldData.note || "";
+        foundGuest.others_room = oldData.others_room || "";
+        foundGuest.custom_date = oldData.custom_date;
+        foundGuest.custom_purpose = oldData.custom_purpose;
+
+        const oldRolesMap = {};
+        if (oldData.roles && Array.isArray(oldData.roles)) {
+            oldData.roles.forEach(r => {
+                const rName = r['姓名'] || r['Name'];
+                if (rName) oldRolesMap[normalize(rName)] = r;
+            });
+        }
+        if (foundGuest.roles && Array.isArray(foundGuest.roles)) {
+            foundGuest.roles.forEach(newRole => {
+                const newName = newRole['姓名'] || newRole['Name'];
+                const cleanName = normalize(newName);
+                if (cleanName && oldRolesMap[cleanName]) {
+                    newRole.room = oldRolesMap[cleanName].room || "";
+                }
+            });
+        }
+    }
+    foundGuest._just_added = true;
+    activeGuestBook[rawId] = foundGuest;
+});
+
+            // 来客簿归档：guestLogArchive 已在循环外初始化，此处直接使用
+            // 删除指令
+            if (text.includes('CMD:DEL_GUEST')) {
+                CONFIG.regexGuestDel.lastIndex = 0;
+                for (const m of text.matchAll(CONFIG.regexGuestDel)) {
+                    const targetId = m[1].trim();
+                    if (targetId) {
+                        if(activeGuestBook[targetId]) { guestLogArchive = archiveGuest(activeGuestBook[targetId], text, guestLogArchive); delete activeGuestBook[targetId]; }
+                        else {
+                            const cleanTarget = normalize(targetId);
+                            Object.keys(activeGuestBook).forEach(k => {
+                                if(normalize(k) === cleanTarget) { guestLogArchive = archiveGuest(activeGuestBook[k], text, guestLogArchive); delete activeGuestBook[k]; }
+                            });
+                        }
+                    }
+                }
+            }
+            // <Guest_Departure> 延迟离店标记（支持多人同时离店 + normalize匹配）
+            if (text.includes('<Guest_Departure>')) {
+                var _depRegex = /<Guest_Departure>\s*(.*?)\s*<\/Guest_Departure>/gi;
+                var _depMatch;
+                while ((_depMatch = _depRegex.exec(text)) !== null) {
+                    var _depName = _depMatch[1].split('|')[0].trim();
+                    if (!_depName) continue;
+                    var _depNameClean = normalize(_depName);
+                    Object.keys(activeGuestBook).forEach(function(k) {
+                        var g = activeGuestBook[k];
+                        if (g.roles && Array.isArray(g.roles)) {
+                            for (var _ri = 0; _ri < g.roles.length; _ri++) {
+                                var gn = g.roles[_ri]['姓名'] || g.roles[_ri]['Name'] || '';
+                                if (normalize(gn) === _depNameClean) { if (!g._just_added) { g.pending_departure = true; g._departure_text = text; } break; }
+                            }
+                        }
+                    });
+                }
+            }
+            // 清除本轮新增标记
+            Object.values(activeGuestBook).forEach(function(g) { delete g._just_added; });
+            // (物品、成就等逻辑保持不变，为节省篇幅略去...)
+            if (text.includes('CMD:ADD')) { CONFIG.regexLineAdd.lastIndex = 0; for (const m of [...text.matchAll(CONFIG.regexLineAdd)]) { let parts = smartParse(m[1]); if (parts.length > 0 && /^\d+$/.test(parts[0])) parts.shift(); if (parts.length >= 2) { if (/[金银铜]币|混合货币/.test(parts[1])) continue; const uniqueKey = `${msg.message_id}_add_${usedMapKeys.size}`; usedMapKeys.add(uniqueKey); let assignedId = dbMap[uniqueKey] || String(++maxId).padStart(3, '0'); dbMap[uniqueKey] = assignedId; currentInventory.push({ id: assignedId, icon: parts[0], name: parts[1], desc: parts.length >= 3 ? parts[2] : "" }); } } }
+            if (text.includes('CMD:MOD')) { CONFIG.regexLineMod.lastIndex = 0; for (const m of text.matchAll(CONFIG.regexLineMod)) { const parts = smartParse(m[1]); if (parts.length >= 3) { const idx = currentInventory.findIndex(x => x.id === parts[0]); if (idx !== -1) { currentInventory[idx].icon = parts[1]; currentInventory[idx].name = parts[2]; if (parts.length >= 4) currentInventory[idx].desc = parts[3]; } } } }
+            if (text.includes('CMD:DEL')) { CONFIG.regexLineDel.lastIndex = 0; for (const m of text.matchAll(CONFIG.regexLineDel)) { const parts = smartParse(m[1]); if (parts.length >= 1) currentInventory = currentInventory.filter(x => x.id !== parts[0]); } }
+            if (text.includes('成就')) { CONFIG.regexAchievement.lastIndex = 0; for (const m of text.matchAll(CONFIG.regexAchievement)) { achievementMap.set(m[2].trim(), { icon: m[1].trim(), name: m[2].trim(), condition: m[3].trim(), reward: m[4].trim(), eval: m[5].trim() }); } }
+            if (text.match(/<New_Employee_Profile>/i)) { CONFIG.regexStaffBlock.lastIndex = 0; for (const blockMatch of text.matchAll(CONFIG.regexStaffBlock)) { const innerContent = blockMatch[1]; if (!innerContent) continue; let staffObj = {}; CONFIG.regexStaffKV.lastIndex = 0; for (const kvMatch of innerContent.matchAll(CONFIG.regexStaffKV)) { staffObj[kvMatch[1].trim()] = kvMatch[2].trim(); } let name = staffObj['姓名'] || staffObj['Name'] || staffObj['name']; if (name) staffMap.set(name, staffObj); } }
+            if (text.includes('CMD:DEL_STAFF')) {
+                CONFIG.regexStaffDel.lastIndex = 0;
+                for (const m of text.matchAll(CONFIG.regexStaffDel)) {
+                    const targetName = m[1].trim();
+                    if (targetName) {
+                        staffMap.delete(targetName);
+                    }
+                }
+            }
+        }
+
+        // 价目板初始化扫描（仅当变量为空时从标签初始化）
+        let scannedPriceData = null;
+        for (let mi = 0; mi < allMessages.length; mi++) {
+            const pText = allMessages[mi].message || allMessages[mi].mes || '';
+            const priceMatch = pText.match(CONFIG.regexPriceBoard);
+            if (priceMatch) {
+                const lines = priceMatch[1].trim().split('\n').filter(l => l.trim());
+                const priceList = [];
+                lines.forEach(line => {
+                    const parts = line.split('-');
+                    if (parts.length >= 2) {
+                        priceList.push({ name: parts[0].trim(), price: parts.slice(1).join('-').trim() });
+                    }
+                });
+                if (priceList.length > 0) {
+                    priceList.push({ note: "" });
+                    scannedPriceData = priceList;
+                }
+                break;
+            }
+        }
+
+        // 3. 保存与渲染
+        const newDbMap = {}; Object.keys(dbMap).forEach(key => { if (usedMapKeys.has(key)) newDbMap[key] = dbMap[key]; });
+        const currentAchievements = Array.from(achievementMap.values());
+        const currentStaff = Array.from(staffMap.values());
+
+        let staffItemsMap = getVars()[CONFIG.varStaffItemsKey] || {};
+        let isStaffMapDirty = false;
+        for (const [staffName, heldIds] of Object.entries(staffItemsMap)) {
+            const validIds = heldIds.filter(id => currentInventory.some(item => item.id === id));
+            if (validIds.length !== heldIds.length) { staffItemsMap[staffName] = validIds; isStaffMapDirty = true; }
+        }
+        if (isStaffMapDirty && typeof TavernHelper !== 'undefined') TavernHelper.insertOrAssignVariables({ [CONFIG.varStaffItemsKey]: staffItemsMap }, { type: 'chat' });
+
+        let priceSlotsData = getPriceSlotsData();
+        let isSlotsDirty = false;
+        priceSlotsData.forEach(slot => { if (slot.id && !currentInventory.some(item => item.id === slot.id)) { slot.id = null; slot.price = ""; isSlotsDirty = true; } });
+
+        // --- 立即处理离店归档（不再延迟到下一轮）---
+        Object.keys(activeGuestBook).forEach(function(k) {
+            var g = activeGuestBook[k];
+            if (g.pending_departure) {
+                guestLogArchive = archiveGuest(g, g._departure_text || '', guestLogArchive);
+                delete activeGuestBook[k];
+            }
+        });
+
+        const guestListToSave = Object.values(activeGuestBook);
+
+        if (typeof TavernHelper !== 'undefined') {
+            let varsToSave = {
+                [CONFIG.varDataKey]: currentInventory,
+                [CONFIG.varMapKey]: newDbMap,
+                [CONFIG.varMaxIdKey]: maxId,
+                [CONFIG.varAchieveKey]: currentAchievements,
+                [CONFIG.varGuestKey]: guestListToSave,
+                [CONFIG.varGuestLogKey]: guestLogArchive,
+                [CONFIG.varRenoKey]: renovationList, // 保存基建记录
+                [CONFIG.varStaffKey]: currentStaff   // 【新增】保存员工数据，供Tab切换时直接读取
+            };
+            if (isSlotsDirty) varsToSave[CONFIG.varPriceSlotsKey] = priceSlotsData;
+
+            TavernHelper.insertOrAssignVariables(varsToSave, { type: 'chat' });
+
+            // 价目板初始化：仅当变量为空时写入扫描到的数据
+            if (scannedPriceData) {
+                const existingPrice = getVars()[CONFIG.varPriceKey];
+                if (!Array.isArray(existingPrice) || existingPrice.length === 0 || existingPrice.every(item => !item.name && !item.note)) {
+                    TavernHelper.insertOrAssignVariables({ [CONFIG.varPriceKey]: scannedPriceData }, { type: 'chat' });
+                    refreshPricePrompt(scannedPriceData);
+                    dirtyTabs.add('price');
+                }
+            }
+
+            refreshGuestPrompt(guestListToSave, guestLogArchive);
+            if (typeof uninjectPrompts !== 'undefined') uninjectPrompts([CONFIG.guestLogPromptId]);
+            checkDeparturePrompt(guestListToSave);
+        }
+
+        // === 脏标记：标记所有 Tab 数据已更新，等待按需渲染 ===
+        ['inventory', 'staff', 'achievement', 'price', 'infra', 'guest'].forEach(t => dirtyTabs.add(t));
+
+        if (isPanelOpen) renderActiveTab();
+        if (isStorageOpen) renderStorageItems();
+
+        // === 自动检查点：全量扫描完成后，视情况更新检查点 ===
+        if (mode === 'full') {
+            const latestMsg = allMessages.length > 0 ? allMessages[allMessages.length - 1] : null;
+            const latestMsgId = latestMsg ? latestMsg.message_id : 0;
+            const existingCp = getCheckpoint();
+            const lastCpId = existingCp ? (existingCp.message_id || 0) : 0;
+            if (forceCheckpoint || (latestMsgId - lastCpId >= CONFIG.checkpointInterval)) {
+                saveCheckpoint({
+                    message_id: latestMsgId,
+                    maxId: maxId,
+                    dbMap: newDbMap,
+                    inventory: currentInventory,
+                    achievements: currentAchievements,
+                    staff: currentStaff,
+                    activeGuestBook: activeGuestBook,
+                    renovationList: renovationList,
+                    worldDate: currentWorldDate
+                });
+                if (forceCheckpoint && window.toastr) toastr.success(`检查点已建立（截至第 ${latestMsgId} 楼）`, '系统');
+                // 导入基准已被真实检查点接管，清除它避免重复叠加
+                try { if (typeof TavernHelper !== 'undefined') TavernHelper.insertOrAssignVariables({ [CONFIG.varImportBaseKey]: null }, { type: 'chat' }); } catch(e) {}
+            }
+        }
+
+        // 注入基建Prompt
+        refreshInfraPrompt(renovationList);
+
+        let storageList = getVars()[CONFIG.varStorageKey] || [];
+        const _validStorage = storageList.filter(id => currentInventory.some(item => item.id === id));
+        if (_validStorage.length !== storageList.length) { storageList = _validStorage; if (typeof TavernHelper !== 'undefined') TavernHelper.insertOrAssignVariables({ [CONFIG.varStorageKey]: storageList }, { type: 'chat' }); }
+        let allStaffHeldIds = [];
+        Object.values(staffItemsMap).forEach(ids => allStaffHeldIds = allStaffHeldIds.concat(ids));
+        const priceHeldIds = priceSlotsData.filter(s => s.id).map(s => s.id);
+        const aiVisibleInventory = currentInventory.filter(item => !storageList.includes(item.id) && !allStaffHeldIds.includes(item.id) && !priceHeldIds.includes(item.id));
+        refreshSystemPrompt(aiVisibleInventory);
+        refreshStaffPrompt(currentStaff, currentInventory, staffItemsMap);
+        refreshPricePrompt(null, isSlotsDirty ? priceSlotsData : null);
+        $('#th-inv-counter').text(`物品:${aiVisibleInventory.length}${(storageList.length + allStaffHeldIds.length + priceHeldIds.length) > 0 ? `(+${storageList.length + allStaffHeldIds.length + priceHeldIds.length})` : ''}`);
+        $('#th-ach-counter').text(`成就:${currentAchievements.length}`);
+    }
+
+
+    // =================================================================
+    // === 按需渲染：只渲染当前激活的 Tab ===
+    // =================================================================
+    function renderActiveTab() {
+        const $panel = $('#' + CONFIG.domPanelId);
+        if (!$panel.is(':visible')) return;
+
+        if ($('#th-tab-inv').hasClass('active') && dirtyTabs.has('inventory')) {
+            renderInventory();
+            dirtyTabs.delete('inventory');
+        } else if ($('#th-tab-price').hasClass('active') && dirtyTabs.has('price')) {
+            if (priceSubView === 'shelf') renderPriceShelf();
+            else renderPriceBoard();
+            dirtyTabs.delete('price');
+        } else if ($('#th-tab-staff').hasClass('active') && dirtyTabs.has('staff')) {
+            renderStaffBoard(getVars()[CONFIG.varStaffKey] || []);
+            dirtyTabs.delete('staff');
+        } else if ($('#th-tab-infra').hasClass('active') && dirtyTabs.has('infra')) {
+            renderInfraBoard(getVars()[CONFIG.varRenoKey] || []);
+            dirtyTabs.delete('infra');
+        } else if ($('#th-tab-ach').hasClass('active') && dirtyTabs.has('achievement')) {
+            renderAchievements();
+            dirtyTabs.delete('achievement');
+        } else if ($('#th-tab-guest').hasClass('active') && dirtyTabs.has('guest')) {
+            renderGuestLog(getVars()[CONFIG.varGuestLogKey] || []);
+            dirtyTabs.delete('guest');
+        }
+    }
+
+    function refreshSystemPrompt(inventory) {
+        let listStr = inventory.length === 0 ? "(背包为空)" : "";
+        inventory.forEach(item => { listStr += `ID: ${item.id} | ${item.icon} | ${item.name} | ${item.desc || '无描述'}\n`; });
+        const promptContent = `
+<Item_Rules>
+[系统模块: 物品栏数据库]
+当前{{user}}拥有的物品清单:
+${listStr}
+
+严格按照以下格式，记录本轮剧情中客观的物品获取情况(如购置的商品、食材、书信便条(在描述中附全文)、尚未分配去处的物资等)。如无变更则不必记录。
+1.当{{user}}获得重要物品:
+CMD:ADD | 图标 | 名称 | (选填)描述
+2.当**物品清单**中的物品发生重要性质变化:
+CMD:MOD | ID | 修正图标 | 修正名称 | (选填)修正描述
+3.当物品清单中的物品用完、丢弃或所有权转移时:
+CMD:DEL | ID
+以上指令均在正文结尾输出，并以一组<Item>标签包裹所有增删改(如有)。
+注意:
+ - (如有)描述应始终记录物品最本质客观的属性
+ - 禁止将货币计入物品
+ - ID仅作为增删改格式使用，禁止出现在剧情中
+
+ 示例:
+  以一罐蒜蓉酱为例，获得蒜蓉酱时:
+ <Item>
+ CMD:ADD | 🥫 | 蒜蓉酱 | 一罐未拆封的蒜蓉酱(250g)
+ </Item>
+
+ 使用蒜蓉酱后(量发生变化，用分数表示):
+ <Item>
+ CMD:MOD | 001(该道具在数据库中对应ID) | 🥫 | 蒜蓉酱 | 开封蒜蓉酱(175/250g)，还剩下半罐
+ </Item>
+
+ 用完蒜蓉酱时:
+ <Item>
+ CMD:DEL | 001
+ </Item>
+
+</Item_Rules>`;
+        if (typeof uninjectPrompts !== 'undefined') uninjectPrompts([CONFIG.promptId]);
+        const injection = { id: CONFIG.promptId, position: 'in_chat', depth: CONFIG.inventoryDepth, role: 'system', content: promptContent, should_scan: true };
+        if (typeof injectPrompts !== 'undefined') injectPrompts([injection]);
+    }
+
+    function refreshStaffPrompt(staffList, fullInventory, staffItemsMap) {
+        if (staffList.length === 0) {
+            if (typeof uninjectPrompts !== 'undefined') uninjectPrompts([CONFIG.staffPromptId]);
+            return;
+        }
+
+        const exportData = staffList.map(staff => {
+            let s = { ...staff };
+            let name = s['姓名'] || s['Name'] || s['name'];
+            const heldIds = staffItemsMap[name] || [];
+
+            if (heldIds.length > 0) {
+                s['持有物品'] = [];
+                heldIds.forEach(id => {
+                    const item = fullInventory.find(i => i.id === id);
+                    if (item) {
+                        s['持有物品'].push(`${item.icon} ${item.name} (ID:${item.id})`);
+                    }
+                });
+            }
+            return s;
+        });
+
+        const jsonStr = JSON.stringify(exportData, null, 2);
+        const promptContent = `<Employee_Profile>\n${jsonStr}\n</Employee_Profile>`;
+
+        if (typeof uninjectPrompts !== 'undefined') uninjectPrompts([CONFIG.staffPromptId]);
+        const injection = { id: CONFIG.staffPromptId, position: 'in_chat', depth: CONFIG.staffDepth, role: 'system', content: promptContent, should_scan: true };
+        if (typeof injectPrompts !== 'undefined') injectPrompts([injection]);
+    }
+
+    function refreshInfraPrompt(renoList) {
+        if (!renoList || renoList.length === 0) {
+            if (typeof uninjectPrompts !== 'undefined') uninjectPrompts([CONFIG.infraPromptId]);
+            return;
+        }
+        const recent = renoList.slice(-10).reverse();
+        let lines = [];
+        recent.forEach(r => {
+            lines.push(`${r.date}: ${r.detail} (花费${r.cost}小判)`);
+        });
+        const promptContent = `\n<Tavern_Infrastructure>\n[基建修缮记录]\n${lines.join('\n')}\n</Tavern_Infrastructure>\n`;
+        if (typeof uninjectPrompts !== 'undefined') uninjectPrompts([CONFIG.infraPromptId]);
+        const injection = { id: CONFIG.infraPromptId, position: 'in_chat', depth: CONFIG.infraDepth, role: 'system', content: promptContent, should_scan: true };
+        if (typeof injectPrompts !== 'undefined') injectPrompts([injection]);
+    }
+
+    // =================================================================
+    // === 检查点（增量扫描基础）===
+    // =================================================================
+
+    function getCheckpoint() {
+        try {
+            if (typeof TavernHelper !== 'undefined') {
+                return TavernHelper.getVariables({ type: 'chat' })[CONFIG.varCheckpointKey] || null;
+            }
+        } catch(e) {}
+        return null;
+    }
+
+    function saveCheckpoint(snapshot) {
+        try {
+            if (typeof TavernHelper !== 'undefined') {
+                TavernHelper.insertOrAssignVariables({ [CONFIG.varCheckpointKey]: snapshot }, { type: 'chat' });
+            }
+        } catch(e) { console.error('saveCheckpoint failed', e); }
+    }
+
+    /** 删楼后调用：作废检查点，强迫下次全量扫重新建立干净的快照 */
+    function clearCheckpoint() {
+        try {
+            if (typeof TavernHelper !== 'undefined') {
+                TavernHelper.insertOrAssignVariables({ [CONFIG.varCheckpointKey]: null }, { type: 'chat' });
+            }
+        } catch(e) { console.error('clearCheckpoint failed', e); }
+    }
+
+    /** 手动建立检查点：触发一次完整全量扫描，完成后强制保存检查点 */
+    function createCheckpoint() {
+        if(window.toastr) toastr.info('正在建立检查点…', '系统');
+        performScan('full', true);
+    }
+
+    // =================================================================
+    // === 全量变量导出 / 导入（跨存档迁移）===
+    // =================================================================
+
+    function exportAllData() {
+        flushPriceSave();
+        const vars = getVars();
+        const exportKeys = [
+            CONFIG.varDataKey, CONFIG.varMapKey, CONFIG.varMaxIdKey,
+            CONFIG.varAchieveKey, CONFIG.varStorageKey, CONFIG.varGuestKey,
+            CONFIG.varRenoKey, CONFIG.varPriceKey, CONFIG.varPriceSlotsKey,
+            CONFIG.varStaffItemsKey, CONFIG.varStaffKey, CONFIG.varCheckpointKey,
+            CONFIG.varGuestLogKey, CONFIG.varNoticeKey
+        ];
+        const exportObj = { version: 2, timestamp: new Date().toISOString() };
+        exportKeys.forEach(k => { if (vars[k] !== undefined) exportObj[k] = vars[k]; });
+        const json = JSON.stringify(exportObj, null, 2);
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `tavern_backup_${new Date().toISOString().slice(0,10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        if(window.toastr) toastr.success('数据已导出', '系统');
+    }
+
+    function _refreshUIAfterImport() {
+        const vars = getVars();
+        const inv = vars[CONFIG.varDataKey] || [];
+        const achievements = vars[CONFIG.varAchieveKey] || [];
+        const staff = vars[CONFIG.varStaffKey] || [];
+        const guests = vars[CONFIG.varGuestKey] || [];
+        const renoList = vars[CONFIG.varRenoKey] || [];
+        const storageList = vars[CONFIG.varStorageKey] || [];
+        const staffItemsMap = vars[CONFIG.varStaffItemsKey] || {};
+        const slotsData = getPriceSlotsData();
+        let allStaffHeldIds = [];
+        Object.values(staffItemsMap).forEach(ids => allStaffHeldIds = allStaffHeldIds.concat(ids));
+        const priceHeldIds = slotsData.filter(s => s.id).map(s => s.id);
+        const aiVisibleInventory = inv.filter(item => !storageList.includes(item.id) && !allStaffHeldIds.includes(item.id) && !priceHeldIds.includes(item.id));
+        // 更新计数器
+        const hidden = storageList.filter(id => inv.some(i => i.id === id)).length + allStaffHeldIds.length + priceHeldIds.length;
+        $('#th-inv-counter').text(`物品:${aiVisibleInventory.length}${hidden > 0 ? `(+${hidden})` : ''}`);
+        $('#th-ach-counter').text(`成就:${achievements.length}`);
+        // 刷新所有 Prompt
+        refreshSystemPrompt(aiVisibleInventory);
+        refreshStaffPrompt(staff, inv, staffItemsMap);
+        refreshPricePrompt();
+        refreshGuestPrompt(guests, getVars()[CONFIG.varGuestLogKey] || []);
+        refreshInfraPrompt(renoList);
+        // 保存导入基准检查点，防止后续 performScan 用空聊天记录覆盖数据
+        try {
+            let _lastMsgId = 0;
+            if (typeof getChatMessages !== 'undefined') {
+                const _msgs = getChatMessages('0-{{lastMessageId}}');
+                if (_msgs && _msgs.length > 0) _lastMsgId = _msgs[_msgs.length - 1].message_id;
+            }
+            const _dbMap = vars[CONFIG.varMapKey] || {};
+            Object.keys(_dbMap).forEach(k => {});  // ensure object
+            // 重建 activeGuestBook
+            const _guestBook = {};
+            (guests || []).forEach(g => { const gid = getGuestGroupID(g); if (gid) _guestBook[gid] = g; });
+            // 独立存储导入基准，clearCheckpoint() 不会影响这个变量
+            const _importBase = {
+                maxId: vars[CONFIG.varMaxIdKey] || 0,
+                dbMap: _dbMap,
+                inventory: inv,
+                achievements: achievements,
+                staff: staff,
+                activeGuestBook: _guestBook,
+                renovationList: renoList
+            };
+            TavernHelper.insertOrAssignVariables({ [CONFIG.varImportBaseKey]: _importBase }, { type: 'chat' });
+            // 同时把检查点指向当前楼层，让 generation_started 走增量扫描
+            saveCheckpoint({ message_id: _lastMsgId, maxId: _importBase.maxId, dbMap: _dbMap, inventory: inv, achievements: achievements, staff: staff, activeGuestBook: _guestBook, renovationList: renoList, worldDate: '' });
+        } catch(e) { console.error('import checkpoint save failed', e); }
+        // 标脏所有 Tab，切换时重新渲染
+        ['inventory', 'staff', 'achievement', 'price', 'infra', 'guest'].forEach(t => dirtyTabs.add(t));
+        if (isPanelOpen) renderActiveTab();
+        if (isStorageOpen) renderStorageItems();
+    }
+
+    function importAllData() {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json,application/json';
+        input.onchange = function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(evt) {
+                try {
+                    const obj = JSON.parse(evt.target.result);
+                    if (!obj.version) { alert('文件格式不正确，无法导入。'); return; }
+                    if (!confirm('导入后当前存档的所有物品/成就/员工数据将被覆盖，确定吗？')) return;
+                    const toImport = { ...obj };
+                    delete toImport.version;
+                    delete toImport.timestamp;
+                    if (typeof TavernHelper !== 'undefined') {
+                        TavernHelper.insertOrAssignVariables(toImport, { type: 'chat' });
+                    }
+                    if(window.toastr) toastr.success('数据已导入，正在刷新…', '系统');
+                    // 导入后直接从变量渲染，禁止 performScan（会用空聊天记录覆盖刚导入的数据）
+                    _refreshUIAfterImport();
+                } catch(err) { alert('读取文件失败：' + err.message); }
+            };
+            reader.readAsText(file, 'utf-8');
+        };
+        document.body.appendChild(input);
+        input.click();
+        document.body.removeChild(input);
+    }
+
+    function scheduleScan(mode) {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => performScan(mode || 'full'), CONFIG.debounceDelay);
+    }
+
+    // =================================================================
+    // === UI 与 事件绑定 ===
+    // =================================================================
+
+    function injectStyles() {
+        if ($('#' + CONFIG.domStyleId).length > 0 && document.contains(document.getElementById(CONFIG.domStyleId))) return;
+        $('#' + CONFIG.domStyleId).remove();
+
+        const css = `:root{--th-inv-outer:#f5edd8;--th-inv-inner:#faf6ef;--th-inv-border:#6b4c2a;--th-inv-text:#3a2c1f}#${CONFIG.domPanelId},#${CONFIG.domStorageId},#${CONFIG.domEditId}{font-family:'Shippori Mincho','Noto Serif SC',serif;color:var(--th-inv-text);will-change:transform,opacity}img.emoji{height:1em;width:1em;margin:0 .05em 0 .1em;vertical-align:-0.1em;filter:drop-shadow(1px 1px 0 #6b4c2a)}.th-inv-tab{display:block;background:#d4c5a9;border:2px solid var(--th-inv-border);border-bottom:none;border-radius:0;margin-right:4px;padding:8px 10px;flex-shrink:0;font-family:"PingFang SC","Shippori Mincho",sans-serif !important;font-weight:800 !important;text-shadow:0 0 1px rgba(0,0,0,0.1);font-size:14px;cursor:pointer;transition:transform 0.1s;user-select:none;color:#FFF}.th-inv-tab.active{background:var(--th-inv-outer);color:var(--th-inv-text);transform:translateY(2px);border-bottom:2px solid var(--th-inv-outer);z-index:10;text-shadow:none}.th-panel-container{background:var(--th-inv-inner);border-radius:8px;flex:1;padding:10px;border:1px solid rgba(139,90,43,0.1);position:relative;transition:all 0.3s ease;display:flex;flex-direction:column;overflow:hidden}.th-panel-container.th-style-paper{background:#f5edd8;border-radius:0 !important;box-shadow:inset 0 0 20px rgba(139,90,43,0.1);border:1px solid #d4c5b0;padding:8px 10px 53px 10px;position:relative}.th-style-paper .th-panel-footer{position:absolute;bottom:8px;left:10px;right:10px;margin:0;border-top:none;padding-top:0;background:transparent}.th-shelf-mode .th-panel-footer{padding-bottom:30px}.th-panel-scroller{flex:1;overflow-y:auto;overflow-x:hidden;width:100%;padding-right:2px}#th-panel-inner.th-style-paper .th-panel-scroller{flex:none;max-height:240px;overflow-y:auto}.th-pin{position:absolute;width:10px;height:10px;border-radius:50%;background:radial-gradient(circle at 30% 30%,#e0e0e0,#95a5a6);box-shadow:1px 1px 2px rgba(0,0,0,0.3);z-index:20;display:none}.th-pin-tl{top:6px;left:6px}.th-pin-tr{top:6px;right:6px}.th-pin-bl{bottom:6px;left:6px}.th-pin-br{bottom:6px;right:6px}.th-corner-counter{position:absolute;top:9px;left:10px;font-size:10px;font-weight:bold;color:#a88;background:rgba(255,255,255,0.6);padding:2px 5px;border-radius:4px;pointer-events:none;z-index:5}.th-currency-info{position:absolute;top:8px;right:18px;font-size:9px;color:#8B5A2B;opacity:0.7;font-weight:normal;pointer-events:none;display:none;font-family:inherit;letter-spacing:-0.3px}#th-price-shelf{display:none;flex-shrink:0;padding:0 8px 0 8px;overflow:visible;position:relative;z-index:2}#th-price-shelf .shelf-label{font-size:10px;font-weight:bold;color:#c4a882;letter-spacing:1px;text-align:center;margin-top:17px;pointer-events:none}.th-panel-container.th-style-paper .th-currency-info{display:block}.th-inv-grid-item{display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:8px 4px 4px 4px;cursor:pointer;border-radius:8px;user-select:none;position:relative;min-height:60px}.th-inv-grid-item:active{opacity:0.7;transform:scale(0.95)}.th-drop-target-active{background:rgba(139,90,43,0.2) !important;border:2px dashed #8B5A2B !important;box-shadow:0 0 8px rgba(139,90,43,0.5) !important}.th-inv-grid-icon{font-size:32px;margin-bottom:2px;pointer-events:none}.th-inv-grid-name{font-size:12px;font-weight:bold;text-align:center;line-height:1.1;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;pointer-events:none}.th-drag-helper{position:fixed;pointer-events:none;z-index:100002;opacity:1;transform:scale(1.3);display:flex;flex-direction:column;align-items:center;justify-content:center;background:transparent !important;border:none !important;padding:0 !important;width:50px;height:50px}.th-drag-helper .th-inv-grid-name{display:none !important}.th-drag-helper .th-inv-grid-icon{margin:0 !important;font-size:40px}.achieve-item{width:100%;cursor:pointer;position:relative;overflow:hidden;border-radius:10px;margin-bottom:8px;background-color:#f4f1ea;border:1px solid #cbb092;border-bottom:2px solid #bba082;box-shadow:0 1px 2px rgba(0,0,0,0.05);transition:all 0.4s cubic-bezier(0.2,0.8,0.2,1);font-family:"PingFang SC","Shippori Mincho","Heiti SC",sans-serif}.achieve-item.is-open{background-color:#fff;border-color:#d4af37;transform:translateY(-2px);margin-bottom:15px;z-index:10;box-shadow:0 10px 25px -5px rgba(60,40,20,0.15)}.achieve-item:first-child.is-open{transform:translateY(0)}.item-header{display:flex;align-items:center;padding:12px 16px;gap:16px;min-height:40px}.emoji-wrapper{width:44px;height:44px;display:flex;align-items:center;justify-content:center;border-radius:6px;transition:all 0.45s cubic-bezier(0.34,1.56,0.64,1);flex-shrink:0;font-size:24px;background:transparent;border:1px solid transparent;transform:rotate(-3deg) scale(1)}.emoji-wrapper img{transition:all 0.4s ease;width:32px !important;height:32px !important;filter:sepia(0.6) opacity(0.9) contrast(1.1) drop-shadow(1px 0 0 #fff) drop-shadow(-1px 0 0 #fff) drop-shadow(0 1px 0 #fff) drop-shadow(0 -1px 0 #fff) drop-shadow(0 2px 1px rgba(0,0,0,0.1))}.achieve-item.is-open .emoji-wrapper{background:#fcfcfc;border:1px solid #e0e0e0;box-shadow:0 2px 6px rgba(0,0,0,0.03);transform:rotate(0deg) scale(1.1)}.achieve-item.is-open .emoji-wrapper img{width:30px !important;height:30px !important;filter:none}.item-title{flex:1;font-family:"PingFang SC","Shippori Mincho",sans-serif;font-size:16px;font-weight:700;color:#5d4037;letter-spacing:1px;transition:0.3s;line-height:1.2}.achieve-item.is-open .item-title{color:#8b4513;transform:translateX(2px)}.toggle-arrow{color:#cbb092;font-size:12px;transition:0.4s}.achieve-item.is-open .toggle-arrow{transform:rotate(180deg);color:#d4af37}.item-body{max-height:0;opacity:0;padding:0 16px;transition:all 0.5s ease;overflow:hidden}.achieve-item.is-open .item-body{max-height:500px;opacity:1;padding-bottom:16px}.detail-inset{border-top:1px dashed #e0d0b8;padding-top:12px;font-size:13px;color:#665;line-height:1.6;text-align:left}.ach-label{font-size:10px;color:#a89078;letter-spacing:1px;margin-right:8px;font-weight:bold;text-transform:uppercase;background:#f4f1ea;padding:1px 4px;border-radius:3px;font-family:sans-serif}.highlight-red{color:#bf4040;font-weight:800;font-family:"Georgia",serif;font-size:14px}.eval-text{color:#6b7a55;font-style:italic;font-family:"Georgia",serif;margin-top:8px;display:block}.th-price-export-btn,.th-price-import-btn{cursor:pointer;font-size:14px;margin-left:6px;opacity:0.7;vertical-align:middle;position:relative;top:2px}.th-price-export-btn:hover,.th-price-import-btn:hover{opacity:1}.th-night-mode .th-price-export-btn,.th-night-mode .th-price-import-btn{opacity:0.6}.th-price-title{font-family:'Shippori Mincho','Noto Serif SC',serif;font-size:24px;color:#5D4037;margin-top:0px;margin-bottom:5px;margin-left:5px;display:flex;align-items:center}.th-add-btn{cursor:pointer;font-size:16px;margin-left:8px;opacity:0.6;transition:0.2s;position:relative;top:2px}.th-add-btn:hover{opacity:1;transform:scale(1.1)}.th-price-row{display:flex;align-items:flex-end;margin-bottom:5px;font-size:14px;color:var(--th-inv-text)}.th-price-input{border:0 !important;background:transparent !important;box-shadow:none !important;outline:none !important;appearance:none !important;-webkit-appearance:none !important;color:#8B4513 !important;font-weight:800 !important;font-family:inherit !important;font-size:14px !important;padding:0 1px !important;margin:0 !important;text-align:center;text-indent:0 !important;min-width:0;border-radius:0 !important;filter:none !important;-webkit-filter:none !important}.th-price-input::placeholder{color:#ccc !important;letter-spacing:-1px}.th-price-input:focus{border-bottom:1px dashed #8B5A2B !important}.th-price-dots{flex:1;border-bottom:2px dotted #cbb092;margin:0 2px 5px 2px;opacity:0.6}.th-price-fixed{font-family:inherit !important;font-weight:bold !important;color:#8B4513;margin-right:4px}.th-price-row.special .th-price-fixed{color:#FF80AB !important;font-weight:800 !important}.th-price-note-input{text-align:left;color:#FF80AB !important;font-weight:800 !important;min-width:60px}.th-price-note-input::placeholder{color:rgba(255,128,171,0.4) !important;font-size:12px}.th-price-slots-area{display:flex;gap:4px;margin-top:-70px;justify-content:space-around;overflow:visible}.th-price-slot-wrapper{display:flex;flex-direction:column;align-items:center;flex:1;min-width:0;cursor:pointer}.th-price-slot-input{width:100%;border:0 !important;background:transparent !important;box-shadow:none !important;outline:none !important;appearance:none !important;-webkit-appearance:none !important;color:#a07850 !important;font-weight:bold !important;font-family:inherit !important;padding:0 1px !important;margin:0 !important;text-align:center;text-indent:0 !important;font-size:11px !important;margin-top:5px !important}.th-price-slot-input::placeholder{color:#c4a882 !important;font-size:11px !important}.th-price-slot-input:focus{border-bottom:1px dashed #8B5A2B !important}.th-staff-card{background:#fff8f0;border:1px solid #dcc;border-radius:6px;padding:8px;margin-bottom:8px;box-shadow:0 1px 2px rgba(0,0,0,0.05);font-size:12px;position:relative}.th-staff-name{font-weight:800;font-size:15px;color:#5D4037;border-bottom:1px solid #eee;padding-bottom:4px;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center}.th-staff-info{color:#666;line-height:1.4;margin-bottom:6px}.th-staff-slots-area{display:flex;gap:8px;margin-top:4px}.th-staff-slot{width:40px;height:40px;border-radius:6px;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:0.2s;border:1px solid rgba(139,90,43,0.3) !important;background:rgba(255,255,255,0.3) !important}.th-staff-slot.filled{border:2px solid #8B5A2B !important;background:#fff !important}.th-price-slot.filled{background:transparent !important;border:none !important;box-shadow:none !important}.th-price-slot:not(.filled){border:none !important;background:transparent !important;box-shadow:none !important}.th-price-slot-wrapper:not(:has(.th-price-slot.filled)) .th-price-slot-input{display:none !important}.th-price-slot{width:36px !important;height:36px !important;border-radius:8px !important}.th-price-slot .th-staff-slot-icon{font-size:42px !important}.th-staff-slot.th-drop-target-active{background:rgba(139,90,43,0.2) !important;border:2px dashed #8B5A2B !important;box-shadow:0 0 8px rgba(139,90,43,0.5) !important}.th-staff-slot-icon{font-size:24px;pointer-events:none}.th-edit-btn{font-size:14px;cursor:pointer;opacity:0.6;padding:0 4px}#th-fixed-edit-popup-ui{display:none;position:fixed;left:50%;top:20%;transform:translateX(-50%);width:85%;max-width:300px;background:var(--th-inv-outer);border:2px solid var(--th-inv-border);border-radius:12px;padding:6px;z-index:100005;flex-direction:column}.th-edit-textarea{width:95%;height:150px;margin:10px auto;display:block;font-family:monospace;font-size:12px;padding:5px;border-radius:4px;border:1px solid #ccc}.th-edit-actions{display:flex;justify-content:flex-end;padding:0 10px 10px;gap:10px}.th-btn{padding:4px 12px;border-radius:4px;background:#fff;border:1px solid #8B5A2B;cursor:pointer;font-weight:bold;color:#5D4037}#th-detail-popup-ui{pointer-events:auto;box-shadow:none !important;cursor:default}.th-inv-tag{display:none}.th-assign-hint{animation:th-pulse-hint 1s ease-in-out infinite;border-color:#FFD700 !important;box-shadow:0 0 10px rgba(255,215,0,0.6) !important}@keyframes th-pulse-hint{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.8;transform:scale(1.05)}}.th-night-mode{--th-inv-outer:#1e1c18 !important;--th-inv-inner:#2a2520 !important;--th-inv-border:#5d4037 !important;--th-inv-text:#d4c5a9 !important}.th-night-mode .th-inv-tab{background:#3a2c1f !important;color:#d4c5a9 !important;border-color:#57606f !important}.th-night-mode .th-inv-tab.active{background:var(--th-inv-outer) !important;color:var(--th-inv-text) !important;border-bottom:2px solid var(--th-inv-outer) !important}.th-night-mode .th-panel-container.th-style-paper{background:#2a2520 !important;border-color:#57606f !important;box-shadow:inset 0 0 20px rgba(0,0,0,0.3) !important}.th-night-mode .th-panel-footer{border-top-color:rgba(255,255,255,0.1)}.th-night-mode #th-scan,.th-night-mode #th-scale-minus,.th-night-mode #th-scale-plus,.th-night-mode #th-night-toggle{background:rgba(255,255,255,0.1) !important;border-color:rgba(255,255,255,0.2) !important;color:#dcdde1 !important}.th-night-mode .achieve-item{background-color:#2f3640 !important;border-color:#57606f !important}.th-night-mode .achieve-item.is-open{background-color:#353b48 !important;border-color:#f1c40f !important}.th-night-mode .item-title{color:#f5f6fa !important}.th-night-mode .achieve-item.is-open .item-title{color:#f1c40f !important}.th-night-mode .achieve-item.is-open .emoji-wrapper{background:#3a2c1f !important;border-color:#7f8c8d !important}.th-night-mode .detail-inset{border-top-color:#57606f;color:#a4b0be}.th-night-mode .ach-label{background:#2f3640;color:#7f8c8d}.th-night-mode .highlight-red{color:#e74c3c}.th-night-mode .eval-text{color:#2ecc71}.th-night-mode .th-price-title{color:#f5f6fa !important}.th-night-mode .th-price-input{color:#dcdde1 !important}.th-night-mode .th-price-input:focus{border-bottom-color:#dcdde1 !important}.th-night-mode .th-price-fixed{color:#e67e22 !important}.th-night-mode .th-staff-card{background:#2f3640 !important;border-color:#57606f !important}.th-night-mode .th-staff-name{color:#f5f6fa !important;border-bottom-color:#57606f !important}.th-night-mode .th-staff-info{color:#a4b0be !important}.th-night-mode .th-staff-key{color:#dcdde1 !important}.th-night-mode .th-edit-textarea{background:#2a2520;color:#f5f6fa;border-color:#57606f}.th-night-mode .th-btn{background:#2a2520;border-color:#57606f;color:#f5f6fa}.th-night-mode #th-detail-popup-ui .icon-area{background:#2a2520 !important;border-color:#57606f !important}.th-night-mode .name-area{color:#f5f6fa !important}.th-night-mode .desc-area{color:#a4b0be !important}.th-night-mode .th-currency-info{color:#c8cdd4 !important;opacity:1 !important}.th-panel-footer{display:flex;align-items:center;justify-content:flex-end;padding-top:8px;margin-top:4px;border-top:1px solid rgba(139,90,43,0.15);gap:8px;flex-shrink:0}#th-scan{cursor:pointer;font-size:12px;color:var(--th-inv-text);display:flex;align-items:center;gap:4px;padding:2px 6px;background:rgba(255,255,255,0.4);border-radius:4px;border:1px solid rgba(139,90,43,0.2);position:static;transform:none}.th-infra-card{background:#fdfaf5;border:1px solid #e8d0b3;border-radius:8px;margin-bottom:8px;padding:8px 10px;box-shadow:0 2px 4px rgba(139,90,43,0.08)}.th-night-mode .th-infra-card{background:#2f3640;border-color:#57606f;box-shadow:none}.th-infra-header{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid rgba(139,90,43,0.1);padding-bottom:5px;margin-bottom:6px;font-family:monospace}.th-night-mode .th-infra-header{border-bottom-color:#57606f}.th-infra-date{font-weight:bold;color:#5D4037;font-size:11px}.th-night-mode .th-infra-date{color:#f5f6fa}.th-infra-cost{background:#fcece0;color:#d35400;font-weight:800;font-size:12px;padding:1px 6px;border-radius:4px;border:1px solid #e6b998}.th-night-mode .th-infra-cost{background:#2a2520;border-color:#57606f;color:#e67e22}.th-infra-item{display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:12px;padding:4px;border-radius:4px}.th-infra-icon{font-size:16px;width:20px;text-align:center}.th-infra-text{flex:1;color:#555;line-height:1.3}.th-night-mode .th-infra-text{color:#dcdde1}.th-infra-area{font-weight:bold;color:#3e2723}.th-night-mode .th-infra-area{color:#f1f2f6}.tier-100{border-left:3px solid #95a5a6;background:rgba(149,165,166,0.05)}.tier-1000{border-left:3px solid #9b59b6;background:rgba(155,89,182,0.05)}.tier-5000{border-left:3px solid #f1c40f;background:rgba(241,196,15,0.05)}.th-tab-narrow{padding:8px 8px !important;min-width:0 !important;color:var(--th-inv-text) !important;font-weight:800 !important;text-shadow:none !important;display:flex !important;align-items:center !important;justify-content:center !important}.th-tab-narrow.active{color:var(--th-inv-text) !important}.th-night-mode .th-tab-narrow{color:#d4c5a9 !important}.th-night-mode .th-tab-narrow.active{color:var(--th-inv-text) !important}.th-settings-group{margin-bottom:10px}.th-settings-grouplabel{font-size:10px;font-weight:bold;color:#b09880;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:5px;padding:0 2px}.th-night-mode .th-settings-grouplabel{color:#7f8c8d}.th-settings-row{display:flex;justify-content:space-between;align-items:center;padding:7px 10px;border-radius:7px;background:rgba(139,90,43,0.13);margin-bottom:4px;font-size:13px;font-weight:bold;color:var(--th-inv-text);user-select:none}.th-settings-row.clickable{cursor:pointer}.th-settings-row.clickable:active{opacity:0.7;transform:scale(0.98)}.th-settings-scale{display:flex;align-items:center;gap:6px}.th-settings-scale-btn{cursor:pointer;font-size:14px;background:rgba(0,0,0,0.08);border-radius:4px;padding:1px 7px;font-weight:bold;line-height:1.4}.th-settings-scale-val{font-size:12px;font-weight:bold;min-width:34px;text-align:center}.th-night-mode .th-settings-row{background:rgba(255,255,255,0.07);color:var(--th-inv-text)}.th-night-mode .th-settings-scale-btn{background:rgba(255,255,255,0.12)}#th-scan.th-settings-row{font-size:13px !important;border:none !important;padding:7px 10px !important;gap:0 !important;justify-content:space-between !important;border-radius:7px !important;background:rgba(139,90,43,0.13) !important}#th-scale-minus.th-settings-scale-btn,#th-scale-plus.th-settings-scale-btn{background:rgba(0,0,0,0.08) !important;border:none !important;padding:1px 7px !important;font-size:14px !important;border-radius:4px !important}.th-night-mode #th-scan.th-settings-row{background:rgba(255,255,255,0.07) !important;border:none !important;color:var(--th-inv-text) !important}.th-night-mode #th-scale-minus.th-settings-scale-btn,.th-night-mode #th-scale-plus.th-settings-scale-btn{background:rgba(255,255,255,0.12) !important;border:none !important}.th-night-mode #th-night-toggle{background:transparent !important;border:none !important}.th-night-mode .th-corner-counter{color:var(--th-inv-text) !important;background:rgba(0,0,0,0.3) !important}.th-price-subnav{position:absolute;bottom:10px;right:10px;cursor:pointer;font-size:11px;font-weight:bold;color:var(--th-inv-text);background:rgba(139,90,43,0.12);border:1px solid rgba(139,90,43,0.25);border-radius:6px;padding:4px 8px;user-select:none;opacity:0.75;transition:opacity 0.15s}.th-price-subnav:hover{opacity:1}.th-night-mode .th-price-subnav{background:rgba(255,255,255,0.08);border-color:rgba(255,255,255,0.15);color:var(--th-inv-text)}.th-night-mode .th-notice-paper{background:#2f3640 !important;border-color:#57606f !important;box-shadow:none !important}.th-night-mode .th-notice-text{color:#dcdde1 !important}.th-night-mode .th-notice-text::placeholder{color:#57606f !important}.th-night-mode .th-shelf-box rect:not([fill="none"]){fill:#3a4452}.th-night-mode .th-shelf-box rect{stroke:#57606f}.th-night-mode .th-shelf-box line{stroke:#57606f}.th-night-mode .th-notice-col svg line{stroke:#a4b0be !important}.th-night-mode .th-notice-col svg circle{stroke:#a4b0be !important;fill:#2f3640 !important}.th-night-mode .th-price-slot-input{color:#a4b0be !important}.th-night-mode .th-price-slot-input::placeholder{color:#57606f !important}.th-shelf-view-new{display:flex;flex-direction:row;gap:6px;padding:4px 0px 10px 0px;margin-top:-4px}.th-notice-col{flex:1;position:relative;margin-top:4px;margin-left:-7px}.th-notice-board{background:transparent;border:none;padding:0;position:relative;z-index:5;margin-top:10px;box-sizing:border-box}.th-notice-paper{background:#fdf5e6;border:2px solid #C1A792;border-radius:2px;padding:16px 12px 10px 12px;min-height:176px;box-sizing:border-box;box-shadow:none;position:relative}.th-notice-paper::after{content:'';position:absolute;bottom:-4px;left:0;width:100%;height:20%;background:rgba(201,141,123,0.6);z-index:-1;border-radius:2px}.th-notice-text{width:100%;height:160px;background:transparent !important;border:none;resize:none;outline:none !important;font-family:inherit;color:#6a4c38;font-size:13px;line-height:1.6;display:block;box-shadow:none !important;scrollbar-width:none;-ms-overflow-style:none}.th-notice-text::-webkit-scrollbar{display:none}.th-notice-text::placeholder{color:#d4c1b0}.th-shelf-col{width:130px;display:flex;flex-direction:column;gap:16px;margin-top:4px;transform:translateX(3px)}.th-shelf-box{position:relative;height:64px;width:130px;flex-shrink:0;cursor:pointer}.th-shelf-box-inner{position:relative;z-index:1;width:100%;height:100%;display:flex;justify-content:space-between;align-items:center;padding-top:34px}#th-panel-inner.th-shelf-mode{background:var(--th-inv-outer) !important;box-shadow:none !important;border:none !important}#th-panel-inner.th-shelf-mode .th-panel-scroller{overflow:visible}#th-shelf-slots-inner{display:flex;flex-direction:column;gap:10px}`;
+                $('<style>').attr('id', CONFIG.domStyleId).text(css).appendTo('head');
+    }
+
+    function createUI() {
+        injectStyles();
+        if ($('#' + CONFIG.domBallId).length > 0) return;
+
+        let ballStyle = 'position: fixed; top: 40%; left: 10px; width: 45px; height: 45px; z-index: 100000; cursor: pointer; user-select: none; touch-action: none;';
+        let ballContent = '';
+
+        if (CONFIG.customIconUrl && CONFIG.customIconUrl.trim() !== '') {
+             ballStyle += 'border-radius: 50%;';
+             ballContent = `<img src="${CONFIG.customIconUrl}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%; pointer-events: none;">`;
+        } else {
+            ballStyle += 'background: rgba(40, 44, 52, 0.95); border: 2px solid #ffd700; border-radius: 50%; box-shadow: 0 4px 10px rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; font-size: 22px;';
+            ballContent = '🌸';
+        }
+
+        const ballHtml = `<div id="${CONFIG.domBallId}" style="${ballStyle}">${ballContent}</div>`;
+        const panelHtml = `
+        <div id="${CONFIG.domPanelId}" style="display: none; position: fixed; top: 120px; left: 50%; transform: translateX(-50%); width: 90%; max-width: 340px; height: 360px; background: transparent; z-index: 9999; flex-direction: column;">
+            <div id="th-main-close-btn" style="position: absolute; top: 12px; right: 0; width: 24px; height: 24px; background: #8B5A2B; color: #fff; border: 2px solid #fff; border-radius: 50%; text-align: center; line-height: 20px; font-size: 12px; font-weight: bold; cursor: pointer; z-index: 20; display: flex; align-items: center; justify-content: center;" title="关闭面板">✕</div>
+            <div style="position: relative; display: flex; padding-left: 0; align-items: flex-end; width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; margin-bottom: -2px; z-index: 10;">
+                <div id="th-tab-inv" class="th-inv-tab active">背包</div>
+                <div id="th-tab-price" class="th-inv-tab">价目</div>
+                <div id="th-tab-staff" class="th-inv-tab">员工</div>
+                <div id="th-tab-infra" class="th-inv-tab">基建</div>
+                <div id="th-tab-ach" class="th-inv-tab">成就</div>
+                <div id="th-tab-guest" class="th-inv-tab">来客簿</div>
+                <div id="th-tab-settings" class="th-inv-tab th-tab-narrow" title="设置"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style="pointer-events:none;display:block"><path d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.13-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/></svg></div>
+            </div>
+            <div style="background: var(--th-inv-outer); border: 2px solid var(--th-inv-border); border-radius: 0 10px 10px 10px; padding: 12px; flex: 1; display: flex; flex-direction: column; box-shadow: none; position: relative; overflow: hidden; z-index: 1;">
+                <div id="th-panel-inner" class="th-panel-container">
+                    <div class="th-pin th-pin-tl"></div>
+                    <div class="th-pin th-pin-tr"></div>
+                    <div class="th-pin th-pin-bl"></div>
+                    <div class="th-pin th-pin-br"></div>
+
+                    <div id="th-inv-counter" class="th-corner-counter">物品:0</div>
+                    <div id="th-ach-counter" class="th-corner-counter" style="display:none;">成就:0</div>
+                    <div class="th-currency-info"></div>
+
+                    <div class="th-panel-scroller">
+                        <div id="th-list-inv" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px;"></div>
+                        <div id="th-list-price" style="display: none; flex-direction: column; padding: 10px 5px;"></div>
+                        <div id="th-list-staff" style="display: none; flex-direction: column;"></div>
+                        <div id="th-list-infra" style="display: none; flex-direction: column;"></div>
+                        <div id="th-list-ach" style="display: none; flex-direction: column;"></div>
+                        <div id="th-list-guest" style="display: none; flex-direction: column;"></div>
+                        <div id="th-list-settings" style="display: none; flex-direction: column; padding: 4px 2px;"></div>
+                    </div>
+
+                    <div class="th-panel-footer">
+                        <div id="th-scale-row-wrapper" style="display:flex; align-items:center; gap:4px; margin-right:auto;"><div style="font-size: 10px; opacity: 0.7;">UI Scale:</div><div id="th-scale-minus" style="cursor:pointer; font-size:12px; background:rgba(255,255,255,0.4); border-radius:4px; border:1px solid rgba(139,90,43,0.2); padding: 2px 6px; user-select:none; line-height:1;">−</div><div id="th-scale-text" style="font-size:12px; min-width:34px; text-align:center; font-weight:bold;">100%</div><div id="th-scale-plus" style="cursor:pointer; font-size:12px; background:rgba(255,255,255,0.4); border-radius:4px; border:1px solid rgba(139,90,43,0.2); padding: 2px 6px; user-select:none; line-height:1;">+</div></div>
+                        <div id="th-night-toggle" style="cursor: pointer; font-size: 14px; background:rgba(255,255,255,0.4); border-radius:4px; border:1px solid rgba(139,90,43,0.2); padding: 2px 6px; user-select:none; line-height:1;" title="切换日/夜间模式">☀️</div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+
+        <div id="${CONFIG.domStorageId}" style="display: none; position: fixed; left: 50%; transform: translateX(-50%); width: 85%; max-width: 300px; height: 190px; background: var(--th-inv-outer); border: 2px solid var(--th-inv-border); border-radius: 12px; padding: 6px; z-index: 100000; flex-direction:column; box-sizing: border-box;">
+            <div id="th-storage-header" style="text-align:center; font-weight:bold; color:var(--th-inv-text); margin-bottom:4px; font-size:14px; flex-shrink: 0; cursor:grab; user-select:none;">🏚️ 杂物间</div>
+            <div style="background: var(--th-inv-inner); border-radius: 8px; flex: 1; overflow-y: auto; padding: 10px; border: 1px solid rgba(139, 90, 43, 0.1); box-sizing: border-box;">
+                <div id="th-list-storage" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px;"></div>
+            </div>
+        </div>
+
+        <div id="th-detail-popup-ui" style="display: none; position: fixed; left: 50%; transform: translateX(-50%); width: 85%; max-width: 300px; background: var(--th-inv-outer); border: 2px solid var(--th-inv-border); border-radius: 12px; padding: 6px; z-index: 100001;">
+            <div style="background: var(--th-inv-inner); border-radius: 8px; padding: 15px; display: flex; align-items: flex-start; gap: 15px; position: relative;">
+                <div style="position: absolute; top: 10px; right: 10px; display: flex; gap: 5px;">
+                    <div class="btn-area" style="display: flex; gap: 5px;"></div>
+                    <div class="close-btn" style="cursor: pointer; font-size: 18px; font-weight: bold; color: var(--th-inv-text); margin-left:5px;">✕</div>
+                </div>
+                <div class="icon-area" style="font-size: 40px; background: #fff; border: 2px solid var(--th-inv-border); border-radius: 10px; width: 60px; height: 60px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">📦</div>
+                <div style="flex: 1; min-width: 0;">
+                    <div class="name-area" style="font-size: 18px; font-weight: bold; margin-bottom: 2px; color: var(--th-inv-text); display:flex; align-items:center; gap:5px;">
+                        <span class="name-text"></span>
+                    </div>
+                    <div class="id-area" style="font-size: 10px; color: #888; font-family: monospace; margin-bottom: 8px;">ID: 000</div>
+                    <div class="desc-area" style="font-size: 12px; color: #666; line-height: 1.4;">描述</div>
+                </div>
+            </div>
+        </div>
+
+        <div id="${CONFIG.domEditId}">
+            <div style="text-align:center; font-weight:bold; margin-top:5px; color:var(--th-inv-text);" class="edit-title">编辑</div>
+            <textarea class="th-edit-textarea"></textarea>
+            <div class="th-edit-actions">
+                <div class="th-btn" onclick="$('#${CONFIG.domEditId}').fadeOut(150)">取消</div>
+                <div class="th-btn save-btn">保存并更新</div>
+            </div>
+        </div>
+        `;
+        $('body').append(ballHtml + panelHtml);
+        bindBallEvents();
+        bindStorageDragEvents();
+        bindDetailPopupDrag();
+        $('#th-tab-inv').on('click', () => switchTab('inventory'));
+        $('#th-tab-price').on('click', () => switchTab('price'));
+        $('#th-tab-staff').on('click', () => switchTab('staff'));
+        $('#th-tab-infra').on('click', () => switchTab('infra'));
+        $('#th-tab-ach').on('click', () => switchTab('achievement'));
+        $('#th-tab-guest').on('click', () => switchTab('guest'));
+        $('#th-tab-settings').on('click', () => switchTab('settings'));
+        $('#th-main-close-btn').on('click', (e) => { e.stopPropagation(); togglePanel(); });
+        $('#th-scale-minus').on('click', (e) => { e.stopPropagation(); updateUIScale(uiScale - 0.1); });
+        $('#th-scale-plus').on('click', (e) => { e.stopPropagation(); updateUIScale(uiScale + 0.1); });
+        $('#th-night-toggle').on('click', (e) => { e.stopPropagation(); toggleNightMode(); });
+    }
+
+    function toggleBallVisibility() {
+        const $ball = $('#' + CONFIG.domBallId);
+        if ($ball.length === 0) { createUI(); return; }
+        if (isBallVisible) {
+            $ball.hide(); isBallVisible = false;
+            if(window.toastr) toastr.info('悬浮球已隐藏', '系统');
+        } else {
+            $ball.show(); isBallVisible = true;
+            if(window.toastr) toastr.info('悬浮球已显示', '系统');
+        }
+    }
+
+    function togglePanel() {
+        const $panel = $('#' + CONFIG.domPanelId);
+        if (isPanelOpen) {
+            $panel.fadeOut(150);
+            isPanelOpen = false;
+            closeDetailPopup();
+            closeEditPopup();
+            $('#' + CONFIG.domStorageId).fadeOut(150);
+            isStorageOpen = false;
+        } else {
+            isPanelOpen = true;
+            // 打开面板时把所有Tab都标为脏（确保渲染最新数据）
+            ['inventory', 'staff', 'achievement', 'price', 'infra', 'guest'].forEach(t => dirtyTabs.add(t));
+            performScan('incremental'); // 优先增量扫（有检查点时很快），无检查点自动退化为全量
+            $panel.css({'display':'flex','opacity':0}); thResizePriceInputs(); $panel.animate({opacity:1}, 150);
+            updateUIScale();
+            applyNightMode();
+            // 面板显示后立即渲染当前 Tab，不等扫描回调（修复首开空白问题）
+            renderActiveTab();
+        }
+    }
+
+    function showItemDetail(item, isStoredItem = false, sourceType = 'main', staffName = null) {
+        const $popup = $('#th-detail-popup-ui');
+        const $panel = $('#' + CONFIG.domPanelId);
+        // 每次打开时重置位置，避免上次拖拽后位置偏移残留
+        $popup.css({ left: '50%', transform: 'translateX(-50%)' });
+        $popup.find('.icon-area').html(item.icon);
+        $popup.find('.name-text').text(item.name);
+        $popup.find('.id-area').text(`ID: ${item.id}`);
+        $popup.find('.desc-area').text(item.desc || "无描述");
+
+        const $btnArea = $popup.find('.btn-area').empty();
+
+        const $editBtn = $(`<div style="cursor: pointer; font-size: 16px; opacity: 0.6;" title="编辑">✏️</div>`);
+        $editBtn.on('click', (e) => {
+            e.stopPropagation();
+            editItemAction(item);
+        });
+        $btnArea.append($editBtn);
+
+        const $delBtn = $(`<div class="del-btn" style="cursor: pointer; font-size: 16px; opacity: 0.6;" title="丢弃">🗑️</div>`);
+        $delBtn.on('click', (e) => { e.stopPropagation(); deleteItemAction(item.id, item.name); });
+        $btnArea.append($delBtn);
+
+        // 【修改③】为PC端添加操作按钮
+        if (sourceType === 'from_main') {
+            // 从主背包查看：添加"放入杂物间"按钮
+            const $toStorageBtn = $(`<div style="cursor: pointer; font-size: 16px; opacity: 0.6;" title="放入杂物间">🏚️</div>`);
+            $toStorageBtn.on('click', (e) => {
+                e.stopPropagation();
+                moveToStorage(item.id);
+                closeDetailPopup();
+            });
+            $btnArea.append($toStorageBtn);
+        } else if (sourceType === 'from_storage') {
+            // 从杂物间查看：添加"取出"和"分配给员工"按钮
+            const $retrieveBtn = $(`<div style="cursor: pointer; font-size: 16px; opacity: 0.6;" title="取出到背包">🌸</div>`);
+            $retrieveBtn.on('click', (e) => {
+                e.stopPropagation();
+                retrieveFromStorage(item.id);
+            });
+            $btnArea.append($retrieveBtn);
+
+            // 如果员工栏开启，显示分配按钮
+            if ($('#th-list-staff').is(':visible')) {
+                const $assignBtn = $(`<div style="cursor: pointer; font-size: 16px; opacity: 0.6;" title="分配给员工">👤</div>`);
+                $assignBtn.on('click', (e) => {
+                    e.stopPropagation();
+                    // 标记此物品为"待分配"，提示用户点击员工槽
+                    $popup.data('pending-assign-item', item.id);
+                    $('.th-staff-slot:not(.filled)').addClass('th-assign-hint');
+                    if(window.toastr) toastr.info('请点击员工的空槽位', '分配物品');
+                });
+                $btnArea.append($assignBtn);
+            }
+
+            // 如果价目板开启，显示上架按钮
+            if ($('#th-list-price').is(':visible')) {
+                const $toPriceBtn = $(`<div style="cursor: pointer; font-size: 16px; opacity: 0.6;" title="上架到价目板">💰</div>`);
+                $toPriceBtn.on('click', (e) => {
+                    e.stopPropagation();
+                    $popup.data('pending-price-item', item.id);
+                    $('.th-price-slot:not(.filled)').addClass('th-assign-hint');
+                    if(window.toastr) toastr.info('请点击空货架槽位', '上架物品');
+                    $popup.hide(); // 关闭详情弹窗，避免遮挡槽位
+                });
+                $btnArea.append($toPriceBtn);
+            }
+        } else if (sourceType === 'from_staff') {
+            // 从员工槽查看：添加"收回杂物间"按钮
+            const $returnBtn = $(`<div style="cursor: pointer; font-size: 16px; opacity: 0.6;" title="收回杂物间">🏚️</div>`);
+            $returnBtn.on('click', (e) => {
+                e.stopPropagation();
+                moveStaffToStorage(item.id, staffName);
+                closeDetailPopup();
+            });
+            $btnArea.append($returnBtn);
+        }
+
+        $popup.find('.close-btn').off('click').on('click', (e) => { e.stopPropagation(); closeDetailPopup(); });
+        parseEmoji($popup[0]);
+
+        // 智能计算详情弹窗位置，避免遮挡操作区域
+        if (sourceType === 'from_price') {
+            // 货架物品：详情页始终放在上方（因为点击后杂物间会随之弹出在下方）
+            $popup.css('top', '20%');
+        } else if ($panel.length && $panel.is(':visible')) {
+            if (isStorageOpen) {
+                // 杂物间已打开时，根据当前标签决定位置
+                const isPriceTabActive = $('#th-tab-price').hasClass('active');
+                const isStaffTabActive = $('#th-tab-staff').hasClass('active');
+                $popup.css('top', (isPriceTabActive || isStaffTabActive) ? '20%' : '40%');
+            } else {
+                // 杂物间未打开，放在主面板下方
+                const topPos = (parseFloat($panel.css('top')) || 120) + $panel.outerHeight() + 12;
+                $popup.css('top', topPos + 'px');
+            }
+        } else {
+            $popup.css('top', '200px');
+        }
+        $popup.css('display', 'block').show();
+    }
+
+    function closeDetailPopup() {
+        const $popup = $('#th-detail-popup-ui');
+        $popup.hide();
+        // 【修改③】清除PC端操作提示状态
+        $popup.removeData('pending-assign-item');
+        $popup.removeData('pending-price-item');
+        $('.th-staff-slot').removeClass('th-assign-hint');
+        $('.th-price-slot').removeClass('th-assign-hint');
+    }
+
+    function toggleStoragePopup() {
+        const $storage = $('#' + CONFIG.domStorageId);
+        const $panel = $('#' + CONFIG.domPanelId);
+        if (isStorageOpen) {
+            $storage.fadeOut(150);
+            isStorageOpen = false;
+        } else {
+            if ($panel.length && $panel.is(':visible')) {
+                const rect = $panel[0].getBoundingClientRect();
+                const topPos = rect.bottom + 10;
+                $storage.css('top', topPos + 'px');
+            } else {
+                $storage.css('top', '430px');
+            }
+            renderStorageItems();
+            $storage.css('display', 'flex').hide().fadeIn(150);
+            isStorageOpen = true;
+        }
+    }
+
+    function switchTab(tab) {
+        const $invTab = $('#th-tab-inv'); const $priceTab = $('#th-tab-price'); const $staffTab = $('#th-tab-staff');
+        const $infraTab = $('#th-tab-infra'); const $achTab = $('#th-tab-ach'); const $guestTab = $('#th-tab-guest'); const $settingsTab = $('#th-tab-settings');
+        const $invList = $('#th-list-inv'); const $priceList = $('#th-list-price'); const $staffList = $('#th-list-staff');
+        const $infraList = $('#th-list-infra'); const $achList = $('#th-list-ach'); const $guestList = $('#th-list-guest'); const $settingsList = $('#th-list-settings');
+        const $panelInner = $('#th-panel-inner');
+        const $pins = $('.th-pin');
+        const $invCounter = $('#th-inv-counter');
+        const $achCounter = $('#th-ach-counter');
+
+        // 全部取消激活 / 全部隐藏
+        [$invTab,$priceTab,$staffTab,$infraTab,$achTab,$guestTab,$settingsTab].forEach($t => $t.removeClass('active'));
+        [$invList,$priceList,$staffList,$infraList,$achList,$guestList,$settingsList].forEach($l => $l.hide());
+        $('#th-footer-price-nav').remove(); // 离开价目tab时清除页脚导航按钮
+
+        $panelInner.removeClass('th-style-paper').removeClass('th-shelf-mode');
+        $pins.hide();
+        $invCounter.hide();
+        $achCounter.hide();
+
+        if (tab === 'inventory') {
+            $invTab.addClass('active');
+            $invList.css('display', 'grid');
+            $invCounter.show();
+            if (dirtyTabs.has('inventory') || $invList.children().length === 0) {
+                renderInventory(); dirtyTabs.delete('inventory');
+            }
+        } else if (tab === 'price') {
+            $priceTab.addClass('active');
+            $priceList.css('display', 'flex');
+            thResizePriceInputs();
+            // 根据子视图决定是否启用paper样式，不能无条件加
+            if (priceSubView === 'shelf') {
+                $panelInner.removeClass('th-style-paper').addClass('th-shelf-mode');
+                $pins.hide();
+            } else {
+                $panelInner.removeClass('th-shelf-mode').addClass('th-style-paper');
+                $pins.show();
+            }
+            if (dirtyTabs.has('price') || $priceList.children().length === 0) {
+                if (priceSubView === 'shelf') renderPriceShelf();
+                else renderPriceBoard();
+                dirtyTabs.delete('price');
+            }
+// 确保导航按钮始终存在
+$('#th-footer-price-nav').remove();
+const _navLabel = priceSubView === 'shelf' ? '← 价目表' : '货架&amp;公告 →';
+const $_nav = $('<div id="th-footer-price-nav" class="th-price-subnav" style="position:static;margin-left:6px;">' + _navLabel + '</div>');
+$_nav.on('click', () => { if (priceSubView === 'shelf') { priceSubView = 'board'; renderPriceBoard(); } else { priceSubView = 'shelf'; renderPriceShelf(); } });
+$('#th-night-toggle').after($_nav);
+        } else if (tab === 'staff') {
+            $staffTab.addClass('active');
+            $staffList.css('display', 'flex');
+            if (dirtyTabs.has('staff') || $staffList.children().length === 0) {
+                renderStaffBoard(getVars()[CONFIG.varStaffKey] || []); dirtyTabs.delete('staff');
+            }
+        } else if (tab === 'infra') {
+            $infraTab.addClass('active');
+            $infraList.css('display', 'flex');
+            if (dirtyTabs.has('infra') || $infraList.children().length === 0) {
+                renderInfraBoard(getVars()[CONFIG.varRenoKey] || []); dirtyTabs.delete('infra');
+            }
+        } else if (tab === 'achievement') {
+            $achTab.addClass('active');
+            $achList.css('display', 'flex');
+            $achCounter.show();
+            if (dirtyTabs.has('achievement') || $achList.children().length === 0) {
+                renderAchievements(); dirtyTabs.delete('achievement');
+            }
+        } else if (tab === 'guest') {
+            $guestTab.addClass('active');
+            $guestList.css('display', 'flex');
+            if (dirtyTabs.has('guest') || $guestList.children().length === 0) {
+                renderGuestLog(getVars()[CONFIG.varGuestLogKey] || []); dirtyTabs.delete('guest');
+            }
+        } else if (tab === 'settings') {
+            $settingsTab.addClass('active');
+            $settingsList.css('display', 'flex');
+            renderSettings(); // 内部有幂等保护，只渲染一次
+        }
+    }
+
+        function thResizePriceInputs() {
+        $('#th-list-price .th-price-input').each(function() {
+            this.style.width = '1px';
+            this.style.width = (this.scrollWidth + 4) + 'px';
+        });
+    }
+
+    function renderPriceBoard() {
+        flushPriceSave(); // 先把未保存的编辑同步到 chatVar，防止 re-render 丢失
+        const $list = $('#th-list-price');
+        $list.empty();
+        // 价目板视图：恢复paper背景和钉子，移除货架模式
+        $('#th-panel-inner').removeClass('th-shelf-mode').addClass('th-style-paper');
+        $('.th-pin').show();
+
+        const $header = $('<div class="th-price-title">価目表 <span class="th-add-btn">✏️</span><span class="th-price-export-btn" title="导出价目表">📤</span><span class="th-price-import-btn" title="导入价目表">📥</span></div>');
+        $header.find('.th-add-btn').on('click', () => addPriceRow());
+        $header.find('.th-price-export-btn').on('click', () => exportPriceData());
+        $header.find('.th-price-import-btn').on('click', () => importPriceData());
+        $list.append($header);
+
+        const data = getPriceData();
+        const itemCount = data.length - 1;
+
+        // 渲染文本行
+        for (let i = 0; i < itemCount; i++) {
+            const rowData = data[i] || { name: "", price: "" };
+            const $row = $(`
+                <div class="th-price-row normal">
+                    <input type="text" class="th-price-input name-input" placeholder="____" value="${rowData.name}" style="text-align: left;">
+                    <div class="th-price-dots"></div>
+                    <input type="text" class="th-price-input price-input" placeholder="____" value="${rowData.price}" style="text-align: right;">
+                </div>
+            `);
+            $list.append($row);
+            $row.find('.th-price-input').on('input', function() {
+                this.style.width = '1px';
+                this.style.width = (this.scrollWidth + 4) + 'px';
+            });
+        }
+
+        const noteData = data[itemCount] || { note: "" };
+        const $row5 = $(`
+            <div class="th-price-row special">
+                <div class="th-price-fixed">主人特别慰藉</div>
+                <input type="text" class="th-price-input note-input th-price-note-input" placeholder="____" value="${noteData.note}">
+                <div class="th-price-dots"></div>
+                <div class="th-price-fixed">面议</div>
+            </div>
+        `);
+        $list.append($row5);
+
+        isInitializingPriceBoard = true;
+        $list.find('.th-price-input').each(function(){ onPriceInputChange.call(this); });
+        isInitializingPriceBoard = false;
+        $list.find('.th-price-input').on('input', onPriceInputChange);
+
+        // 失焦自动移除空白行
+        $list.find('.th-price-row.normal .th-price-input').on('blur', function() {
+            const $row = $(this).closest('.th-price-row.normal');
+            const name = $row.find('.name-input').val().trim();
+            const price = $row.find('.price-input').val().trim();
+            if (!name && !price) {
+                savePriceData();
+                setTimeout(() => renderPriceBoard(), 50);
+            }
+        });
+
+        // 将导航按钮注入页脚，与日夜按钮并排
+        $('#th-footer-price-nav').remove();
+        const $navBtn = $('<div id="th-footer-price-nav" class="th-price-subnav" style="position:static;margin-left:6px;">货架&amp;公告 →</div>');
+        $navBtn.on('click', () => { priceSubView = 'shelf'; renderPriceShelf(); });
+        $('#th-night-toggle').after($navBtn);
+
+        parseEmoji($list[0]);
+
+        // 隐藏旧货架区域（槽位已移至子视图）
+
+    }
+
+    function renderPriceShelf() {
+        const $list = $('#th-list-price');
+        $list.empty();
+        // 货架视图：去掉paper背景和钉子，背景改为 var(--th-inv-outer)
+        $('#th-panel-inner').removeClass('th-style-paper').addClass('th-shelf-mode');
+        $('.th-pin').hide();
+
+        const fullInventory = getVars()[CONFIG.varDataKey] || [];
+        const slotsData = getPriceSlotsData();
+        const noticeText = (getVars()[CONFIG.varNoticeKey] || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+        // 构建3个货架盒，每盒2个槽位（共6个槽）
+        let shelfBoxesHtml = '';
+        for (let boxIdx = 0; boxIdx < 3; boxIdx++) {
+            let slotsInnerHtml = '';
+            for (let i = 0; i < 2; i++) {
+                const slotIdx = boxIdx * 2 + i;
+                const slot = slotsData[slotIdx] || { id: null, price: '' };
+                let iconHtml = '';
+                let filledClass = '';
+                if (slot.id) {
+                    const item = fullInventory.find(it => it.id === slot.id);
+                    if (item) {
+                        iconHtml = `<div class="th-staff-slot-icon">${item.icon}</div>`;
+                        filledClass = 'filled';
+                    }
+                }
+                slotsInnerHtml += `
+                    <div class="th-price-slot-wrapper">
+                        <div class="th-staff-slot th-price-slot ${filledClass}" data-slot-index="${slotIdx}" data-item-id="${slot.id || ''}">
+                            ${iconHtml}
+                        </div>
+                        <input class="th-price-slot-input" type="text" placeholder="定价" value="${slot.price}">
+                    </div>`;
+            }
+            shelfBoxesHtml += `
+                <div class="th-shelf-box">
+                    <svg width="100%" height="100%" style="position:absolute;top:0;left:0;pointer-events:none;z-index:0;">
+                        <rect x="1" y="1" width="128" height="62" rx="2" fill="#D49F74" stroke="#B58C67" stroke-width="2"/>
+                        <rect x="6" y="1" width="118" height="56" fill="none" stroke="#B58C67" stroke-width="2"/>
+                        <line x1="1" y1="63" x2="6" y2="57" stroke="#B58C67" stroke-width="2"/>
+                        <line x1="129" y1="63" x2="124" y2="57" stroke="#B58C67" stroke-width="2"/>
+                    </svg>
+                    <div class="th-shelf-box-inner">${slotsInnerHtml}</div>
+                </div>`;
+        }
+
+        $list.html(`<div class="th-shelf-view-new">
+            <div class="th-notice-col">
+                <svg style="position:absolute;top:0;left:0;width:100%;height:50px;z-index:10;pointer-events:none;overflow:visible;">
+                    <line x1="50%" y1="-10" x2="25%" y2="24" stroke="#b08d72" stroke-width="1.5"/>
+                    <line x1="50%" y1="-10" x2="75%" y2="24" stroke="#b08d72" stroke-width="1.5"/>
+                    <circle cx="25%" cy="24" r="2.5" fill="#fdf5e6" stroke="#b08d72" stroke-width="1.5"/>
+                    <circle cx="75%" cy="24" r="2.5" fill="#fdf5e6" stroke="#b08d72" stroke-width="1.5"/>
+                    <circle cx="50%" cy="-10" r="3.5" fill="#fdf5e6" stroke="#b08d72" stroke-width="1.5"/>
+                </svg>
+                <div class="th-notice-board">
+                    <div class="th-notice-paper">
+                        <textarea class="th-notice-text" placeholder="在这里写下今日的特惠信息或是留给来访者的口信...">${noticeText}</textarea>
+                    </div>
+                </div>
+            </div>
+            <div class="th-shelf-col">
+                <div id="th-shelf-slots-inner">${shelfBoxesHtml}</div>
+            </div>
+        </div>`);
+
+        // 将返回按钮注入页脚，与日夜按钮并排
+        $('#th-footer-price-nav').remove();
+        const $backBtn = $('<div id="th-footer-price-nav" class="th-price-subnav" style="position:static;margin-left:6px;">← 价目表</div>');
+        $backBtn.on('click', () => { priceSubView = 'board'; renderPriceBoard(); });
+        $('#th-night-toggle').after($backBtn);
+
+        // 绑定公告文本自动保存
+        $list.find('.th-notice-text').on('input', function() {
+            const val = $(this).val();
+            if (typeof TavernHelper !== 'undefined') {
+                TavernHelper.insertOrAssignVariables({ [CONFIG.varNoticeKey]: val }, { type: 'chat' });
+            }
+        });
+
+        // 绑定槽位输入同步
+        isInitializingPriceBoard = true;
+        $('#th-shelf-slots-inner .th-price-slot-input').each(function(){ onPriceInputChange.call(this); });
+        isInitializingPriceBoard = false;
+        $('#th-shelf-slots-inner .th-price-slot-input').on('input', onPriceInputChange);
+
+        // 货架已填槽：绑定拖拽（拖到杂物间可下架）
+        $('#th-shelf-slots-inner').find('.th-price-slot.filled').each(function() {
+            const slotIdx = $(this).data('slot-index');
+            const slotItem = fullInventory.find(it => it.id === slotsData[slotIdx].id);
+            if (slotItem) bindDragEvents($(this), slotItem, 'from_price', slotIdx);
+        });
+        // 货架盒整体点击：全高度覆盖，左/右半边分别对应两个槽
+        $('#th-shelf-slots-inner').find('.th-shelf-box').on('click', function(e) {
+            // input 自身点击不冒泡处理
+            if ($(e.target).is('.th-price-slot-input')) return;
+            const rect = this.getBoundingClientRect();
+            const isRight = (e.clientX - rect.left) > rect.width / 2;
+            const boxes = $('#th-shelf-slots-inner').find('.th-shelf-box');
+            const boxIdx = boxes.index(this);
+            const slotIdx = boxIdx * 2 + (isRight ? 1 : 0);
+            const slot = slotsData[slotIdx] || { id: null };
+
+            if (slot && slot.id) {
+                const item = fullInventory.find(it => it.id === slot.id);
+                if (item) {
+                    const $popup = $('#th-detail-popup-ui');
+                    showItemDetail(item, false, 'from_price');
+                    const $btnArea = $popup.find('.btn-area').empty();
+                    const $editBtn = $(`<div style="cursor:pointer;font-size:16px;opacity:0.6" title="编辑">✏️</div>`);
+                    $editBtn.on('click', (e) => { e.stopPropagation(); editItemAction(item); });
+                    const $delBtn = $(`<div class="del-btn" style="cursor:pointer;font-size:16px;opacity:0.6" title="丢弃">🗑️</div>`);
+                    $delBtn.on('click', (e) => { e.stopPropagation(); deleteItemAction(item.id, item.name); });
+                    const $removeBtn = $(`<div style="cursor:pointer;font-size:16px;opacity:0.6" title="下架至杂物间">🏚️</div>`);
+                    $removeBtn.on('click', (e) => { e.stopPropagation(); removeItemFromPriceSlot(slotIdx); closeDetailPopup(); });
+                    $btnArea.append($editBtn, $delBtn, $removeBtn);
+                }
+                toggleStoragePopup();
+            } else {
+                const $popup = $('#th-detail-popup-ui');
+                const pendingItemId = $popup.data('pending-price-item');
+                if (pendingItemId) {
+                    moveItemToPriceSlot(pendingItemId, slotIdx);
+                    $popup.removeData('pending-price-item');
+                    $('.th-price-slot').removeClass('th-assign-hint');
+                    closeDetailPopup();
+                } else {
+                    toggleStoragePopup();
+                }
+            }
+        });
+
+        parseEmoji($list[0]);
+    }
+
+    function renderStaffBoard(staffList) {
+        const $list = $('#th-list-staff');
+        $list.empty();
+
+        if (!staffList || staffList.length === 0) {
+            $list.html('<div style="text-align:center; color:#888; margin-top:20px;">暂无员工信息<br><span style="font-size:10px">请在对话中添加员工合同</span></div>');
+            return;
+        }
+
+        const fullInventory = getVars()[CONFIG.varDataKey] || [];
+        const staffItemsMap = getVars()[CONFIG.varStaffItemsKey] || {};
+
+        staffList.forEach(staff => {
+            const heldIds = staffItemsMap[staff['姓名'] || staff['Name'] || staff['name']] || [];
+            let slotsHtml = '';
+            for(let i=0; i<2; i++) {
+                const itemId = heldIds[i];
+                let content = '';
+                let filledClass = '';
+                if (itemId) {
+                    const item = fullInventory.find(it => it.id === itemId);
+                    if (item) {
+                        content = `<div class="th-staff-slot-icon">${item.icon}</div>`;
+                        filledClass = 'filled';
+                    }
+                }
+                const name = staff['姓名'] || staff['Name'] || staff['name'];
+                slotsHtml += `<div class="th-staff-slot ${filledClass}" data-staff="${name}" data-item-id="${itemId || ''}">${content}</div>`;
+            }
+
+            let infoHtml = '';
+            for (const [k, v] of Object.entries(staff)) {
+                if (k === '姓名' || k === 'Name' || k === 'name') continue;
+                let valHtml = v;
+                if (k.includes('报酬') || k.includes('允诺')) valHtml = `<span style="color:#d35400;">${v}</span>`;
+                infoHtml += `<div><span class="th-staff-key" style="font-weight:700;">${k}</span>: <span style="color:#8a786a;">${valHtml}</span></div>`;
+            }
+
+            const card = $(`
+                <div class="th-staff-card">
+                    <div class="th-staff-name">
+                        <span>${staff['姓名'] || staff['Name'] || '未知'}</span>
+                        <span style="display:flex;gap:4px;">
+                            <span class="th-edit-btn" title="编辑员工">✏️</span>
+                            <span class="th-del-btn" title="解雇员工" style="color:#c0392b; font-size:14px; cursor:pointer; opacity:0.6; padding:0 4px;">🗑️</span>
+                        </span>
+                    </div>
+                    <div class="th-staff-info">
+                        ${infoHtml}
+                    </div>
+                    <div class="th-staff-slots-area">
+                        ${slotsHtml}
+                    </div>
+                </div>
+            `);
+
+            card.find('.th-edit-btn').on('click', () => editStaffAction(staff['姓名'] || staff['Name'], staff));
+            card.find('.th-del-btn').on('click', () => deleteStaffAction(staff['姓名'] || staff['Name'] || '未知'));
+
+            $list.append(card);
+        });
+
+        $list.find('.th-staff-slot.filled').on('click', function() {
+            const itemId = $(this).data('item-id');
+            const staffName = $(this).data('staff');
+            const item = fullInventory.find(it => it.id === String(itemId));
+            if (item) showItemDetail(item, false, 'from_staff', staffName);
+            toggleStoragePopup(); // ④ 同时弹杂物间，方便拖拽替换
+        });
+
+        // 【修改③】为空员工槽添加PC端点击接收物品的功能
+        $list.find('.th-staff-slot:not(.filled)').on('click', function() {
+            const $popup = $('#th-detail-popup-ui');
+            const pendingItemId = $popup.data('pending-assign-item');
+            if (pendingItemId) {
+                const staffName = $(this).data('staff');
+                moveStorageToStaff(pendingItemId, staffName);
+                $popup.removeData('pending-assign-item');
+                $('.th-staff-slot').removeClass('th-assign-hint');
+                closeDetailPopup();
+            } else {
+                toggleStoragePopup(); // ④ 弹杂物间提示用户先选物品
+            }
+        });
+
+        $list.find('.th-staff-slot.filled').each(function() {
+             const itemId = $(this).data('item-id');
+             const staffName = $(this).data('staff');
+             const item = fullInventory.find(it => it.id === String(itemId));
+             if (item) {
+                 bindDragEvents($(this), item, 'from_staff', staffName);
+             }
+        });
+
+        parseEmoji($list[0]);
+    }
+
+    function renderInventory() {
+        const listData = getVars()[CONFIG.varDataKey] || [];
+        const storageList = getVars()[CONFIG.varStorageKey] || [];
+    const staffItemsMap = getVars()[CONFIG.varStaffItemsKey] || {};
+    const priceSlotsData = getPriceSlotsData();
+    let allStaffHeldIds = [];
+    Object.values(staffItemsMap).forEach(ids => allStaffHeldIds = allStaffHeldIds.concat(ids));
+    const priceHeldIds = priceSlotsData.filter(s => s.id).map(s => s.id);
+        const $list = $('#th-list-inv');
+        $list.empty();
+        const itemsToShow = listData.filter(i =>
+        !storageList.includes(i.id) &&
+        !allStaffHeldIds.includes(i.id) &&
+        !priceHeldIds.includes(i.id)
+    );
+        // 确保计数器始终与实际渲染结果同步
+        const _inv_hidden = storageList.filter(id => listData.some(i => i.id === id)).length + allStaffHeldIds.length + priceHeldIds.length;
+        $('#th-inv-counter').text(`物品:${itemsToShow.length}${_inv_hidden > 0 ? `(+${_inv_hidden})` : ''}`);
+        const $storageBtn = $(`
+            <div id="th-storage-bin" class="th-inv-grid-item th-inv-storage-bin">
+                <div class="th-inv-grid-icon">🏚️</div>
+                <div class="th-inv-grid-name">杂物间</div>
+            </div>
+        `);
+        $storageBtn.on('click', () => { toggleStoragePopup(); });
+        $list.append($storageBtn);
+        if (itemsToShow.length === 0) {
+             $list.append(`<div style="grid-column: span 3; text-align:center; color:#888; font-size:12px; display:flex; align-items:center; justify-content:center;">(背包为空)</div>`);
+        }
+        itemsToShow.forEach(item => {
+            const $item = $(`
+            <div class="th-inv-grid-item" data-id="${item.id}">
+                <div class="th-inv-grid-icon">${item.icon}</div>
+                <div class="th-inv-grid-name">${item.name}</div>
+            </div>`);
+            let startX = 0, startY = 0;
+            $item.on('touchstart', (e) => { startX = e.touches[0].clientX; startY = e.touches[0].clientY; });
+            $item.on('touchend', (e) => {
+                const endX = e.changedTouches[0].clientX; const endY = e.changedTouches[0].clientY;
+                if (Math.abs(endX - startX) < 10 && Math.abs(endY - startY) < 10) showItemDetail(item, false, 'from_main');
+            });
+            // 【修改③】添加PC端点击事件
+            $item.on('click', function(e) {
+                // 如果是触摸设备，不触发click（已由touchend处理）
+                if (e.originalEvent && e.originalEvent.sourceCapabilities &&
+                    e.originalEvent.sourceCapabilities.firesTouchEvents) return;
+                showItemDetail(item, false, 'from_main');
+            });
+            bindDragEvents($item, item, 'from_main');
+            $list.append($item);
+        });
+        parseEmoji($list[0]);
+    }
+
+    function renderStorageItems() {
+        const listData = getVars()[CONFIG.varDataKey] || [];
+        const storageList = getVars()[CONFIG.varStorageKey] || [];
+        const $list = $('#th-list-storage');
+        $list.empty();
+        const storedItems = listData.filter(i => storageList.includes(i.id));
+        if (storedItems.length === 0) {
+             $list.append(`<div style="grid-column: span 4; text-align:center; color:#888; font-size:12px; padding:10px;">空空如也(杂物间内物品不会被ai读到。打开杂物间时，可切到价目、员工面板进行更多操作)</div>`);
+        }
+        storedItems.forEach(item => {
+            const $item = $(`
+            <div class="th-inv-grid-item" data-id="${item.id}">
+                <div class="th-inv-grid-icon">${item.icon}</div>
+                <div class="th-inv-grid-name">${item.name}</div>
+            </div>`);
+            let startX = 0, startY = 0;
+            $item.on('touchstart', (e) => { startX = e.touches[0].clientX; startY = e.touches[0].clientY; });
+            $item.on('touchend', (e) => {
+                const endX = e.changedTouches[0].clientX; const endY = e.changedTouches[0].clientY;
+                if (Math.abs(endX - startX) < 10 && Math.abs(endY - startY) < 10) showItemDetail(item, true, 'from_storage');
+            });
+            // 【修改③】添加PC端点击事件
+            $item.on('click', function(e) {
+                // 如果是触摸设备，不触发click（已由touchend处理）
+                if (e.originalEvent && e.originalEvent.sourceCapabilities &&
+                    e.originalEvent.sourceCapabilities.firesTouchEvents) return;
+                showItemDetail(item, true, 'from_storage');
+            });
+            bindDragEvents($item, item, 'from_storage');
+            $list.append($item);
+        });
+        parseEmoji($list[0]);
+    }
+
+    function renderInfraBoard(renoList) {
+        const $list = $('#th-list-infra');
+        $list.empty();
+
+        if (!renoList || renoList.length === 0) {
+            $list.html('<div style="text-align:center; color:#888; margin-top:20px;">暂无基建记录<br><span style="font-size:10px">通过万事屋管家进行修缮后会自动记录</span></div>');
+            return;
+        }
+
+        const reversedList = [...renoList].reverse();
+
+        reversedList.forEach(item => {
+            let detailHtml = '';
+            const regexItem = /([^、,，]+?)\s*[（(]花费(\d+)小判进行([\s\S]*?)[)）](?:[、,，]|$)/g;
+            let match;
+            let hasMatch = false;
+
+            while ((match = regexItem.exec(item.detail)) !== null) {
+                hasMatch = true;
+                const areaName = match[1].trim();
+                const cost = parseInt(match[2]);
+                const actionDesc = match[3].trim();
+
+                let icon = '🔧';
+                let tierClass = '';
+                if (cost <= 100) { icon = '🧹'; tierClass = 'tier-100'; }
+                else if (cost <= 1000) { icon = '🔨'; tierClass = 'tier-1000'; }
+                else { icon = '🏗️'; tierClass = 'tier-5000'; }
+
+                detailHtml += `
+                    <div class="th-infra-item ${tierClass}">
+                        <div class="th-infra-icon">${icon}</div>
+                        <div class="th-infra-text">
+                            <span class="th-infra-area">${areaName}</span>
+                            ${actionDesc ? `<span style="opacity:0.8; font-size:11px;">- ${actionDesc}</span>` : ''}
+                        </div>
+                    </div>
+                `;
+            }
+
+            if (!hasMatch) {
+                detailHtml = `<div style="font-size:11px; color:#666; padding:5px;">${item.detail}</div>`;
+            }
+
+            const card = $(`
+                <div class="th-infra-card">
+                    <div class="th-infra-header">
+                        <span class="th-infra-date">📅 ${item.date}</span>
+                        <span class="th-infra-cost">-${item.cost} G</span>
+                    </div>
+                    <div class="th-infra-body">
+                        ${detailHtml}
+                    </div>
+                </div>
+            `);
+            $list.append(card);
+        });
+
+        parseEmoji($list[0]);
+    }
+
+    function renderAchievements() {
+        const listData = getVars()[CONFIG.varAchieveKey] || [];
+        const $list = $('#th-list-ach');
+        $list.empty();
+        if (listData.length === 0) { $list.html('<div style="text-align:center; color:#888; margin-top:40px;">暂无成就</div>'); return; }
+        const itemsHtml = listData.map(item => `
+            <div class="achieve-item">
+                <div class="item-header">
+                    <div class="emoji-wrapper">${item.icon}</div>
+                    <div class="item-title">${item.name}</div>
+                    <div class="toggle-arrow">▼</div>
+                </div>
+                <div class="item-body">
+                    <div class="detail-inset">
+                        <div><span class="ach-label">COND</span>${item.condition}</div>
+                        <div style="margin: 4px 0;">
+                            <span class="ach-label">REWARD</span><span class="highlight-red">${item.reward}</span>
+                        </div>
+                        <span class="eval-text">“${item.eval}”</span>
+                    </div>
+                </div>
+            </div>`).join('');
+        $list.html(itemsHtml);
+        $list.find('.achieve-item').on('click', function() { $(this).toggleClass('is-open'); });
+        parseEmoji($list[0]);
+    }
+
+    function renderSettings() {
+        const $list = $('#th-list-settings');
+        if ($list.children().length > 0) return; // 静态内容，只渲染一次
+        $list.html(`
+            <div class="th-settings-group">
+                <div class="th-settings-grouplabel">数据</div>
+                <div id="th-scan" class="th-settings-row clickable">
+                    <span>重新扫描全部楼层</span><span>🔄</span>
+                </div>
+                <div id="th-checkpoint-btn" class="th-settings-row clickable">
+                    <span>建立检查点</span><span>📌</span>
+                </div>
+                <div id="th-export-btn" class="th-settings-row clickable">
+                    <span>导出全部数据</span><span>📤</span>
+                </div>
+                <div id="th-import-btn" class="th-settings-row clickable">
+                    <span>导入数据</span><span>📥</span>
+                </div>
+            </div>
+            <div class="th-settings-group">
+                <div class="th-settings-grouplabel">说明书</div>
+                <div id="th-manual-toggle" class="th-settings-row clickable">
+                    <span>📖 查看说明</span><span id="th-manual-arrow">▼</span>
+                </div>
+                <div id="th-manual-content" style="display:none;padding:10px 6px 4px 6px;font-size:12px;color:var(--th-inv-text);line-height:1.75;">
+                    <div style="font-weight:bold;margin-bottom:3px;color:#8B5A2B;">▍何时点击「建立检查点」，设置里一堆按钮有什么用？</div>
+                    <div style="margin-bottom:12px;opacity:0.85;">· 手动导入数据后可以点（脚本会自动建立，通常无需手动操作）。导入导出数据是方便开新的聊天文件延续旧聊天时，将背包变量一起带过去用的。</div>
+                    <div style="font-weight:bold;padding-top:8px;border-top:1px dashed rgba(139,90,43,0.2);margin-bottom:6px;">▍员工</div>
+                    <div style="margin-bottom:12px;opacity:0.85;">· 给角色提供员工合同，信息将录入员工模块中，起到人设记忆作用</div>
+                    <div style="font-weight:bold;padding-top:8px;border-top:1px dashed rgba(139,90,43,0.2);margin-bottom:6px;">▍价目板</div>
+                    <div style="margin-bottom:12px;opacity:0.85;">· 如价目板无法导出内容，可尝试换一个浏览器进行导出操作</div>
+                    <div style="font-weight:bold;padding-top:8px;border-top:1px dashed rgba(139,90,43,0.2);margin-bottom:6px;">▍记忆</div>
+                    <div style="margin-bottom:12px;opacity:0.85;">· 底部状态栏总结仅供参考，大家可以使用自己习惯的记忆方式。但物品、在住来访者、员工等信息已通过变量记录，不建议重复记录<del>想记也可以</del></div>
+                </div>
+            </div>
+        `);
+        $('#th-scan').on('click', () => { if(window.toastr) toastr.info('重新扫描中...', '系统'); performScan('full'); });
+        $('#th-checkpoint-btn').on('click', () => createCheckpoint());
+        $('#th-export-btn').on('click', () => exportAllData());
+        $('#th-import-btn').on('click', () => importAllData());
+        $('#th-manual-toggle').on('click', () => {
+            const $c = $('#th-manual-content');
+            const $a = $('#th-manual-arrow');
+            if ($c.is(':visible')) { $c.slideUp(150); $a.text('▼'); }
+            else { $c.slideDown(150); $a.text('▲'); }
+        });
+    }
+
+    function bindDetailPopupDrag() {
+        const $popup = $('#th-detail-popup-ui');
+        const $handle = $popup; // 整个弹窗顶部12px作为拖拽热区
+        const handleEl = $popup[0];
+        if (!handleEl) return;
+
+        const TOP_ZONE = 12; // 顶部热区高度(px)
+
+        function isInTopZone(clientY) {
+            const r = handleEl.getBoundingClientRect();
+            return clientY - r.top <= TOP_ZONE;
+        }
+
+        function snapToReal() {
+            const r = handleEl.getBoundingClientRect();
+            $popup.css({ left: r.left + 'px', top: r.top + 'px', transform: 'none' });
+            return { left: r.left, top: r.top };
+        }
+
+        // ── 触控拖拽 ──
+        let touchDragging = false;
+        let startX, startY, initL = undefined, initT;
+
+        $handle.on('touchstart', e => {
+            const t = e.touches[0];
+            if (!isInTopZone(t.clientY)) return;
+            touchDragging = false;
+            startX = t.clientX; startY = t.clientY;
+            const pos = snapToReal();
+            initL = pos.left; initT = pos.top;
+        });
+        $handle.on('touchmove', e => {
+            // startX/startY 只在 touchstart 时（顶部热区内）才被赋值，否则 initL/initT 为 undefined，不会移动
+            if (initL === undefined) return;
+            const t = e.touches[0];
+            const moveX = t.clientX - startX, moveY = t.clientY - startY;
+            if (Math.abs(moveX) > 5 || Math.abs(moveY) > 5) {
+                touchDragging = true;
+                $popup.css({ left: initL + moveX + 'px', top: initT + moveY + 'px' });
+            }
+            if (touchDragging) e.preventDefault();
+        });
+        $handle.on('touchend touchcancel', () => { touchDragging = false; initL = undefined; });
+
+        // ── 鼠标拖拽 ──
+        let mouseDragging = false, isMouseDown = false;
+
+        handleEl.addEventListener('pointerdown', e => {
+            if (e.pointerType !== 'mouse' || e.button !== 0) return;
+            if (!isInTopZone(e.clientY)) return;
+            isMouseDown = true;
+            mouseDragging = false;
+            startX = e.clientX; startY = e.clientY;
+            const pos = snapToReal();
+            initL = pos.left; initT = pos.top;
+            try { handleEl.setPointerCapture(e.pointerId); } catch(err) {}
+            e.preventDefault();
+        });
+        handleEl.addEventListener('pointermove', e => {
+            if (e.pointerType !== 'mouse' || !isMouseDown) return;
+            const moveX = e.clientX - startX, moveY = e.clientY - startY;
+            if (!mouseDragging && (Math.abs(moveX) > 5 || Math.abs(moveY) > 5)) {
+                mouseDragging = true;
+                handleEl.style.cursor = 'grabbing';
+            }
+            if (mouseDragging) {
+                $popup.css({ left: initL + moveX + 'px', top: initT + moveY + 'px' });
+            }
+        });
+        handleEl.addEventListener('pointerup', e => {
+            if (e.pointerType !== 'mouse') return;
+            isMouseDown = false;
+            mouseDragging = false;
+            handleEl.style.cursor = '';
+        });
+        handleEl.addEventListener('pointercancel', e => {
+            if (e.pointerType !== 'mouse') return;
+            isMouseDown = false;
+            mouseDragging = false;
+        });
+    }
+
+    function bindEvents() {
+        if (typeof tavern_events === 'undefined') return;
+        // 新消息到来：使用增量扫描（只扫新楼层，速度快）
+        eventOn(tavern_events.CHARACTER_MESSAGE_RENDERED, () => scheduleScan('incremental'));
+        // 删楼、回滚、修改楼层：先作废检查点，再全量重扫（防止旧快照污染增量结果）
+        [tavern_events.MESSAGE_DELETED, tavern_events.MESSAGE_SWIPED, tavern_events.MESSAGE_UPDATED]
+            .forEach(e => eventOn(e, () => { clearCheckpoint(); scheduleScan('full'); }));
+        // 生成开始时立即全量扫，并更新检查点，为后续增量扫打好基础
+        eventOn('generation_started', () => { if (debounceTimer) clearTimeout(debounceTimer); const _cp = getCheckpoint(); if (_cp) { scheduleScan('incremental'); } else { performScan('full'); } });
+        eventOn(tavern_events.CHAT_CHANGED, () => {
+    $('[id^="th-fixed"]').remove();
+    $('#' + CONFIG.domBallId).remove();
+    $('#th-detail-popup-ui').remove();
+    $('.th-drag-helper').remove();
+    isPanelOpen = false;
+    isStorageOpen = false;
+    isBallVisible = true;   // 重置状态
+    setTimeout(createUI, 100); // 稍作延迟，等新角色卡加载完再重建悬浮球
+        });
+        if (typeof getButtonEvent !== 'undefined') {
+            const btnEvent = getButtonEvent(CONFIG.toggleButtonName);
+            eventOn(btnEvent, () => { toggleBallVisibility(); });
+        }
+    }
+
+    function bindStorageDragEvents() {
+        const $storage = $('#' + CONFIG.domStorageId);
+        const $handle  = $('#th-storage-header');
+        const handleEl = $handle[0];
+        if (!handleEl) return;
+
+        let touchDragging = false;
+        let mouseDragging = false, isMouseDown = false;
+        let startX, startY, initL, initT;
+
+        function snapToReal() {
+            const r = $storage[0].getBoundingClientRect();
+            $storage.css({ left: r.left + 'px', top: r.top + 'px', transform: 'none' });
+            return { left: r.left, top: r.top };
+        }
+
+        $handle.on('touchstart', e => {
+            touchDragging = false;
+            const t = e.touches[0];
+            startX = t.clientX; startY = t.clientY;
+            const pos = snapToReal();
+            initL = pos.left; initT = pos.top;
+        });
+        $handle.on('touchmove', e => {
+            const t = e.touches[0];
+            const moveX = t.clientX - startX, moveY = t.clientY - startY;
+            if (Math.abs(moveX) > 5 || Math.abs(moveY) > 5) {
+                touchDragging = true;
+                $storage.css({ left: initL + moveX + 'px', top: initT + moveY + 'px' });
+            }
+            e.preventDefault();
+        });
+        $handle.on('touchend touchcancel', () => { touchDragging = false; initL = undefined; });
+
+        handleEl.addEventListener('pointerdown', e => {
+            if (e.pointerType !== 'mouse' || e.button !== 0) return;
+            isMouseDown = true;
+            mouseDragging = false;
+            startX = e.clientX; startY = e.clientY;
+            const pos = snapToReal();
+            initL = pos.left; initT = pos.top;
+            try { handleEl.setPointerCapture(e.pointerId); } catch(err) {}
+            e.preventDefault();
+        });
+        handleEl.addEventListener('pointermove', e => {
+            if (e.pointerType !== 'mouse' || !isMouseDown) return;
+            const moveX = e.clientX - startX, moveY = e.clientY - startY;
+            if (!mouseDragging && (Math.abs(moveX) > 5 || Math.abs(moveY) > 5)) {
+                mouseDragging = true;
+                handleEl.style.cursor = 'grabbing';
+            }
+            if (mouseDragging) {
+                $storage.css({ left: initL + moveX + 'px', top: initT + moveY + 'px' });
+            }
+        });
+        handleEl.addEventListener('pointerup', e => {
+            if (e.pointerType !== 'mouse') return;
+            isMouseDown = false;
+            mouseDragging = false;
+            handleEl.style.cursor = 'grab';
+        });
+        handleEl.addEventListener('pointercancel', e => {
+            if (e.pointerType !== 'mouse') return;
+            isMouseDown = false;
+            mouseDragging = false;
+        });
+    }
+
+    function bindBallEvents() {
+        const $ball = $('#' + CONFIG.domBallId);
+        const ballEl = $ball[0];
+        let touchDragging = false;
+        let mouseDragging = false, isMouseDown = false;
+        let startX, startY, initL, initT;
+
+        // ===== 触控拖动（手机端，原有逻辑不变）=====
+        $ball.on('touchstart', e => {
+            touchDragging = false;
+            const t = e.touches[0];
+            startX = t.clientX; startY = t.clientY;
+            const r = ballEl.getBoundingClientRect();
+            initL = r.left; initT = r.top;
+        });
+        $ball.on('touchmove', e => {
+            const t = e.touches[0];
+            const moveX = t.clientX - startX, moveY = t.clientY - startY;
+            if (Math.abs(moveX) > 10 || Math.abs(moveY) > 10) {
+                touchDragging = true;
+                $ball.css({ left: initL + moveX + 'px', top: initT + moveY + 'px', transform: 'none' });
+            }
+            e.preventDefault();
+        });
+        $ball.on('touchend', () => {
+            if (!touchDragging) togglePanel();
+            touchDragging = false;
+        });
+
+        // ===== 鼠标拖动（电脑端）=====
+        ballEl.addEventListener('pointerdown', e => {
+            if (e.pointerType !== 'mouse' || e.button !== 0) return;
+            isMouseDown = true;
+            mouseDragging = false;
+            startX = e.clientX; startY = e.clientY;
+            const r = ballEl.getBoundingClientRect();
+            initL = r.left; initT = r.top;
+            try { ballEl.setPointerCapture(e.pointerId); } catch(err) {}
+            e.preventDefault();
+        });
+        ballEl.addEventListener('pointermove', e => {
+            if (e.pointerType !== 'mouse' || !isMouseDown) return;
+            const moveX = e.clientX - startX, moveY = e.clientY - startY;
+            if (!mouseDragging && (Math.abs(moveX) > 5 || Math.abs(moveY) > 5)) {
+                mouseDragging = true;
+                ballEl.style.cursor = 'grabbing';
+            }
+            if (mouseDragging) {
+                ballEl.style.left = (initL + moveX) + 'px';
+                ballEl.style.top  = (initT + moveY) + 'px';
+                ballEl.style.transform = 'none';
+            }
+        });
+        ballEl.addEventListener('pointerup', e => {
+            if (e.pointerType !== 'mouse') return;
+            if (!mouseDragging) togglePanel();
+            isMouseDown = false;
+            mouseDragging = false;
+            ballEl.style.cursor = 'pointer';
+        });
+        ballEl.addEventListener('pointercancel', e => {
+            if (e.pointerType !== 'mouse') return;
+            isMouseDown = false;
+            mouseDragging = false;
+        });
+    }
+
+    // 【修改】拖拽逻辑增加对价目槽的支持
+    function bindDragEvents($el, item, sourceType, staffName = null) {
+        let isDragging = false;
+        let dragTimer = null;
+        let startX, startY;
+        let $helper = null;
+
+        // ── 共用：根据当前坐标更新高亮 ──
+        function updateHighlight(cx, cy) {
+            const $storagePopup = $('#' + CONFIG.domStorageId);
+            const $mainPanel = $('#' + CONFIG.domPanelId);
+            const $binIcon = $('#th-storage-bin');
+            const pos = { clientX: cx, clientY: cy };
+
+            $('.th-staff-slot').removeClass('th-drop-target-active');
+            $('.th-price-slot').removeClass('th-drop-target-active');
+            $storagePopup.removeClass('th-drop-target-active');
+            $binIcon.removeClass('th-inv-storage-bin-active');
+
+            if (sourceType === 'from_main' || sourceType === 'from_staff' || sourceType === 'from_price') {
+                if ($binIcon.length && $binIcon.is(':visible') && isIntersecting(pos, $binIcon[0])) {
+                    $binIcon.addClass('th-inv-storage-bin-active');
+                }
+            }
+            if ($mainPanel.is(':visible')) {
+                if ($('#th-list-staff').is(':visible')) {
+                    $('.th-staff-slot:not(.filled)').each(function() {
+                        if (isIntersecting(pos, this)) $(this).addClass('th-drop-target-active');
+                    });
+                }
+                if ($('#th-list-price').is(':visible')) {
+                    $('#th-shelf-slots-inner').find('.th-shelf-box').each(function() {
+                        if (isIntersecting(pos, this)) {
+                            const rect = this.getBoundingClientRect();
+                            const isRight = (pos.clientX - rect.left) > rect.width / 2;
+                            const boxes = $('#th-shelf-slots-inner').find('.th-shelf-box');
+                            const boxIdx = boxes.index(this);
+                            const slotIdx = boxIdx * 2 + (isRight ? 1 : 0);
+                            $(`.th-price-slot[data-slot-index="${slotIdx}"]`).not('.filled').addClass('th-drop-target-active');
+                        }
+                    });
+                }
+            }
+        }
+
+        // ── 共用：松手时判断落点并执行操作 ──
+        function handleDrop(cx, cy) {
+            const pos = { clientX: cx, clientY: cy };
+            let handled = false;
+
+            if (sourceType === 'from_main') {
+                const $popup = $('#' + CONFIG.domStorageId);
+                const $bin = $('#th-storage-bin');
+                if (($popup.is(':visible') && isIntersecting(pos, $popup[0])) ||
+                    ($bin.is(':visible') && isIntersecting(pos, $bin[0]))) {
+                    moveToStorage(item.id); handled = true;
+                }
+            } else if (sourceType === 'from_staff') {
+                const $popup = $('#' + CONFIG.domStorageId);
+                if ($popup.is(':visible') && isIntersecting(pos, $popup[0])) {
+                    moveStaffToStorage(item.id, staffName); handled = true;
+                }
+            }
+
+            if (!handled) {
+                if ($('#th-list-staff').is(':visible')) {
+                    $('.th-staff-slot:not(.filled)').each(function() {
+                        if (isIntersecting(pos, this)) {
+                            const sName = $(this).data('staff');
+                            if (sourceType === 'from_storage') moveStorageToStaff(item.id, sName);
+                            return false;
+                        }
+                    });
+                }
+                if ($('#th-list-price').is(':visible')) {
+                    $('#th-shelf-slots-inner').find('.th-shelf-box').each(function() {
+                        if (!handled && isIntersecting(pos, this)) {
+                            const rect = this.getBoundingClientRect();
+                            const isRight = (pos.clientX - rect.left) > rect.width / 2;
+                            const boxes = $('#th-shelf-slots-inner').find('.th-shelf-box');
+                            const boxIdx = boxes.index(this);
+                            const slotIdx = boxIdx * 2 + (isRight ? 1 : 0);
+                            const $slot = $(`.th-price-slot[data-slot-index="${slotIdx}"]`).not('.filled');
+                            if ($slot.length) {
+                                // from_price 时 staffName 存的是来源槽索引，透传以便清除旧槽
+                                const srcSlot = (sourceType === 'from_price') ? staffName : null;
+                                moveItemToPriceSlot(item.id, slotIdx, srcSlot);
+                                handled = true;
+                            }
+                        }
+                    });
+                }
+            }
+            if (!handled && sourceType === 'from_price') {
+                const $storageEl = $('#' + CONFIG.domStorageId);
+                if ($storageEl.is(':visible') && isIntersecting(pos, $storageEl[0])) {
+                    removeItemFromPriceSlot(staffName); handled = true;
+                }
+            }
+            if (!handled && sourceType === 'from_storage') {
+                const $panel = $('#' + CONFIG.domPanelId);
+                if ($panel.is(':visible') && isIntersecting(pos, $panel[0])) {
+                    retrieveFromStorage(item.id);
+                }
+            }
+        }
+
+        // ── 共用：拖拽结束清理 ──
+        function endDrag() {
+            $el.css('opacity', '1');
+            if ($helper) { $helper.remove(); $helper = null; }
+            $('#' + CONFIG.domStorageId).removeClass('th-drop-target-active');
+            $('#th-storage-bin').removeClass('th-inv-storage-bin-active');
+            $('.th-staff-slot').removeClass('th-drop-target-active');
+            $('.th-price-slot').removeClass('th-drop-target-active');
+            isDragging = false;
+        }
+
+        // ── 触控拖拽（手机端，长按200ms触发）──
+        $el.on('touchstart', (e) => {
+            if(e.touches.length > 1) return;
+            $('.th-drag-helper').remove();
+            const t = e.touches[0];
+            startX = t.clientX; startY = t.clientY;
+            dragTimer = setTimeout(() => {
+                isDragging = true;
+                $helper = $el.clone().addClass('th-drag-helper').appendTo('body');
+                $helper.css({ left: startX - 25, top: startY - 25 });
+                $el.css('opacity', '0.4');
+                if (sourceType === 'from_main' && !isStorageOpen) toggleStoragePopup();
+                if (sourceType === 'from_staff' && !isStorageOpen) toggleStoragePopup();
+                if (sourceType === 'from_price' && !isStorageOpen) toggleStoragePopup();
+            }, 200);
+        });
+
+        $el.on('touchmove', (e) => {
+            if (!isDragging) { if (dragTimer) { clearTimeout(dragTimer); dragTimer = null; } return; }
+            e.preventDefault();
+            const t = e.touches[0];
+            $helper.css({ left: t.clientX - 25, top: t.clientY - 25 });
+            updateHighlight(t.clientX, t.clientY);
+        });
+
+        $el.on('touchend touchcancel', (e) => {
+            if (dragTimer) clearTimeout(dragTimer);
+            if (isDragging) {
+                if (e.type === 'touchend') {
+                    const t = e.changedTouches[0];
+                    handleDrop(t.clientX, t.clientY);
+                }
+                endDrag();
+            }
+        });
+
+        // ── 鼠标拖拽（电脑端，直接按住拖动）──
+        const el = $el[0];
+        let isMouseDown = false, mouseDragging = false;
+
+        el.addEventListener('pointerdown', (e) => {
+            if (e.pointerType !== 'mouse' || e.button !== 0) return;
+            isMouseDown = true; mouseDragging = false;
+            startX = e.clientX; startY = e.clientY;
+            try { el.setPointerCapture(e.pointerId); } catch(err) {}
+            e.preventDefault();
+        });
+
+        el.addEventListener('pointermove', (e) => {
+            if (e.pointerType !== 'mouse' || !isMouseDown) return;
+            const moveX = e.clientX - startX, moveY = e.clientY - startY;
+            if (!mouseDragging && (Math.abs(moveX) > 5 || Math.abs(moveY) > 5)) {
+                mouseDragging = true;
+                isDragging = true;
+                $('.th-drag-helper').remove();
+                $helper = $el.clone().addClass('th-drag-helper').appendTo('body');
+                $helper.css({ left: e.clientX - 25, top: e.clientY - 25 });
+                $el.css('opacity', '0.4');
+                if (sourceType === 'from_main' && !isStorageOpen) toggleStoragePopup();
+                if (sourceType === 'from_staff' && !isStorageOpen) toggleStoragePopup();
+                if (sourceType === 'from_price' && !isStorageOpen) toggleStoragePopup();
+            }
+            if (mouseDragging) {
+                $helper.css({ left: e.clientX - 25, top: e.clientY - 25 });
+                updateHighlight(e.clientX, e.clientY);
+            }
+        });
+
+        el.addEventListener('pointerup', (e) => {
+            if (e.pointerType !== 'mouse') return;
+            if (mouseDragging) {
+                handleDrop(e.clientX, e.clientY);
+                endDrag();
+            }
+            isMouseDown = false; mouseDragging = false;
+        });
+
+        el.addEventListener('pointercancel', (e) => {
+            if (e.pointerType !== 'mouse') return;
+            if (mouseDragging) endDrag();
+            isMouseDown = false; mouseDragging = false;
+        });
+    }
+
+    function isIntersecting(touch, element) {
+        const r = element.getBoundingClientRect();
+        return touch.clientX >= r.left && touch.clientX <= r.right &&
+               touch.clientY >= r.top && touch.clientY <= r.bottom;
+    }
+
+    // --- 初始化入口 ---
+    function init() {
+        if (initRetryCount > 20) {
+            if(window.toastr) toastr.warning("脚本依赖项加载超时，部分功能可能不可用");
+            return;
+        }
+
+        const hasJQuery = !!window.$;
+        const hasMsgGetter = (typeof getChatMessages !== 'undefined') || (typeof TavernHelper !== 'undefined');
+
+        if (!hasJQuery || !hasMsgGetter) {
+            initRetryCount++;
+            setTimeout(init, 250);
+            return;
+        }
+
+        try {
+            $('[id^="th-inventory"]').remove();
+            $('[id^="th-fixed"]').remove();
+            $('#th-detail-popup-ui').remove();
+            $('.th-drag-helper').remove();
+
+            loadTwemoji();
+            loadGoogleFonts();
+
+            if (typeof appendInexistentScriptButtons !== 'undefined') {
+                appendInexistentScriptButtons([
+                    { name: CONFIG.toggleButtonName, visible: true }
+                ]);
+            }
+
+            createUI();
+
+            // 监听 iframe 卸载事件，切换角色卡时自动清除残留的 DOM 元素
+            window.addEventListener('unload', function() {
+                $('[id^="th-fixed"]').remove();
+                $('#' + CONFIG.domBallId).remove();
+                $('#th-detail-popup-ui').remove();
+                $('.th-drag-helper').remove();
+            });
+
+            bindEvents();
+            performScan();
+            refreshPricePrompt();
+            updateUIScale();
+            applyNightMode();
+
+            //if(window.toastr) toastr.success('物品栏就绪', '系统');
+
+        } catch (e) {
+            alert("脚本错误:\n" + e.message);
+            console.error(e);
+        }
+    }
+
+    $(document).ready(init);
+})();

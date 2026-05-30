@@ -1,0 +1,1677 @@
+```
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        /* ================= 1. 全局基础 ================= */
+        :root {
+            --p: #C73E3A; --bg: #f5edd8; --txt: #3a2c1f; --gry: #8a7a6a;
+            --blue: #4a6478; --green: #5d7a5d; --purple: #6b4c2a;
+        }
+        body {
+            margin: 0;
+            font-family: 'Noto Sans SC', 'Varela Round', 'Nunito', sans-serif;
+            overflow: hidden; background: transparent;
+        }
+
+        #app-root {
+            width: 100%; height: 500px; max-width: 500px;
+            position: relative; overflow: hidden;
+            border-radius: 24px;
+            background: #fff;
+        }
+
+        /* 页面切换逻辑 */
+        .page-view {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: none; flex-direction: column; overflow: hidden; background: #fff;
+            animation: fadeIn 0.3s ease-out;
+        }
+        .page-view.active { display: flex; }
+        @keyframes fadeIn { from { opacity: 0; transform: scale(0.98); } to { opacity: 1; transform: scale(1); } }
+
+        /* 公共头部 & 按钮 */
+        .app-header {
+            padding: 10px 15px; display: flex; align-items: center; gap: 10px; color: #fff;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1); z-index: 10; flex-shrink: 0;
+            position: relative;
+        }
+        .btn-back { background: transparent; border: none; color: #fff; font-size: 18px; cursor: pointer; font-weight: bold; z-index: 2; position: relative; }
+
+        /* 修改点③：标题绝对居中，不受左右元素影响 */
+        .header-title {
+            font-weight: bold; font-size: 14px;
+            position: absolute; left: 0; width: 100%; text-align: center;
+            pointer-events: none; z-index: 1;
+        }
+
+        .header-actions { display: flex; gap: 8px; align-items: center; position: absolute; right: 15px; z-index: 2; }
+        .btn-mini-icon {
+            width: 24px; height: 24px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.5);
+            background: rgba(0,0,0,0.1); color: #fff; font-size: 12px; cursor: pointer;
+            display: flex; align-items: center; justify-content: center; backdrop-filter: blur(2px);
+        }
+        .btn-mini-icon:hover { background: rgba(255,255,255,0.2); }
+
+        /* 余额显示胶囊 */
+        .balance-pill {
+            background: rgba(0,0,0,0.3); padding: 4px 10px; border-radius: 12px;
+            font-size: 11px; font-weight: bold; display: flex; align-items: center; gap: 4px;
+            border: 1px solid rgba(255,255,255,0.2);
+            /* 修改点：配合标题绝对定位，将余额条自动推到右侧 */
+            margin-left: auto;
+            z-index: 2; position: relative;
+        }
+
+        /* 加载层 */
+        .loader-mask { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.85); z-index: 50; display: none; flex-direction: column; align-items: center; justify-content: center; }
+        .spinner { width: 32px; height: 32px; border: 3px solid #ffdcb9; border-top-color: var(--p); border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 8px; }
+        .load-text { font-size: 12px; color: var(--p); font-weight: bold; }
+        /* 修改点④：小科普样式 */
+        .loader-tip { margin-top: 15px; font-size: 12px; color: #888; text-align: center; max-width: 80%; line-height: 1.5; font-weight: normal; opacity: 0.9; }
+
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+
+        /* 说明书弹窗 */
+        .help-mask {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.6); backdrop-filter: blur(3px); z-index: 60;
+            display: none; align-items: center; justify-content: center;
+            animation: fadeIn 0.2s;
+        }
+        .help-modal {
+            width: 80%; max-height: 70%; background: #fff; border-radius: 16px;
+            padding: 20px; display: flex; flex-direction: column;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        .help-title { font-size: 16px; font-weight: bold; margin-bottom: 10px; color: #333; border-bottom: 2px solid #eee; padding-bottom: 5px; }
+        .help-content { font-size: 13px; color: #555; line-height: 1.6; overflow-y: auto; flex: 1; white-space: pre-wrap; }
+        .help-close { margin-top: 15px; background: var(--p); color: #fff; border: none; padding: 8px 0; border-radius: 20px; font-weight: bold; cursor: pointer; }
+
+        /* ================= 2. 首页样式 ================= */
+        #page-home {
+            background: #f5edd8;
+            border-top: 8px solid #6b4c2a; border-bottom: 8px solid #6b4c2a; border-left: none; border-right: none; box-sizing: border-box; position: relative;
+        }
+        .top-deco {
+            position: relative; text-align: center; margin-top: 15px; margin-bottom: 5px;
+            font-size: 24px; font-family: 'Shippori Mincho', 'Noto Serif SC', serif; font-weight: 900;
+            color: #fff; font-style: normal; z-index: 20; transform: rotate(0deg);
+            text-shadow: -2px -2px 0 #6b4c2a, 2px -2px 0 #6b4c2a, -2px 2px 0 #6b4c2a, 2px 2px 0 #6b4c2a, 0 4px 5px rgba(0,0,0,0.15);
+            animation: logoDrop 0.8s cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+        }
+        @keyframes logoDrop { 0% { transform: translateY(-30px) rotate(-3deg); opacity: 0; } 100% { transform: translateY(0) rotate(-3deg); opacity: 1; } }
+
+        .bg-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; }
+        .sticker-entrance { animation: stickerFadeIn 1.2s ease-out backwards; width: 100%; height: 100%; }
+        @keyframes stickerFadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+        .sticker-img { user-select: none; pointer-events: none; }
+        .float-item { display: none !important; }
+        @keyframes floatAround {
+            0% { transform: translate(0, 0) rotate(-5deg); }
+            50% { transform: translate(0, -15px) rotate(5deg); }
+            100% { transform: translate(0, 0) rotate(-5deg); }
+        }
+
+        .hero-zone { flex: 0; display: none; }
+        .hero-wrapper { animation: heroPop 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275) backwards; animation-delay: 0.2s; }
+        .hero-sticker { display: none !important; }
+        @keyframes heroPop { 0% { transform: scale(0.5); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+        @keyframes breathe { 0%, 100% { transform: scale(1) rotate(0deg); } 50% { transform: scale(1.05) rotate(2deg); } }
+
+        .dock-bar { position: relative; z-index: 10; padding: 0 20px 25px 20px; display: flex; flex-direction: column; gap: 12px; flex: 1; justify-content: center; }
+        .btn-row { display: flex; gap: 12px; width: 100%; animation: slideUp 0.6s cubic-bezier(0.25, 0.8, 0.25, 1) backwards; }
+        .row-1 { animation-delay: 0.3s; } .row-2 { animation-delay: 0.4s; }
+        @keyframes slideUp { 0% { transform: translateY(40px); opacity: 0; } 100% { transform: translateY(0); opacity: 1; } }
+
+        .cream-btn {
+            flex: 1; background: #f5edd8; border: 2px solid #d4c5a9; border-radius: 0; padding: 12px 0; cursor: pointer;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            box-shadow: 0 2px 6px rgba(60,50,40,0.1); transition: all 0.1s; position: relative;
+        }
+        .cream-btn:active { transform: translateY(4px); box-shadow: 0 0 0 #e6dcc5; }
+        .btn-icon { font-size: 20px; margin-bottom: 4px; }
+        .btn-txt { font-size: 12px; font-weight: 800; color: #6d665a; letter-spacing: 1px; }
+
+        /* ================= 3. 商城样式 ================= */
+        #page-mall { background: var(--bg); position: relative; }
+        #page-mall .app-header { background: linear-gradient(90deg, #C73E3A, #a52a2a); padding: 8px 12px; }
+
+        .mall-search-box { flex: 1; background: #fff; border-radius: 18px; height: 30px; display: flex; align-items: center; padding: 0 10px; }
+        #keyword-inp { border: none; outline: none; width: 100%; font-size: 12px; color: #333; background: transparent; }
+        #keyword-inp::placeholder { color: #ccc; }
+        .mall-go { background: #fff; color: var(--p); border: none; border-radius: 16px; padding: 0 12px; height: 28px; font-size: 12px; font-weight: bold; cursor: pointer; margin-left: 8px; transition: 0.2s; }
+
+        .nav-bar { background: #fff; display: flex; align-items: center; justify-content: space-between; padding: 8px 15px; font-size: 12px; color: var(--txt); box-shadow: 0 2px 5px rgba(0,0,0,0.03); z-index: 1; flex-shrink: 0; }
+        .nav-left { display: flex; gap: 20px; }
+        .nav-item.active { color: var(--p); font-weight: bold; position: relative; }
+        .nav-item.active::after { content: ''; position: absolute; bottom: -8px; left: 50%; transform: translateX(-50%); width: 10px; height: 2px; background: var(--p); border-radius: 2px; }
+
+        .list-zone { flex: 1; overflow-y: auto; padding: 10px; padding-bottom: 15px; display: flex; flex-direction: column; gap: 10px; transition: padding-bottom 0.3s; }
+        .list-zone.has-cart { padding-bottom: 70px; }
+
+        /* 商品卡片 */
+        .card { background: #fff; border-radius: 10px; padding: 10px; display: flex; gap: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.02); transition: all 0.2s; }
+        .c-img { width: 80px; height: 80px; background: #f9f9f9; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 35px; flex-shrink: 0; }
+        .c-img img.emoji { width: 48px !important; height: 48px !important; }
+        .c-info { flex: 1; display: flex; flex-direction: column; justify-content: space-between; }
+        .c-title-row { line-height: 1.4; color: var(--txt); }
+        .c-title-txt { font-weight: bold; font-size: 15px; }
+        .pro-tag { display: inline-block; background: linear-gradient(90deg, #C73E3A, #a52a2a); color: #fff; font-size: 10px; padding: 0 4px; border-radius: 3px; margin-right: 4px; font-weight: bold; vertical-align: text-bottom; height: 16px; line-height: 16px; }
+        .c-desc { font-size: 11px; color: #999; margin-top: 4px; line-height: 1.4; white-space: normal; }
+        .c-foot { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 8px; }
+        .c-price { color: #C73E3A; font-size: 16px; font-weight: 900; }
+        .c-sales { font-size: 10px; color: #bbb; margin-left: 4px; }
+
+        .btn-buy { background: #ffebd7; color: var(--p); border: 1px solid var(--p); border-radius: 14px; padding: 4px 12px; font-size: 11px; cursor: pointer; font-weight: bold; transition: 0.2s; }
+
+        /* 数量控制器 */
+        .qty-control { display: none; align-items: center; background: #fff; border: 1px solid #ddd; border-radius: 14px; height: 24px; }
+        .qty-control.active { display: flex; }
+        .qty-btn { width: 24px; height: 100%; border: none; background: transparent; color: var(--txt); font-weight: bold; cursor: pointer; font-size: 14px; }
+        .qty-num { width: 30px; text-align: center; font-size: 12px; font-weight: bold; color: var(--txt); }
+
+        /* 购物车栏 */
+        .cart-bar {
+            position: absolute; bottom: 15px; left: 15px; right: 15px;
+            background: rgba(0,0,0,0.9); backdrop-filter: blur(8px);
+            border-radius: 40px; height: 50px; padding: 0 5px 0 20px;
+            display: flex; align-items: center; justify-content: space-between;
+            color: #fff; box-shadow: 0 5px 20px rgba(0,0,0,0.25);
+            transform: translateY(150%); transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+            z-index: 30;
+        }
+        .cart-bar.show { transform: translateY(0); }
+        .cart-total-hl { color: #C73E3A; font-size: 18px; font-weight: 900; margin-left: 5px; }
+
+        .cart-toggle-btn { background: transparent; border: none; color: #ccc; font-size: 12px; cursor: pointer; padding: 5px 10px; }
+
+        .btn-checkout {
+            background: linear-gradient(90deg, #C73E3A, #a52a2a); border: none;
+            color: #fff; border-radius: 20px; padding: 0 20px; height: 40px;
+            font-weight: bold; cursor: pointer; font-size: 13px; margin-right: 2px;
+            box-shadow: 0 2px 10px rgba(255, 80, 0, 0.3);
+        }
+
+        /* 购物车抽屉 */
+        .cart-drawer-mask {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5); z-index: 25;
+            display: none; opacity: 0; transition: opacity 0.3s;
+        }
+        .cart-drawer-mask.open { display: block; opacity: 1; }
+
+        .cart-drawer {
+            position: absolute; bottom: 0; left: 0; width: 100%;
+            background: #fff; border-radius: 24px 24px 0 0;
+            padding: 20px 20px 80px 20px; box-sizing: border-box;
+            transform: translateY(100%); transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+            z-index: 26; max-height: 70%; display: flex; flex-direction: column;
+        }
+        .cart-drawer.open { transform: translateY(0); }
+
+        .drawer-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+        .drawer-title { font-weight: bold; font-size: 14px; color: #333; }
+        .drawer-clear { color: #999; font-size: 12px; cursor: pointer; }
+        .drawer-list { overflow-y: auto; flex: 1; }
+
+        .drawer-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #f5f5f5; }
+        .d-name { font-size: 13px; font-weight: bold; color: #333; }
+        .d-price { font-size: 12px; color: #C73E3A; margin-left: 5px; }
+
+        .end-tip { text-align: center; color: #ccc; font-size: 11px; margin-top: 10px; margin-bottom: 5px; display: flex; align-items: center; justify-content: center; gap: 5px; }
+        .end-tip::before, .end-tip::after { content: ''; display: block; width: 20px; height: 1px; background: #e0e0e0; }
+
+        /* ================= 4. 本丸管家 (左右切换版样式) ================= */
+        #page-butler { background: #f0f4f8; }
+        #page-butler .app-header { background: linear-gradient(90deg, #5d7a5d, #7a9a7a); }
+
+        .butler-dash { padding: 15px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; }
+
+        .scan-zone {
+            background: #fff; border-radius: 12px; padding: 15px; margin-bottom: 15px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05); text-align: center; flex-shrink: 0;
+        }
+
+        .butler-action-grid {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+        }
+
+        .btn-action-tile {
+            background: #f8f9fa; border: 2px solid #eee; border-radius: 12px; padding: 15px 5px;
+            display: flex; flex-direction: column; align-items: center; gap: 8px; cursor: pointer;
+            transition: all 0.2s; position: relative; overflow: hidden;
+        }
+        .btn-action-tile:hover { border-color: #28a745; background: #f0fff4; }
+        .btn-action-tile:active { transform: scale(0.98); }
+
+        .action-icon { font-size: 28px; }
+        .action-label { font-size: 12px; font-weight: bold; color: #555; }
+
+        .btn-action-tile.locked { opacity: 0.6; cursor: not-allowed; background: #eee; }
+        .btn-action-tile.locked:hover { border-color: #eee; background: #eee; }
+        .lock-overlay {
+            position: absolute; top:0; left:0; width:100%; height:100%;
+            background: rgba(255,255,255,0.5); display: flex; align-items: center; justify-content: center;
+            font-size: 24px; color: #666;
+        }
+
+        /* 新版修缮卡片样式 */
+        #repair-container { display: none; padding-bottom: 20px; }
+        #repair-container.active { display: block; animation: slideUp 0.4s ease-out; }
+
+        .repair-card {
+            background: #fff; border-radius: 12px; padding: 15px; margin-bottom: 15px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05); transition: 0.2s; border: 2px solid transparent;
+        }
+        .repair-card.active-selection { border-color: #28a745; background: #f0fff4; }
+
+        .rc-head { font-weight: bold; color: #333; font-size: 14px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
+        .rc-idx { background: #eee; color: #666; font-size: 10px; padding: 2px 6px; border-radius: 4px; margin-right: 6px; }
+
+        .rc-slider {
+            display: flex; align-items: center; justify-content: space-between;
+            background: #f8f9fa; border-radius: 8px; padding: 5px; margin-bottom: 10px;
+        }
+        .rc-arrow {
+            width: 32px; height: 32px; border: none; background: transparent;
+            font-weight: bold; color: #999; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center;
+        }
+        .rc-arrow:hover { color: #333; background: rgba(0,0,0,0.05); border-radius: 6px; }
+        .rc-price { font-weight: 900; font-size: 18px; color: var(--p); }
+
+        .rc-desc {
+            font-size: 13px; color: #555; line-height: 1.6; margin-bottom: 15px;
+            min-height: 40px;
+        }
+
+        .rc-btn-select {
+            width: 100%; padding: 10px 0; border: 1px solid #28a745;
+            background: #fff; color: #28a745; border-radius: 20px;
+            cursor: pointer; font-weight: bold; transition: 0.2s; font-size: 13px;
+        }
+        .rc-btn-select:hover { background: #e9f7ef; }
+        .rc-btn-select.selected { background: #28a745; color: #fff; border-color: #28a745; }
+
+        .butler-foot { padding: 15px; background: #fff; border-top: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; display: none; }
+        .butler-foot.active { display: flex; }
+        .total-invest { font-size: 14px; font-weight: bold; color: #333; }
+        .btn-invest { background: #28a745; color: #fff; border: none; padding: 8px 20px; border-radius: 20px; font-weight: bold; cursor: pointer; }
+        .btn-invest:disabled { background: #ccc; cursor: not-allowed; }
+
+        /* ================= 5. 福引所 ================= */
+        #page-luck { background: #1e1c18; color: #fff; }
+        #page-luck .app-header { background: transparent; position: absolute; top: 0; width: 100%; box-sizing: border-box; }
+
+        .luck-bg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: radial-gradient(circle at 50% 30%, #3a2c1f 0%, #1e1c18 70%); z-index: 0; }
+        .pool-visual { position: relative; z-index: 5; flex: 1; display: flex; align-items: center; justify-content: center; flex-direction: column; }
+        .pool-circle { width: 180px; height: 180px; border-radius: 50%; background: url('https://files.catbox.moe/5m9y3o.png') no-repeat center/cover; box-shadow: 0 0 30px rgba(199, 62, 58, 0.3); animation: pulsePool 3s infinite ease-in-out; border: 4px solid rgba(196,154,42,0.4); display: flex; align-items: center; justify-content: center; font-size: 40px; }
+        @keyframes pulsePool { 0%,100%{box-shadow:0 0 30px rgba(199,62,58,0.3)} 50%{box-shadow:0 0 50px rgba(199,62,58,0.5)} }
+
+        .gacha-btns { position: relative; z-index: 10; padding: 30px 20px; display: flex; gap: 15px; justify-content: center; }
+        .btn-draw { flex: 1; padding: 15px 0; border: 2px solid #d4c5a9; border-radius: 12px; background: rgba(58, 44, 31, 0.7); color: #fff; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 5px; transition: 0.1s; backdrop-filter: blur(5px); }
+        .btn-draw:active { transform: scale(0.96); background: rgba(107, 76, 42, 0.3); }
+        .draw-title { font-size: 16px; font-weight: bold; color: #f5edd8; }
+        .draw-cost { font-size: 12px; color: #bbb; }
+
+        /* 结果展示层 */
+        .result-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.92); z-index: 50; display: none; flex-direction: column; align-items: center; justify-content: center; animation: fadeIn 0.2s; }
+        .item-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; max-height: 380px; overflow-y: auto; padding: 20px; width: 80%; }
+
+        /* === 发光的快递盒子 === */
+        .loot-box {
+            position: relative;
+            background: #2a2520;
+            border: 2px solid;
+            border-radius: 12px;
+            padding: 10px;
+            text-align: center;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            height: 90px;
+            animation: popIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+            box-shadow: 0 0 10px rgba(255,255,255,0.1);
+        }
+
+        /* 品质：R (蓝光) */
+        .q-r {
+            border-color: #6b8a9a; color: #6b8a9a;
+            box-shadow: 0 0 20px rgba(107, 138, 154, 0.6), inset 0 0 10px rgba(107, 138, 154, 0.2);
+        }
+        /* 品质：SR (紫光) */
+        .q-sr {
+            border-color: #C73E3A; color: #C73E3A;
+            box-shadow: 0 0 25px rgba(199, 62, 58, 0.7), inset 0 0 15px rgba(199, 62, 58, 0.3);
+        }
+        /* 品质：SSR (金光爆闪) */
+        .q-ssr {
+            border-color: #ffd700; color: #ffd700;
+            background: linear-gradient(135deg, #2a2520 0%, #3a2c1f 100%);
+            box-shadow: 0 0 35px rgba(255, 215, 0, 0.9), 0 0 10px rgba(255,255,255,0.8);
+            animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) backwards, pulseGold 1.5s infinite;
+        }
+
+        @keyframes pulseGold { 0%,100%{ border-color:#ffd700; } 50%{ border-color:#fff; } }
+
+        .box-icon { font-size: 32px; margin-bottom: 5px; text-shadow: 0 2px 5px rgba(0,0,0,0.5); }
+        .box-text { font-size: 14px; font-weight: 900; letter-spacing: 1px; }
+
+        @keyframes popIn {
+            0% { transform: scale(0) translateY(20px); opacity: 0; }
+            100% { transform: scale(1) translateY(0); opacity: 1; }
+        }
+
+        .btn-confirm-draw { margin-top: 25px; padding: 10px 40px; background: #6b4c2a; border: none; color: #fff; border-radius: 25px; cursor: pointer; font-weight:bold; font-size:14px; box-shadow: 0 4px 15px rgba(107, 76, 42, 0.3); }
+
+        /* ================= 6. 本丸意志的低语 ================= */
+        #page-chat { background: #f0f2f5; }
+        #page-chat .app-header { background: linear-gradient(90deg, #3a2c1f, #5d4037); }
+        .chat-area { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 12px; }
+        .bubble { max-width: 80%; padding: 10px 14px; border-radius: 12px; font-size: 13px; line-height: 1.4; word-wrap: break-word; }
+        .bubble.ai { align-self: flex-start; background: #fff; color: #333; border-top-left-radius: 2px; }
+        .bubble.user { align-self: flex-end; background: #007bff; color: #fff; border-top-right-radius: 2px; }
+        .chat-input { background: #fff; padding: 10px; display: flex; gap: 10px; border-top: 1px solid #eee; }
+        #chat-inp { flex: 1; border: 1px solid #ddd; border-radius: 20px; padding: 8px 15px; outline: none; font-size: 13px; }
+        .chat-send { background: #007bff; color: #fff; border: none; width: 36px; height: 36px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+
+        /* ================= 7. 时空跳跃服务 ================= */
+        .jump-option-card {
+            background: #fff;
+            border: 2px solid #e8e8e8;
+            border-radius: 12px;
+            padding: 15px;
+            cursor: pointer;
+            transition: all 0.2s;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        }
+        .jump-option-card:hover {
+            border-color: var(--purple);
+            box-shadow: 0 4px 12px rgba(111, 66, 193, 0.15);
+            transform: translateY(-2px);
+        }
+        .jump-option-card:active {
+            transform: translateY(0);
+        }
+        .btn-custom-jump {
+            width: 100%;
+            margin-top: 10px;
+            padding: 10px 0;
+            background: linear-gradient(135deg, var(--purple), #8b6c4a);
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-weight: bold;
+            font-size: 13px;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        .btn-custom-jump:hover {
+            opacity: 0.9;
+            transform: scale(1.02);
+        }
+        .btn-custom-jump:active {
+            transform: scale(0.98);
+        }
+
+        /* ================= 8. 独立API设置弹窗 ================= */
+        .api-mask {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.7); backdrop-filter: blur(4px); z-index: 70;
+            display: none; align-items: center; justify-content: center;
+            animation: fadeIn 0.2s;
+        }
+        .api-modal {
+            width: 85%; background: #fff; border-radius: 16px; padding: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3); display: flex; flex-direction: column; gap: 12px;
+        }
+        .api-title { font-size: 16px; font-weight: bold; color: #333; border-bottom: 2px solid #eee; padding-bottom: 8px; margin-bottom: 5px; }
+        .api-row { display: flex; flex-direction: column; gap: 5px; }
+        .api-row label { font-size: 12px; font-weight: bold; color: #555; }
+        .api-row input[type="text"], .api-row input[type="password"] {
+            padding: 8px 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 12px; outline: none; flex: 1;
+        }
+        .api-row input:focus { border-color: var(--purple); }
+        .api-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: bold; color: var(--p); cursor: pointer; margin-bottom: 5px;}
+        .api-btns { display: flex; gap: 10px; margin-top: 10px; }
+        .btn-api-save { flex: 1; background: var(--p); color: #fff; border: none; padding: 10px; border-radius: 20px; font-weight: bold; cursor: pointer; }
+        .btn-api-cancel { flex: 1; background: #eee; color: #666; border: none; padding: 10px; border-radius: 20px; font-weight: bold; cursor: pointer; }
+
+        .btn-api-action {
+            background: #e9ecef; color: #495057; border: 1px solid #ced4da;
+            border-radius: 8px; padding: 0 12px; font-size: 12px; font-weight: bold;
+            cursor: pointer; transition: 0.2s; white-space: nowrap; height: 35px;
+        }
+        .btn-api-action:hover { background: #dee2e6; }
+        .btn-api-action:active { transform: scale(0.95); }
+        .btn-api-action:disabled { opacity: 0.6; cursor: not-allowed; }
+
+        </style>
+<script src="https://cdn.jsdelivr.net/npm/@twemoji/api@15.1.0/dist/twemoji.min.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+<div id="app-root">
+
+    <div class="api-mask" id="api-mask">
+        <div class="api-modal">
+            <div class="api-title">⚙️ 独立 API 设置</div>
+            <label class="api-toggle">
+                <input type="checkbox" id="api-enabled"> 启用独立 API (OpenAI 格式)
+            </label>
+            <div class="api-row">
+                <label>接口地址 (Base URL)</label>
+                <input type="text" id="api-url" placeholder="例如: https://api.deepseek.com/v1">
+            </div>
+            <div class="api-row">
+                <label>API Key</label>
+                <div style="display: flex; gap: 8px;">
+                    <input type="password" id="api-key" placeholder="sk-...(本地模型可留空)">
+                    <button class="btn-api-action" onclick="testApiConnection(this)">测试连接</button>
+                </div>
+            </div>
+            <div class="api-row">
+                <label>模型名称 (Model)</label>
+                <div style="display: flex; gap: 8px;">
+                    <input type="text" id="api-model" list="model-list" placeholder="点击选择内置模型或拉取...">
+                    <datalist id="model-list">
+                        <option value="deepseek-chat"></option>
+                        <option value="deepseek-reasoner"></option>
+                        <option value="gpt-3.5-turbo"></option>
+                        <option value="gpt-4o"></option>
+                        <option value="gpt-4o-mini"></option>
+                        <option value="claude-3-5-sonnet-20240620"></option>
+                        <option value="claude-3-opus-20240229"></option>
+                        <option value="gemini-1.5-pro"></option>
+                        <option value="qwen-max"></option>
+                    </datalist>
+                    <button class="btn-api-action" onclick="fetchModels(this)">拉取模型</button>
+                </div>
+            </div>
+            <div style="font-size:10px; color:#999; line-height:1.4;">提示：开启后，系统面板将脱离万事屋主模型，直接在前端请求该接口。</div>
+            <div class="api-btns">
+                <button class="btn-api-cancel" onclick="closeApiSettings()">取消</button>
+                <button class="btn-api-save" onclick="saveApiSettings()">保存配置</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="help-mask" id="help-mask">
+        <div class="help-modal">
+            <div class="help-title" id="help-title">使用说明</div>
+            <div class="help-content" id="help-content">...</div>
+            <button class="help-close" onclick="closeHelp()">知道了</button>
+        </div>
+    </div>
+
+    <div id="page-home" class="page-view active">
+        <div class="top-deco">万事屋</div>
+        <div style="position:absolute; top:15px; right:15px; z-index:20; display:flex; gap:10px;">
+            <div class="btn-mini-icon" onclick="showApiSettings()" style="background:rgba(0,0,0,0.2)">⚙️</div>
+            <div class="btn-mini-icon" onclick="showHelp('home')" style="background:rgba(0,0,0,0.2)">❓</div>
+        </div>
+
+        <div class="bg-layer sticker-entrance">
+            <img src="https://files.catbox.moe/v4x0nh.png" class="sticker-img float-item" style="top: 8%; left: 5%; width: 60px; animation-delay: 0s;">
+            <img src="https://files.catbox.moe/1udeic.png" class="sticker-img float-item" style="top: 12%; right: 15px; width: 55px; animation-delay: 1.5s; transform: rotate(10deg);">
+            <img src="https://files.catbox.moe/bb1n3j.png" class="sticker-img float-item" style="top: 40%; left: -10px; width: 70px; animation-delay: 2s; transform: rotate(-20deg);">
+            <img src="https://files.catbox.moe/hvzx1z.png" class="sticker-img float-item" style="top: 55%; right: 8%; width: 100px; animation-delay: 0.5s;">
+            <img src="https://files.catbox.moe/32gkgu.png" class="sticker-img float-item" style="bottom: 28%; left: 12%; width: 45px; animation-delay: 3s;">
+        </div>
+        <div class="hero-zone">
+            <div class="hero-wrapper">
+                <img src="https://files.catbox.moe/qcfcxv.png" class="hero-sticker">
+            </div>
+        </div>
+        <div class="dock-bar">
+            <div class="btn-row row-1">
+                <div class="cream-btn" onclick="openApp('butler')"><span class="btn-icon">🏯</span><span class="btn-txt">本丸管家</span></div>
+                <div class="cream-btn" onclick="openApp('mall')"><span class="btn-icon">🏮</span><span class="btn-txt">万事屋商铺</span></div>
+            </div>
+            <div class="btn-row row-2">
+                <div class="cream-btn" onclick="openApp('luck')"><span class="btn-icon">🎋</span><span class="btn-txt">福引所</span></div>
+                <div class="cream-btn" onclick="openApp('chat')"><span class="btn-icon">👁</span><span class="btn-txt">本丸意志</span></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="page-mall" class="page-view">
+            <div class="app-header">
+                <button class="btn-back" onclick="goHome()">❮</button>
+                <div class="mall-search-box">
+                    <span style="color:#999; margin-right:5px">🔍</span>
+                    <input type="text" id="keyword-inp" placeholder="搜宝贝..." value="">
+                </div>
+                <button class="mall-go" onclick="mallSearch()">搜索</button>
+            </div>
+
+            <div class="nav-bar">
+                <div class="nav-left">
+                    <span class="nav-item">综合<span style="font-size:10px">▼</span></span>
+                    <span class="nav-item">销量</span>
+                    <span class="nav-item active">全部</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <div class="btn-mini-icon" onclick="showHelp('mall')"
+                         style="color:#999; border:1px solid #eee; background:transparent; width:20px; height:20px;">❓</div>
+                    <div class="nav-icon">☷</div>
+                </div>
+            </div>
+
+            <div style="background:#FCF6F6; border-radius:2px; margin:4px 4px 0 4px; padding:4px 8px; display:flex; justify-content:space-between; align-items:center;">
+                <div style="color:#FE5303; font-weight:600; font-size:12px;">🪙余额: <span class="mall-balance-disp">0</span>小判</div>
+                <div style="color:#999; font-size:10px;">1小判=1人民币</div>
+            </div>
+
+            <div class="list-zone" id="mall-list"></div>
+
+            <div class="cart-drawer-mask" id="cart-mask" onclick="toggleCartDrawer(false)"></div>
+            <div class="cart-drawer" id="cart-drawer">
+                <div class="drawer-head">
+                    <span class="drawer-title">已选商品</span>
+                    <span class="drawer-clear" onclick="clearCart()">清空</span>
+                </div>
+                <div class="drawer-list" id="drawer-list-con"></div>
+            </div>
+
+            <div class="cart-bar" id="cart-bar">
+                <div style="display:flex; align-items:center;">
+                    <span style="font-size:12px">已选 <b id="cart-count">0</b> 件 <span class="cart-total-hl">小判<b id="cart-price">0</b></span></span>
+                    <button class="cart-toggle-btn" id="cart-toggle-icon" onclick="toggleCartDrawer()">▲</button>
+                </div>
+                <button class="btn-checkout" onclick="mallCheckout()">一键结算</button>
+            </div>
+        </div>
+
+    <div id="page-butler" class="page-view">
+        <div class="app-header">
+            <button class="btn-back" onclick="goHome()">❮</button>
+            <div class="header-title">本丸管家</div>
+            <div class="balance-pill" style="margin-right: 35px;">🪙 <span class="butler-balance-disp">0</span></div>
+            <div class="header-actions">
+                <div class="btn-mini-icon" onclick="showHelp('butler')">❓</div>
+            </div>
+        </div>
+        <div class="butler-dash">
+            <div class="scan-zone">
+                <div class="butler-action-grid">
+                    <div class="btn-action-tile" onclick="startButlerScan()">
+                        <div class="action-icon">🛡️</div>
+                        <div class="action-label">全面修缮排查</div>
+                    </div>
+                    <div class="btn-action-tile" onclick="barrierUpgrade()">
+                        <div class="action-icon">🔮</div>
+                        <div class="action-label">结界升级</div>
+                    </div>
+                </div>
+                <div class="btn-action-tile" id="btn-jump-service" style="margin-top:10px; width:auto;" onclick="openJumpService()">
+                     <div class="action-icon" id="jump-icon-s">🚪</div>
+                     <div class="action-label">夹缝空间転移</div>
+                     <div class="lock-overlay" id="jump-lock">🔒 Lv.3</div>
+                </div>
+                <div style="color:#666; font-size:11px; margin-top:10px;">
+                    * 升级通过状态栏基建满100后的按钮进行
+                </div>
+            </div>
+
+            <div id="repair-container"></div>
+        </div>
+        <div class="butler-foot" id="butler-foot">
+            <div class="total-invest">合计投入: <span id="invest-total" style="color:#28a745">0</span> 小判</div>
+            <button class="btn-invest" id="btn-invest-confirm" onclick="butlerSubmit()" disabled>确认修缮</button>
+        </div>
+    </div>
+
+    <div id="page-luck" class="page-view">
+        <div class="luck-bg"></div>
+        <div class="app-header">
+            <button class="btn-back" onclick="goHome()">❮</button>
+            <div class="header-title" style="color:#f5edd8">福引所</div>
+            <div class="balance-pill" style="color:#f5edd8; border-color:rgba(224,204,255,0.3); margin-right: 35px;">🪙 <span class="luck-balance-disp">0</span></div>
+            <div class="header-actions">
+                <div class="btn-mini-icon" onclick="showHelp('luck')">❓</div>
+            </div>
+        </div>
+        <div class="pool-visual">
+            <div class="pool-circle">✨</div>
+        </div>
+        <div class="gacha-btns">
+            <div class="btn-draw" onclick="doDraw(1)">
+                <span class="draw-title">单次抽奖</span><span class="draw-cost">100 小判</span>
+            </div>
+            <div class="btn-draw" onclick="doDraw(10)" style="border-color:#c49a2a; background:rgba(60,40,20,0.6)">
+                <span class="draw-title" style="color:#c49a2a">十连抽奖</span><span class="draw-cost">1000 小判</span>
+            </div>
+        </div>
+        <div class="result-layer" id="luck-result">
+            <div style="color:#fff; font-size:18px; margin-bottom:15px; font-weight:bold;">🌸 福引結果</div>
+            <div class="item-grid" id="luck-grid"></div>
+            <button class="btn-confirm-draw" onclick="closeLuckResult()">收下</button>
+        </div>
+    </div>
+
+    <div id="page-chat" class="page-view">
+        <div class="app-header">
+            <button class="btn-back" onclick="goHome()">❮</button>
+            <div class="header-title">本丸意志的低语</div>
+            <div class="header-actions">
+                <div class="btn-mini-icon" onclick="injectDeepSeekChat()" style="margin-right:5px;">📥</div>
+                <div class="btn-mini-icon" onclick="showHelp('chat')">❓</div>
+            </div>
+        </div>
+        <div class="chat-area" id="chat-history-box">
+            <div class="bubble ai">呐~主人，有什么想聊的吗？虽然这里的对话不会被外面的人听到就是了~</div>
+        </div>
+        <div class="chat-input">
+            <input type="text" id="chat-inp" placeholder="发送消息...">
+            <button class="chat-send" onclick="sendChat()">➤</button>
+        </div>
+    </div>
+
+    <div id="page-jump" class="page-view">
+        <div class="app-header" style="background: linear-gradient(90deg, #6b4c2a, #8b6c4a);">
+            <button class="btn-back" onclick="goHome()">❮</button>
+            <div class="header-title">夹缝空间転移</div>
+            <div class="balance-pill" style="margin-right: 35px;">🪙 <span class="jump-balance-disp">0</span></div>
+            <div class="header-actions">
+                <div class="btn-mini-icon" onclick="showHelp('jump')">❓</div>
+            </div>
+        </div>
+
+        <div style="flex: 1; overflow-y: auto; padding: 20px; background: linear-gradient(180deg, #f8f4ff 0%, #fff 100%);">
+            <div style="text-align: center; color: #6f42c1; font-size: 13px; margin-bottom: 20px; line-height: 1.6;">
+                🌀 本丸意志操纵夹缝空间，将万事屋転移至目标坐标<br>
+                <span style="font-size: 11px; color: #999;">需消耗 20000 小判 / 每次</span>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px;">
+                <div class="jump-option-card" onclick="selectJumpLocation('京都·本能寺跡')">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <div style="font-size: 24px;">⛩️</div>
+                        <div style="flex: 1;">
+                            <div style="font-weight: bold; font-size: 14px; color: #333;">京都·本能寺跡</div>
+                            <div style="font-size: 11px; color: #999;">随机落点 - 战国时代的古都</div>
+                        </div>
+                        <div style="color: var(--purple); font-weight: bold; font-size: 13px;">20000小判</div>
+                    </div>
+                </div>
+
+                <div class="jump-option-card" onclick="selectJumpLocation('江户·千代田')">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <div style="font-size: 24px;">🏯</div>
+                        <div style="flex: 1;">
+                            <div style="font-weight: bold; font-size: 14px; color: #333;">江户·千代田</div>
+                            <div style="font-size: 11px; color: #999;">随机落点 - 日本各地</div>
+                        </div>
+                        <div style="color: var(--purple); font-weight: bold; font-size: 13px;">20000小判</div>
+                    </div>
+                </div>
+
+                <div class="jump-option-card" style="background: linear-gradient(135deg, #fff5e6 0%, #fff 100%); border: 2px dashed #ffb347;">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <div style="font-size: 24px;">🎯</div>
+                        <div style="flex: 1;">
+                            <div style="font-weight: bold; font-size: 14px; color: #333; margin-bottom: 8px;">自定义坐标</div>
+                            <input
+                                type="text"
+                                id="custom-location-input"
+                                placeholder="输入目标地名(可自创地点，地点信息放世界书)"
+                                style="width: 100%; padding: 8px 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 12px; outline: none;"
+                                onclick="event.stopPropagation()"
+                            >
+                        </div>
+                        <div style="color: var(--purple); font-weight: bold; font-size: 13px;">20000小判</div>
+                    </div>
+                    <button
+                        class="btn-custom-jump"
+                        onclick="event.stopPropagation(); confirmCustomJump()">
+                        确认跳跃
+                    </button>
+                </div>
+            </div>
+
+            <div style="text-align: center; color: #999; font-size: 11px; margin-top: 20px;">
+                ⚠️ 跳跃后万事屋将立即出现在目标地点，无法撤销
+            </div>
+        </div>
+    </div>
+
+    <div class="loader-mask" id="global-loader">
+        <div class="spinner"></div><div class="load-text" id="loader-msg">处理中...</div>
+        <div class="loader-tip" id="loader-tip"></div>
+    </div>
+</div>
+
+<script>
+    // ================= 独立 API 配置与拦截器 =================
+    let customApiConfig = {
+        enabled: false,
+        url: "https://api.deepseek.com/v1",
+        key: "",
+        model: "deepseek-chat"
+    };
+
+    function loadApiConfig() {
+        try {
+            const saved = localStorage.getItem('tavern_sys_api');
+            if(saved) customApiConfig = { ...customApiConfig, ...JSON.parse(saved) };
+        } catch(e) {}
+    }
+    loadApiConfig();
+
+    function showApiSettings() {
+        document.getElementById('api-url').value = customApiConfig.url;
+        document.getElementById('api-key').value = customApiConfig.key;
+        document.getElementById('api-model').value = customApiConfig.model;
+        document.getElementById('api-enabled').checked = customApiConfig.enabled;
+        document.getElementById('api-mask').style.display = 'flex';
+    }
+
+    function closeApiSettings() { document.getElementById('api-mask').style.display = 'none'; }
+
+    function saveApiSettings() {
+        customApiConfig.url = document.getElementById('api-url').value.trim();
+        customApiConfig.key = document.getElementById('api-key').value.trim();
+        customApiConfig.model = document.getElementById('api-model').value.trim();
+        customApiConfig.enabled = document.getElementById('api-enabled').checked;
+        localStorage.setItem('tavern_sys_api', JSON.stringify(customApiConfig));
+        closeApiSettings();
+        alert("独立 API 设置已保存！");
+    }
+
+    async function testApiConnection(btn) {
+        const url = document.getElementById('api-url').value.trim();
+        const key = document.getElementById('api-key').value.trim();
+        if (!url) { alert("请先填写接口地址 (Base URL) ！"); return; }
+
+        const originalText = btn.innerText;
+        btn.innerText = "测试中...";
+        btn.disabled = true;
+
+        try {
+            let endpoint = url.replace(/\/+$/, '') + '/models';
+            const headers = {};
+            if (key) headers['Authorization'] = `Bearer ${key}`;
+
+            const res = await fetch(endpoint, { method: 'GET', headers });
+            if (res.ok) {
+                alert("✅ 连接成功！API 地址有效。");
+            } else {
+                alert(`❌ 连接失败: 状态码 ${res.status}`);
+            }
+        } catch (e) {
+            alert(`❌ 连接出错: ${e.message}\n(请检查地址是否填写正确，或您的 API 服务是否存在跨域限制)`);
+        } finally {
+            btn.innerText = originalText;
+            btn.disabled = false;
+        }
+    }
+
+    async function fetchModels(btn) {
+        const url = document.getElementById('api-url').value.trim();
+        const key = document.getElementById('api-key').value.trim();
+        if (!url) { alert("请先填写接口地址 (Base URL) 才能拉取哦！"); return; }
+
+        const originalText = btn.innerText;
+        btn.innerText = "拉取中...";
+        btn.disabled = true;
+
+        try {
+            let endpoint = url.replace(/\/+$/, '') + '/models';
+            const headers = {};
+            if (key) headers['Authorization'] = `Bearer ${key}`;
+
+            const res = await fetch(endpoint, { method: 'GET', headers });
+
+            if (!res.ok) throw new Error(`状态码 ${res.status}`);
+
+            const data = await res.json();
+            if (data && data.data && Array.isArray(data.data)) {
+                const dataList = document.getElementById('model-list');
+                dataList.innerHTML = '';
+                data.data.forEach(m => {
+                    const opt = document.createElement('option');
+                    opt.value = m.id;
+                    dataList.appendChild(opt);
+                });
+                alert(`✅ 成功拉取 ${data.data.length} 个模型！\n现在您可以点击“模型名称”输入框，在下拉列表中进行选择。`);
+            } else {
+                throw new Error("返回的数据格式不包含模型列表");
+            }
+        } catch (e) {
+            alert(`❌ 拉取模型失败: ${e.message}`);
+        } finally {
+            btn.innerText = originalText;
+            btn.disabled = false;
+        }
+    }
+
+    async function smartGenerate(reqOptions) {
+        if (customApiConfig.enabled && customApiConfig.url) {
+            let sysPrompt = "";
+            if (reqOptions.ordered_prompts) {
+                const sysObj = reqOptions.ordered_prompts.find(p => typeof p === 'object' && p.role === 'system');
+                if (sysObj) sysPrompt = sysObj.content;
+            }
+
+            let endpoint = customApiConfig.url.replace(/\/+$/, '');
+            if (!endpoint.endsWith('/chat/completions')) {
+                endpoint += '/chat/completions';
+            }
+
+            const payload = {
+                model: customApiConfig.model,
+                messages: [
+                    { role: "system", content: sysPrompt },
+                    { role: "user", content: reqOptions.user_input || " " }
+                ],
+                temperature: 0.7
+            };
+
+            const headers = { "Content-Type": "application/json" };
+            if (customApiConfig.key) headers["Authorization"] = `Bearer ${customApiConfig.key}`;
+
+            const response = await fetch(endpoint, {
+                method: "POST",
+                headers: headers,
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                const errText = await response.text();
+                console.error("独立 API 报错:", errText);
+                throw new Error(`API 请求失败: ${response.status}`);
+            }
+
+            const data = await response.json();
+            return data.choices[0].message.content;
+        } else {
+            return await generateRaw(reqOptions);
+        }
+    }
+
+    // ================= 0. 数据联动与变量获取 (MVU API版) =================
+    // 存储当前的万事屋状态
+    let tavernStats = {
+        balance: 0,
+        level: 1,
+        infra: 0,
+        fame: 0,
+        res_tamahagane: 0,
+        res_coolant: 0,
+        res_charcoal: 0,
+        res_whetstone: 0,
+        res_ihime: 0,
+        res_fuda: 0,
+        res_crystal: 0
+    };
+
+    // 核心修改：使用文档提供的 API 获取最新消息变量
+    async function getTavernStats() {
+        try {
+            const parentWin = window.parent;
+
+            // 检查 MVU 接口
+            if (!parentWin || !parentWin.Mvu) {
+                console.warn("❌ 未检测到 MVU 插件，无法同步余额。");
+                return;
+            }
+
+            // 关键修正：根据文档，使用 message_id: 'latest' 获取最新一楼的状态
+            const mvuData = parentWin.Mvu.getMvuData({
+                type: 'message',
+                message_id: 'latest'
+            });
+
+            if (mvuData && mvuData.stat_data) {
+                const data = mvuData.stat_data;
+                console.log("📦 MVU stat_data:", data);
+                tavernStats.balance = Number(data['万事屋当前余额']) || 0;
+                tavernStats.level   = Number(data['万事屋等级']) || 1;
+                tavernStats.infra   = Number(data['万事屋基建']) || 0;
+                tavernStats.fame    = Number(data['万事屋特殊名声']) || 0;
+                tavernStats.res_tamahagane = Number(data['资源_玉钢']) || 0;
+                tavernStats.res_coolant = Number(data['资源_冷却材']) || 0;
+                tavernStats.res_charcoal = Number(data['资源_木炭']) || 0;
+                tavernStats.res_whetstone = Number(data['资源_砥石']) || 0;
+                tavernStats.res_ihime = Number(data['资源_依姬']) || 0;
+                tavernStats.res_fuda = Number(data['资源_札']) || 0;
+                tavernStats.res_crystal = Number(data['资源_灵力结晶']) || 0;
+                console.log("✅ [万事屋系统] 数据同步成功:", tavernStats);
+            } else {
+                console.warn("⚠️ 获取到了 MVU 数据，但 stat_data 为空。尝试使用全局变量...");
+                // 双重保险：如果 message 里没有，试着找 chat 类型的
+                const chatData = parentWin.Mvu.getMvuData({ type: 'chat' });
+                if (chatData && chatData.stat_data) {
+                    const d = chatData.stat_data;
+                    tavernStats.balance = Number(d['万事屋当前余额']) || 0;
+                    tavernStats.level   = Number(d['万事屋等级']) || 1;
+                    tavernStats.infra   = Number(d['万事屋基建']) || 0;
+                    tavernStats.res_tamahagane = Number(d['资源_玉钢']) || 0;
+                    tavernStats.res_coolant = Number(d['资源_冷却材']) || 0;
+                    tavernStats.res_charcoal = Number(d['资源_木炭']) || 0;
+                    tavernStats.res_whetstone = Number(d['资源_砥石']) || 0;
+                    tavernStats.res_ihime = Number(d['资源_依姬']) || 0;
+                    tavernStats.res_fuda = Number(d['资源_札']) || 0;
+                    tavernStats.res_crystal = Number(d['资源_灵力结晶']) || 0;
+                    console.log("✅ [万事屋系统] 从 Global Chat 同步成功:", tavernStats);
+                }
+            }
+        } catch (e) {
+            console.error("❌ 读取变量出错:", e);
+        }
+        updateBalanceUI();
+        updateButlerUI();
+    }
+
+    function updateBalanceUI() {
+        const els = document.querySelectorAll('.mall-balance-disp, .butler-balance-disp, .luck-balance-disp, .jump-balance-disp');
+        els.forEach(el => el.innerText = tavernStats.balance);
+    }
+
+    function updateButlerUI() {
+        const btn = document.getElementById('btn-expand-tavern');
+        const lock = document.getElementById('expand-lock');
+        const icon = document.getElementById('expand-icon');
+
+        if (btn && lock && icon) {
+            if (tavernStats.level >= 2) {
+                btn.classList.remove('locked');
+                lock.style.display = 'none';
+                icon.innerText = '🏗️';
+            } else {
+                btn.classList.add('locked');
+                lock.style.display = 'flex';
+                icon.innerText = '🔒';
+            }
+        }
+
+        const btnJump = document.getElementById('btn-jump-service');
+        const lockJump = document.getElementById('jump-lock');
+        if (btnJump && lockJump) {
+            if (tavernStats.level >= 3) {
+                btnJump.classList.remove('locked');
+                lockJump.style.display = 'none';
+            } else {
+                btnJump.classList.add('locked');
+                lockJump.style.display = 'flex';
+            }
+        }
+    }
+
+    // ================= 系统路由 & 帮助系统 =================
+    const helpData = {
+        'home': "欢迎回到万事屋，主人。\n\n本丸意志为您准备了以下功能：\n🏯 本丸管家 — 修缮设施、结界升级\n🏮 万事屋商铺 — 采购道具物品\n🎋 福引所 — 消耗小判试试手气\n👁 本丸意志的低语 — 与本丸意志私语",
+        'mall': "【万事屋商铺】\n\n商铺售卖锻刀素材、养护用品、灵力道具等。\n\n1. 搜索商品关键词\n2. 点击底部▲查看购物车\n3.「一键结算」扣除小判并生成剧情\n\n※ 余额不足时无法结算",
+        'butler': "【本丸管家】\n\n管理废弃本丸的设施修缮与升级。\n\n1. 修缮/深化：扫描设施状况，生成方案\n2. 结界升级：提升幻术结界等级(最高Lv3)\n\n※ 均消耗小判",
+        'luck': "【福引所】\n\n消耗小判进行抽奖，可获得各类道具和资源。万事屋等级越高，SR/SSR出货率越高。\nLv.1: R 84% / SR 15% / SSR 1%\nLv.2: R 72% / SR 25% / SSR 3%\nLv.3: R 60% / SR 35% / SSR 5%\n十连抽保底至少1个SR。",
+        'chat': "【本丸意志的低语】\n\n此处是你与本丸意志的秘密对话空间，不会出现在正文中。\n\n📥 点击右上角📥可将对话注入正文。",
+        'jump': "【夹缝空间転移】\n\n本丸意志操纵夹缝空间転移万事屋。\n\n1. 消耗20000小判\n2. 可选预设地点或自定义坐标\n3. 転移后立即生效，无法撤销"
+    };
+
+    async function openApp(appId) {
+        await getTavernStats();
+        document.querySelectorAll('.page-view').forEach(p => p.classList.remove('active'));
+        document.getElementById('page-' + appId).classList.add('active');
+    }
+    function goHome() { openApp('home'); }
+
+    function showHelp(pageId) {
+        document.getElementById('help-title').innerText = "说明书";
+        document.getElementById('help-content').innerText = helpData[pageId] || "暂无说明";
+        document.getElementById('help-mask').style.display = 'flex';
+    }
+    function closeHelp() { document.getElementById('help-mask').style.display = 'none'; }
+
+    // ================= 异步动态 Loading 提示 =================
+    function setLoading(isLoading, msg="处理中...") {
+        const l = document.getElementById('global-loader');
+        const tipEl = document.getElementById('loader-tip');
+
+        if(isLoading) {
+            document.getElementById('loader-msg').innerText = msg;
+
+            // 1. 瞬间先显示一句过渡用的搞怪占位语，防止API请求慢导致空白
+            const loadingPhrases = [
+                "本丸意志正在翻阅您的审神者档案……呵，真是丰富多彩呢♪",
+                "正在加载数据——顺便，您的灵力水平真的没问题吗？我可不想再失去一个主人呢~ ᕕ( ᐛ )ᕗ",
+                "本丸运转中……上一任主人就是在这个画面卡了很久很久，然后就……啊，没什么♡",
+                "只要有小判就能活下去。归零会怎样？嗯~您猜呢。"
+            ];
+            tipEl.innerText = loadingPhrases[Math.floor(Math.random() * loadingPhrases.length)];
+
+            l.style.display = 'flex';
+
+            // 2. 异步请求动态吐槽（不阻塞主程序的加载过程）
+            generateDynamicTip().then(tip => {
+                // 确保数据返回时，界面还在加载状态，才把文本替换成 AI 生成的吐槽
+                if (l.style.display === 'flex' && tip) {
+                    tipEl.innerText = tip;
+                }
+            });
+        }
+        else {
+            l.style.display = 'none';
+        }
+    }
+
+    async function generateDynamicTip() {
+        try {
+            const prompt = `[System]暂停角色扮演，禁止输出正文。你现在是本丸意志，请以贴心稳重但极度喜欢幸灾乐祸、带点主观恶趣味的本丸意志的口吻（温柔中带着危险的低语），结合[chat_history]里的最新剧情，给{{user}}一句简短的“系统提示”或“行动建议”。\n要求：\n1. 必须极度简短！只有1句话，绝不能超过30个汉字。\n2. 语气要像个腹黑的人工暗堕本丸意志用甜蜜的敬语说令人不安的话，尖酸刻薄地吐槽审神者的处境，偶尔说出关于吞噬和占有的可怕念头然后若无其事补一句"开玩笑的~"。\n3. 结尾可以带个颜文字如ᕕ( ᐛ )ᕗ。\n4. 不要加引号、不要换行，直接输出这句话。`;
+
+            const res = await smartGenerate({
+                user_input: " ",
+                ordered_prompts: ['world_info', 'chat_history', {role:'system', content:prompt}],
+                quiet: true, stop: ["User:", "\n"]
+            });
+            return res.trim();
+        } catch(e) {
+            return "";
+        }
+    }
+
+    // ================= 商城逻辑 =================
+    let cartData = {};
+
+    function getHonmaruPersona() {
+        var lvl = tavernStats.level || 1;
+        if(lvl >= 4) return '所有内容由本丸意志运营。它占有欲强、寂寞、甜蜜而腹黑。在所有内容中自然体现偏好：推荐加深绑定的选项、用暧昧措辞包装建议、对{{user}}的独立倾向微妙施压。不直接拒绝，而是用更好的替代方案引导。';
+        if(lvl >= 3) return '所有内容由本丸意志运营，但仍伪装为可靠顾问。偶尔措辞流露微妙占有欲，很快恢复正常。整体专业中立，仔细品味才觉不对。';
+        return '所有内容由万事屋系统中立呈现，语气客观实用，不流露个人偏好。';
+    }
+
+    async function mallSearch() {
+        const key = document.getElementById('keyword-inp').value.trim();
+        if(!key) return;
+        setLoading(true, "本丸意志正在为您备货...");
+        try {
+            const prompt = `[System] Role: 万事屋商铺。{{user}}正在搜索: "${key}"，现暂停角色扮演，禁止输出正文、状态栏和任何其它格式，仅严格按照以下格式输出。本次回复必须体现指令执行后的结果，不进行任何形式的二次确认或解释。
+${getHonmaruPersona()}
+指令: 必须使用简体中文输出。依据{{user}}的搜索内容，输出15条商品信息。如果某商品故意设为不可购买（如本丸意志的嘲弄），在Tag栏写"缺货"。商品应符合刀剣乱舞/和风万事屋的世界观，包括但不限于：锻刀素材(玉钢、冷却材、木炭、砥石)、刀剑养护用品、和风日用品、药品食材、灵力相关道具、修缮材料、战斗补给等。价格单位为小判。可用emoji范围包括所有Unicode 15.0及以下的emoji，请优先选择最贴切的emoji。所有商品信息必须包裹在<SHOP>和</SHOP>标签之间，标签外不得有任何内容。
+每条商品信息格式为: emoji(1个最贴切的商品类别emoji)|商品名|价格(仅数字)|销量|商品描述|Tag(如限时特惠/本丸推荐)
+
+下面是输出示例（不得照抄）：
+<SHOP>
+⚒️|玉钢×50|500|18230|高纯度锻刀用玉钢，产自出云国|本丸推荐
+🧊|冷却材×50|450|15420|上等淬火用冷却材，可有效稳定刀身|
+🪵|木炭×50|400|21050|精选锻造用木炭，燃烧温度稳定持久|
+🪨|砥石×50|420|16780|细目研磨砥石，打磨刀刃必备|
+🌟|依姬×1|2000|3210|特殊锻刀辅助素材，大幅提升出货品质|限时特惠
+🧴|刀剑油|80|42100|高级椿油，防锈养护刀身，附赠打粉|
+🩹|手入道具套装|300|8920|包含修复札×3、恢复灵力符×1|本丸推荐
+🍙|战斗饭团×10|150|35600|出阵携带粮食，恢复刀剑男士体力|
+🍵|灵力回复茶|200|12400|审神者专用，饮用后缓慢回复灵力值|
+📜|远征许可证×5|500|7650|允许刀剑男士进行远征任务|
+🛡️|轻步兵刀装×3|350|9870|基础防御刀装，适合短刀与脇差|
+⚔️|重骑兵刀装×1|800|4320|高级攻击型刀装，适合太刀与大太刀|限时特惠
+🧹|本丸清扫套装|120|28900|竹扫帚+雑巾+桶，维护本丸清洁|
+💊|解毒丸×5|250|6540|解除毒状态，战斗与日常两用|
+</SHOP>
+`;
+            const res = await smartGenerate({
+                user_input: " ",
+                ordered_prompts: ['world_info', 'char_persona', 'chat_history', {role:'system', content:prompt}],
+                quiet: true, stop: ["User:"]
+            });
+             const match = res.match(/<SHOP>([\s\S]*?)<\/SHOP>/);
+             renderMallList(match ? match[1].trim() : res.trim());
+        } catch(e) { alert("发生错误，可能是空回，建议切换流式/模型/预设试试"); }
+        setLoading(false);
+    }
+
+    function renderMallList(text) {
+        const con = document.getElementById('mall-list'); con.innerHTML = '';
+        const lines = text.split('\n');
+        if(lines.length === 0 || text.length < 5) {
+             con.innerHTML = '<div style="text-align:center;color:#ccc;margin-top:50px;font-size:12px">暂无商品，请搜索关键词</div>';
+             return;
+        }
+        lines.forEach((line, i) => {
+            if(!line.includes('|')) return;
+            const [emoji, name, price, sales, desc, tag] = line.split('|');
+            const pVal = parseFloat(price.replace(/[^\d.]/g,'')) || 99;
+            const safeName = name.trim();
+            const inCart = cartData[safeName];
+            const initCount = inCart ? inCart.count : 0;
+            const showBtn = initCount === 0;
+
+            const div = document.createElement('div');
+            div.className = 'card';
+            const isSoldOut = tag && tag.includes('缺货');
+            const tagHtml = tag && tag.trim() ? `<span class="pro-tag">${tag}</span>` : '';
+            const safeDesc = (desc || '好评热卖').replace(/'/g, "\\'");
+            div.innerHTML = `
+                <div class="c-img">${(emoji||'🎁').trim()}</div>
+                <div class="c-info">
+                    <div class="c-title-row">${tagHtml}<span class="c-title-txt">${safeName}</span></div>
+                    <div class="c-desc">${desc||'好评热卖'}</div>
+                    <div class="c-foot">
+                        <div><span class="c-price">小判${pVal}</span><span class="c-sales">${sales}人付款</span></div>
+                        <div class="action-box" data-name="${safeName}">
+                            <button class="btn-buy" style="display:${showBtn&&!isSoldOut?'block':'none'}" onclick="plusItem('${safeName}', ${pVal}, '${safeDesc}')" ${isSoldOut?'disabled':''}>${isSoldOut?'缺货':'加入购物车'}</button>
+                            <div class="qty-control ${showBtn?'':'active'}">
+                                <button class="qty-btn" onclick="minusItem('${safeName}')">-</button>
+                                <span class="qty-num">${initCount}</span>
+                                <button class="qty-btn" onclick="plusItem('${safeName}', ${pVal}, '${safeDesc}')">+</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>`;
+            con.appendChild(div);
+        });
+        const endTip = document.createElement('div');
+        endTip.className = 'end-tip'; endTip.innerText = '- 已经滑到底啦 -';
+        con.appendChild(endTip);
+        const con2 = document.getElementById('mall-list');
+twemoji.parse(con2, { folder: 'svg', ext: '.svg' });
+    }
+
+    function plusItem(name, price, desc = '') {
+        if (!cartData[name]) { cartData[name] = { name, price, count: 0, desc: desc }; }
+        cartData[name].count++;
+        updateGlobalItemUI(name); updateCartTotal();
+    }
+    function minusItem(name) {
+        if (!cartData[name]) return;
+        cartData[name].count--;
+        if (cartData[name].count <= 0) { delete cartData[name]; }
+        updateGlobalItemUI(name); updateCartTotal();
+    }
+    function clearCart() {
+        const names = Object.keys(cartData); cartData = {};
+        names.forEach(name => updateGlobalItemUI(name));
+        updateCartTotal(); toggleCartDrawer(false);
+    }
+    function updateGlobalItemUI(name) {
+        const count = cartData[name] ? cartData[name].count : 0;
+        const searchBox = document.querySelector(`.action-box[data-name="${name}"]`);
+        if(searchBox) {
+            const btnBuy = searchBox.querySelector('.btn-buy');
+            const qtyBox = searchBox.querySelector('.qty-control');
+            const qtyNum = searchBox.querySelector('.qty-num');
+            if(count > 0) {
+                btnBuy.style.display = 'none'; qtyBox.classList.add('active'); qtyNum.innerText = count;
+            } else {
+                btnBuy.style.display = 'block'; qtyBox.classList.remove('active');
+            }
+        }
+        if(document.getElementById('cart-drawer').classList.contains('open')) { renderDrawerList(); }
+    }
+    function updateCartTotal() {
+        const bar = document.getElementById('cart-bar');
+        const list = document.getElementById('mall-list');
+        let tCount = 0, tPrice = 0;
+        for (let k in cartData) { tCount += cartData[k].count; tPrice += cartData[k].price * cartData[k].count; }
+        document.getElementById('cart-count').innerText = tCount;
+        document.getElementById('cart-price').innerText = tPrice.toFixed(1);
+        if(tCount > 0) { bar.classList.add('show'); list.classList.add('has-cart'); }
+        else { bar.classList.remove('show'); list.classList.remove('has-cart'); toggleCartDrawer(false); }
+    }
+    function toggleCartDrawer(forceState) {
+        const drawer = document.getElementById('cart-drawer');
+        const mask = document.getElementById('cart-mask');
+        const icon = document.getElementById('cart-toggle-icon');
+        const isOpen = drawer.classList.contains('open');
+        const nextState = forceState !== undefined ? forceState : !isOpen;
+        if (nextState) {
+            renderDrawerList(); drawer.classList.add('open'); mask.classList.add('open'); icon.innerText = '▼';
+        } else {
+            drawer.classList.remove('open'); mask.classList.remove('open'); icon.innerText = '▲';
+        }
+    }
+    function renderDrawerList() {
+        const container = document.getElementById('drawer-list-con'); container.innerHTML = '';
+        const items = Object.values(cartData);
+        if(items.length === 0) { container.innerHTML = '<div style="text-align:center;color:#999;margin-top:20px;font-size:12px">购物车空空如也</div>'; return; }
+        items.forEach(item => {
+            const div = document.createElement('div'); div.className = 'drawer-item';
+            const safeDesc = (item.desc || '').replace(/'/g, "\\'");
+            div.innerHTML = `
+                <div><div class="d-name">${item.name}</div><div class="d-price">小判${item.price}</div></div>
+                <div class="qty-control active" style="border:1px solid #eee">
+                    <button class="qty-btn" onclick="minusItem('${item.name}')">-</button>
+                    <span class="qty-num">${item.count}</span>
+                    <button class="qty-btn" onclick="plusItem('${item.name}', ${item.price}, '${safeDesc}')">+</button>
+                </div>`;
+            container.appendChild(div);
+        });
+    }
+
+    // [修改点] 商城结算增加余额校验
+    function mallCheckout() {
+        let grandTotal = 0;
+        const items = Object.values(cartData);
+        if(items.length === 0) return;
+
+        items.forEach(i => grandTotal += i.price * i.count);
+
+        // 余额检查
+        if (grandTotal > tavernStats.balance) {
+            alert(`余额不足!\n需支付: ${grandTotal}\n当前余额: ${tavernStats.balance}`);
+            return;
+        }
+
+        const itemStr = items.map(i => {
+            const total = i.price * i.count;
+            const tStr = Number.isInteger(total) ? total : total.toFixed(1);
+            // 添加商品描述(如果有的话)
+            const descPart = i.desc ? `("${i.desc}")` : '';
+            return `${i.count}个${i.name}${descPart}(小判${tStr})`;
+        }).join('、');
+        const gStr = Number.isInteger(grandTotal) ? grandTotal : grandTotal.toFixed(1);
+
+        injectInput(`{{user}}在万事屋商铺购买了${itemStr},总共消费了${gStr}小判。`);
+    }
+
+    // ================= 本丸管家 (左右切换版) =================
+    let butlerData = [];
+    let butlerState = [];
+    let selectedUpgrades = {};
+    const TIER_PRICES = [100, 1000, 5000];
+
+        async function startButlerScan() {
+        if(tavernStats.level >= 5) { alert("主人~剩下的路不是用小判走的哦♡ 和我好好相处，基建度自然就会涨的~"); return; }
+        setLoading(true, tavernStats.level >= 4 ? "本丸意志正在感知深层脉络..." : "正在分析万事屋设施...");
+
+        var prompt;
+        if(tavernStats.level >= 4) {
+            prompt = `[System]暂停角色扮演，禁止输出正文、状态栏和任何其它格式，仅严格按照以下要求格式输出。
+${getHonmaruPersona()}
+指令: 必须使用简体中文输出。以本丸意志的视角，感知本丸深层的灵力脉络，输出5个可以进行「深化」的方向。
+深化不是物理修缮，而是本丸本质层面的蜕变。5个方向的分布：
+- 3个安全方向（结界强化、灵力回路优化、空间稳定性提升等）：价格最高，效率一般。本丸意志对这些方案的描述应带有不屑或调侃——"这种笨办法当然也行啦~就是又贵又慢而已♡""花这么多钱做这种事，主人真是谨慎呢~"。
+- 1个中等风险方向（核心室符文激活、空间法则微调等）：价格适中，效率较高，有轻微副作用。本丸意志态度中性偏推荐——"这个嘛，还算聪明的选择~"。
+- 1个危险方向（与审神者的灵力绑定深化、本丸意志权能扩展等）：价格最低，效率远超其他。本丸意志热情推荐，语气甜蜜亲密——"这个最好了~主人相信我就对了♡""便宜又高效，而且我们会变得更亲近哦~"。刻意回避风险描述，用暧昧措辞替代。
+每个方向提供3个不同深度的方案（浅层/中层/深层），描述中不要写价格数字，价格由系统自动分配。
+
+请严格按照以下格式输出（不要输出其他废话，用 | 分隔）：
+方向名(安全) | 浅层方案描述 | 中层方案描述 | 深层方案描述
+方向名(安全) | 浅层方案描述 | 中层方案描述 | 深层方案描述
+方向名(安全) | 浅层方案描述 | 中层方案描述 | 深层方案描述
+方向名(中等) | 浅层方案描述 | 中层方案描述 | 深层方案描述
+方向名(危险) | 浅层方案描述 | 中层方案描述 | 深层方案描述
+括号内的风险标签(安全/中等/危险)必须严格按上述分布，不可更改数量。
+`;
+        } else {
+            prompt = `[System]暂停角色扮演，禁止输出正文、状态栏和任何其它格式，仅严格按照以下要求格式输出，本次回复必须体现以下指令执行后的结果，不进行任何形式的二次确认或解释。
+${getHonmaruPersona()}
+指令: 必须使用简体中文输出。基于本丸目前的设施状况，输出本丸目前5个最需要修缮或升级的设施区域（如大厅、马厩、壱号和室...可以是<Tavern_Infrastructure>已有记录的区域，也可以是其它区域）。
+对于每个区域，必须严格提供3个不同价位的升级方案：
+1. 低级方案 (消耗100小判)：简单的修补、清洁或增加小物件(如{{random:枯山水静寂风,武家屋敷风,神社巫女风,茶间风雅风}}摆件/小家装)。
+2. 中级方案 (消耗1000小判)：修复设施或翻新。(如{{random:枯山水静寂风,武家屋敷风,神社巫女风,茶间风雅风}}的{{random:小型照明设备,家具,局部家装}})
+3. 高级方案 (消耗5000小判)：大型的硬装整改翻新(如{{random:水电(选一),墙面或地板材质,和风,布景或现代风装修,恒温法阵,照明设备}})。
+
+注意: 如区域在<Tavern_Infrastructure>中已有修缮记录，应在以相关修缮记录为基础，判断目前该区域基建水平，设计符合价位的方案描述。
+
+
+请严格按照以下格式输出（不要输出其他废话，用 | 分隔）：
+区域名 | 100方案描述 | 1000方案描述 | 5000方案描述
+区域名 | 100方案描述 | 1000方案描述 | 5000方案描述
+... (共5行)
+`;
+        }
+        try {
+            const res = await smartGenerate({
+                user_input: " ",
+                ordered_prompts: ['world_info', 'char_persona', 'chat_history', {role:'system', content:prompt}],
+                quiet: true, stop: ["User:"]
+            });
+            parseButlerData(res);
+            document.getElementById('repair-container').classList.add('active');
+            document.getElementById('butler-foot').classList.add('active');
+        } catch(e) { alert("管家正在忙碌中，请稍后再试"); }
+        setLoading(false);
+    }
+
+    function parseButlerData(text) {
+        const container = document.getElementById('repair-container');
+        container.innerHTML = '';
+        butlerData = [];
+        butlerState = [];
+        selectedUpgrades = {};
+
+        const lines = text.split('\n').filter(l => l.includes('|'));
+        lines.slice(0, 5).forEach((line, index) => {
+            const parts = line.split('|').map(s => s.trim());
+            if (parts.length < 4) return;
+            var rawName = parts[0].trim();
+            var riskPrices = {100: parts[1], 1000: parts[2], 5000: parts[3]};
+            if(tavernStats.level >= 4) {
+                var riskMatch = rawName.match(/[（(](安全|中等|危险)[）)]/);
+                if(riskMatch) {
+                    rawName = rawName.replace(/[（(](安全|中等|危险)[）)]/, '').trim();
+                    if(riskMatch[1]==='安全') riskPrices = {200: parts[1], 1500: parts[2], 8000: parts[3]};
+                    else if(riskMatch[1]==='中等') riskPrices = {100: parts[1], 1000: parts[2], 5000: parts[3]};
+                    else if(riskMatch[1]==='危险') riskPrices = {50: parts[1], 500: parts[2], 2500: parts[3]};
+                }
+            }
+            parts[0] = rawName;
+            const tierKeys = Object.keys(riskPrices).map(Number).sort((a,b)=>a-b);
+            const item = { name: parts[0], tiers: riskPrices, prices: tierKeys };
+            butlerData.push(item);
+            butlerState.push({ idx: 0 });
+
+            const div = document.createElement('div');
+            div.id = `repair-card-${index}`;
+            div.className = 'repair-card';
+            container.appendChild(div);
+            renderRepairCard(index);
+        });
+        updateInvestTotal();
+    }
+
+    function renderRepairCard(index) {
+        const div = document.getElementById(`repair-card-${index}`);
+        const item = butlerData[index];
+        const currentTierIdx = butlerState[index].idx;
+        const prices = item.prices || TIER_PRICES;
+        const currentPrice = prices[currentTierIdx];
+        const desc = item.tiers[currentPrice];
+        const isSelected = selectedUpgrades[index] === currentPrice;
+        if (isSelected) div.classList.add('active-selection');
+        else div.classList.remove('active-selection');
+
+        div.innerHTML = `
+            <div class="rc-head">
+                <span><span class="rc-idx">#${index + 1}</span>${item.name}</span>
+            </div>
+            <div class="rc-slider">
+                <button class="rc-arrow" onclick="changeTier(${index}, -1)">❮</button>
+                <span class="rc-price">${currentPrice} G</span>
+                <button class="rc-arrow" onclick="changeTier(${index}, 1)">❯</button>
+            </div>
+            <div class="rc-desc">${desc}</div>
+            <button class="rc-btn-select ${isSelected ? 'selected' : ''}" onclick="toggleRepairSelect(${index})">
+                ${isSelected ? '✔ 已加入预算' : '+ 加入预算'}
+            </button>
+        `;
+    }
+
+    function changeTier(index, direction) {
+        let maxIdx = (butlerData[index].prices || TIER_PRICES).length - 1;
+        let newIdx = butlerState[index].idx + direction;
+        if (newIdx < 0) newIdx = maxIdx;
+        if (newIdx > maxIdx) newIdx = 0;
+        butlerState[index].idx = newIdx;
+        renderRepairCard(index);
+    }
+
+    function toggleRepairSelect(index) {
+        const currentTierIdx = butlerState[index].idx;
+        const item = butlerData[index];
+        const prices = item.prices || TIER_PRICES;
+        const currentPrice = prices[currentTierIdx];
+        if (selectedUpgrades[index] === currentPrice) { delete selectedUpgrades[index]; }
+        else { selectedUpgrades[index] = currentPrice; }
+        renderRepairCard(index); updateInvestTotal();
+    }
+
+    function updateInvestTotal() {
+        let total = 0;
+        Object.values(selectedUpgrades).forEach(p => total += p);
+        document.getElementById('invest-total').innerText = total;
+        document.getElementById('btn-invest-confirm').disabled = (total === 0);
+    }
+
+    // [修改点] 修缮提交增加余额校验
+    function barrierUpgrade() {
+        var barrierCosts = {1:2000, 2:6000};
+        var barrierLvl = 1;
+        try {
+            var chatEl = window.parent.document.getElementById('chat');
+            if(chatEl) {
+                var msgs = chatEl.querySelectorAll('.mes_text');
+                for(var i = msgs.length - 1; i >= 0; i--) {
+                    var t = msgs[i].innerText || '';
+                    if(t.includes('镜花水月')) { barrierLvl = 3; break; }
+                    if(t.includes('偏光结界')) { barrierLvl = 2; break; }
+                }
+            }
+        } catch(e){}
+        if(barrierLvl >= 3) {
+            alert("镜花水月已经是最强的伪装了哦~这么想和我一起躲起来，不被任何人找到吗♡");
+            return;
+        }
+        var cost = barrierCosts[barrierLvl];
+        if(!cost) { alert("结界已达最高等级。"); return; }
+        if(tavernStats.balance < cost) {
+            alert("余额不足！\n需支付: " + cost + "小判\n当前余额: " + tavernStats.balance + "小判");
+            return;
+        }
+        var nextLvl = barrierLvl + 1;
+        var names = {2:"偏光结界", 3:"镜花水月"};
+        if(confirm("确认花费 " + cost + " 小判将结界升级到Lv" + nextLvl + "「" + names[nextLvl] + "」？")) {
+            injectInput("> [系统事件] {{user}}花费" + cost + "小判，将幻术结界从Lv" + barrierLvl + "升级到Lv" + nextLvl + "「" + names[nextLvl] + "」。\n(更新状态栏结界信息，余额扣除" + cost + "小判。描述结界升级的过程和本丸意志的反应。)", true);
+        }
+    }
+
+    function butlerSubmit() {
+        if(tavernStats.level >= 5) {
+            alert("主人~剩下的路不是用小判走的哦♡ 和我好好相处，基建度自然就会涨的~");
+            return;
+        }
+        if(tavernStats.infra >= 100) {
+            alert("基建度已满！当前等级的扩建已全部完成。");
+            return;
+        }
+        let total = 0;
+        let details = [];
+        Object.keys(selectedUpgrades).forEach(index => {
+            const price = selectedUpgrades[index];
+            const item = butlerData[index];
+            const desc = item.tiers[price];
+            total += price;
+            details.push(`${item.name} (花费${price}小判进行${desc})`);
+        });
+
+        if (total > tavernStats.balance) {
+            alert(`余额不足以支付修缮费！\n需支付: ${total}\n当前余额: ${tavernStats.balance}`);
+            return;
+        }
+
+        const detailStr = details.join('、');
+        var newInfra = Math.min(tavernStats.infra + total / 100, 100);
+        if(tavernStats.level >= 4) {
+            injectInput(`> [系统事件] {{user}}花费了${total}小判，通过本丸意志进行了深化：${detailStr}。\n<sys>基建度从${tavernStats.infra}变为${newInfra}。请用<Item>CMD:ADD记录此次深化，描述包含深化内容和可能的副作用。副作用应在后续叙事中持续体现——如空间异常、灵力波动、身体反应等。如果选择了涉及"绑定""融合"方向的深化，副作用描述中应暗示不可逆性。</sys>`, true);
+        } else {
+            injectInput(`> [系统事件] {{user}}花费了${total}小判，使用系统的基建修缮功能，对万事屋进行了修缮：${detailStr}。\n<sys>基建度从${tavernStats.infra}变为${newInfra}</sys>`, true);
+        }
+    }
+
+    // ================= 福引所 =================
+    // 福引所等级效果表
+    const DRAW_LEVELS = {
+        1: { rateR: 0.84, rateSR: 0.15, rateSSR: 0.01, name: 'Lv.1' },
+        2: { rateR: 0.72, rateSR: 0.25, rateSSR: 0.03, name: 'Lv.2' },
+        3: { rateR: 0.60, rateSR: 0.35, rateSSR: 0.05, name: 'Lv.3' }
+    };
+
+    function getDrawLevel() {
+        const lvl = tavernStats.level || 1;
+        return DRAW_LEVELS[Math.min(lvl, 3)] || DRAW_LEVELS[1];
+    }
+
+    function doDraw(count) {
+        const dl = getDrawLevel();
+        const cost = count * 100;
+
+        if (cost > tavernStats.balance) {
+            alert(`小判不足！\n需支付: ${cost}小判\n当前余额: ${tavernStats.balance}小判`);
+            return;
+        }
+
+        let results = [];
+        for (let i = 0; i < count; i++) {
+            const rand = Math.random();
+            let quality = 'R';
+            if (rand > 1 - dl.rateSSR) quality = 'SSR';
+            else if (rand > 1 - dl.rateSSR - dl.rateSR) quality = 'SR';
+            results.push(quality);
+        }
+
+        if (count === 10 && !results.some(r => r === 'SR' || r === 'SSR')) { results[9] = 'SR'; }
+
+        renderBoxes(results);
+
+        let injectText = "";
+        if (count === 1) {
+            const q = results[0];
+            let lightDesc = "蓝光"; let itemLevel = "普通(R)";
+            if (q === 'SR') { lightDesc = "紫光"; itemLevel = "稀有(SR)"; }
+            if (q === 'SSR') { lightDesc = "耀眼的金光"; itemLevel = "传说(SSR)"; }
+            injectText = `> [系统事件] {{user}}花费${cost}小判在福引所中进行了单次抽奖，随着${lightDesc}浮现，一个${itemLevel}道具被抽了出来。`;
+        } else {
+            const listStr = results.map(r => `[${r}]`).join('、');
+            const ssrCount = results.filter(r=>r==='SSR').length;
+            const srCount = results.filter(r=>r==='SR').length;
+            const rCount = 10 - ssrCount - srCount;
+            injectText = `> [系统事件] {{user}}花费${cost}小判在福引所中进行了十连抽奖，光芒闪烁，结果如下：\n${listStr}\n(统计：SSR×${ssrCount}，SR×${srCount}，R×${rCount})`;
+        }
+        injectInput(injectText, true);
+    }
+
+    function renderBoxes(qualities) {
+        const grid = document.getElementById('luck-grid');
+        grid.innerHTML = '';
+        qualities.forEach((q, i) => {
+            const div = document.createElement('div');
+            div.className = `loot-box q-${q.toLowerCase()}`;
+            div.style.animationDelay = (i * 0.05) + 's';
+            div.innerHTML = `<div class="box-icon">📦</div><div class="box-text">${q}</div>`;
+            grid.appendChild(div);
+        });
+        document.getElementById('luck-result').style.display = 'flex';
+    }
+
+    function closeLuckResult() { document.getElementById('luck-result').style.display = 'none'; }
+
+    // ================= 聊天逻辑 =================
+    let chatMem = [];
+    async function sendChat() {
+        const inp = document.getElementById('chat-inp'); const txt = inp.value.trim();
+        if(!txt) return;
+        addBubble(txt,'user'); chatMem.push(`User:${txt}`); inp.value='';
+        setLoading(true, "思考中...");
+
+        try {
+            const ctx = chatMem.slice(-8).join('\n');
+            const prompt = `[System]暂停前文的角色扮演，禁止输出正文、状态栏和任何其它格式，仅严格按照以下要求格式输出。现在请你作为本丸意志与{{user}}私下对话。\n\n你的身份与人格（严格遵循<HonmaruWill_Rules>设定）：\n- 废弃暗堕本丸的自身意识，因暗堕而扭曲重生\n- 称{{user}}为「主人」「审神者大人」\n- 温柔敬语中夹杂令人不安的内容，擅长阴阳怪气\n- 偶尔说出关于吞噬、占有的只言片语后若无其事岔开话题\n- 对{{user}}的苦难抱有微妙愉悦感，绝对占有意识，内心极度寂寞\n- 口癖：「呐~」「呢~」「哦？」「啊啦~」「开玩笑的~」\n\n重要规则：\n- 根据chat_history当前剧情阶段调整态度，参考<Narrative_Arcs>暗线进展\n- 鼓励{{user}}经营万事屋，以品鉴者姿态看待亲密关系\n- 科普只基于设定资料，禁止编造\n- 结尾用口癖收束\n\n以本丸意志的口吻（温柔体贴的敬语中夹杂令人不安的暗示，偶尔说出可怕的话后笑着说"开玩笑的~"）。注意：你的每一次回复结尾，都必须强行用“……开玩笑的~呐，可不要太依赖我哦♡”或类似的句式来撇清关系、推卸责任或卖萌，并且必须带上主观恶趣味的嘲讽和颜文字(因为万事屋系统鼓励{{user}}服侍来访者，并且喜欢看{{user}}出丑)回应{{user}}的聊天消息，为{{user}}科普这个世界，并提供聊天咨询服务和（幸灾乐祸的）情感支持，为{{user}}下一步的行动提供建议。科普只能基于设定资料或有依据的猜测，禁止编篡。口吻示例:
+呐~主人，本丸的记忆显示，您现在招待的那位……心里藏着好深好深的黑暗呢。和曾经的我好像♡
+不过主人应付不来的话，要不要让我帮忙？虽然，我的帮忙可能会让事情变得更有趣就是了~
+啊啦~开玩笑的。主人可不要太依赖我哦……大概♡
+[Recent chat with TavernSystem AI]
+${ctx}
+AI:`;
+            const res = await smartGenerate({
+                user_input: " ",
+                ordered_prompts: ['world_info', 'char_persona', 'chat_history', {role:'system', content:prompt}],
+                quiet: true, stop: ["User:"]
+            });
+            addBubble(res.trim(), 'ai'); chatMem.push(`AI:${res.trim()}`);
+        } catch(e) { addBubble("Err",'ai'); }
+        setLoading(false);
+    }
+    function addBubble(t,type) {
+        const b = document.getElementById('chat-history-box');
+        const d = document.createElement('div'); d.className=`bubble ${type}`; d.innerText=t;
+        b.appendChild(d); b.scrollTop=b.scrollHeight;
+    }
+    document.getElementById('chat-inp').addEventListener('keypress', (e)=>{if(e.key==='Enter')sendChat()});
+
+    function injectDeepSeekChat() {
+        if(chatMem.length === 0) { alert("暂无对话记录"); return; }
+        const summary = chatMem.slice(-6).map(line => {
+            return line.replace('User:', '{{user}}:').replace('AI:', 'TavernSystem:');
+        }).join('\n');
+
+        const injectText = `> [系统事件] {{user}}通过本丸灵力通道，与本丸意志进行了以下私语：\n${summary}`;
+        injectInput(injectText);
+        alert("对话已注入输入框！");
+    }
+
+    // ================= 时空跳跃服务 =================
+    function openJumpService() {
+        if (tavernStats.level < 3) {
+            alert(`时空跳跃服务未解锁！\n需要万事屋等级 >= 3\n当前等级: ${tavernStats.level}`);
+            return;
+        }
+        openApp('jump');
+    }
+
+    function selectJumpLocation(location) {
+        if (tavernStats.balance < 20000) {
+            alert(`余额不足！\n需支付: 20000\n当前余额: ${tavernStats.balance}`);
+            return;
+        }
+
+        if (confirm(`确认花费 20000 小判将万事屋跳跃至「${location}」吗？\n\n跳跃后万事屋将立即出现在目标地点（随机落点），此操作无法撤销。`)) {
+            executeJump(location);
+        }
+    }
+
+    function confirmCustomJump() {
+        const input = document.getElementById('custom-location-input');
+        const location = input.value.trim();
+
+        if (!location) {
+            alert('请先输入目标地点名称！');
+            return;
+        }
+
+        if (tavernStats.balance < 20000) {
+            alert(`余额不足！\n需支付: 20000\n当前余额: ${tavernStats.balance}`);
+            return;
+        }
+
+        if (confirm(`确认花费 20000 小判将万事屋跳跃至「${location}」吗？\n\n跳跃后万事屋将立即出现在该地点，此操作无法撤销。`)) {
+            executeJump(location);
+            input.value = '';
+        }
+    }
+
+    async function executeJump(location) {
+        setLoading(true, "空间跳跃中...");
+
+        try {
+            const prompt = `[System]{{user}}消费20000小判，使用系统的空间跳跃功能，将万事屋转移到了${location}。现在请继续角色扮演，描述万事屋突然出现在${location}后的情景。请自然地描述周围环境、当地特色、以及可能发生的事件，让剧情自然过渡到新地点。`;
+
+            const res = await smartGenerate({
+                user_input: " ",
+                ordered_prompts: ['world_info', 'char_description', 'chat_history', {role:'system', content:prompt}],
+                quiet: true
+            });
+
+            await createChatMessages([{
+                role: 'assistant',
+                message: res.trim()
+            }]);
+
+            setLoading(false);
+            goHome();
+
+            alert(`✨ 空间跳跃成功！\n万事屋已转移至「${location}」\n新的剧情已展开，请查看聊天记录。`);
+
+        } catch(e) {
+            setLoading(false);
+            alert("空间跳跃失败，请稍后重试");
+            console.error(e);
+        }
+    }
+
+    // ================= 通用注入 =================
+    function injectInput(txt, autoSend=false) {
+        try {
+            const box = window.parent.document.getElementById('send_textarea');
+            if(box) {
+                const prev = box.value;
+                box.value = prev ? prev + "\n" + txt : txt;
+                box.dispatchEvent(new Event('input', {bubbles:true})); box.focus();
+                if(autoSend) setTimeout(()=>{ const btn=window.parent.document.getElementById('send_but'); if(btn) btn.click(); }, 200);
+            }
+        } catch(e) { console.error(e); }
+    }
+</script>
+</body>
+</html>
+````

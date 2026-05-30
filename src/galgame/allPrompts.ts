@@ -48,14 +48,7 @@ export interface SystemPersonality {
   systemPrompt: string;
   /** 主动触发时说的话，按事件 key 索引 */
   proactiveLines?: Partial<
-    Record<
-      | 'stock_bankruptcy'
-      | 'workshop_idle_long'
-      | 'workshop_upgrade'
-      | 'gold_windfall'
-      | 'riddle_solved',
-      string[]
-    >
+    Record<'stock_bankruptcy' | 'workshop_idle_long' | 'workshop_upgrade' | 'gold_windfall' | 'riddle_solved', string[]>
   >;
 }
 
@@ -160,13 +153,8 @@ AI：是香蕉！
 {{latestHint}}
 你觉得这个可能是什么？`;
 
-export function buildRiddlePrompt(
-  personalityPrompt: string,
-  chatLogText: string,
-  latestHint: string,
-): string {
-  return RIDDLE_GAME_PROMPT_TEMPLATE
-    .replace('{{personalityPrompt}}', personalityPrompt)
+export function buildRiddlePrompt(personalityPrompt: string, chatLogText: string, latestHint: string): string {
+  return RIDDLE_GAME_PROMPT_TEMPLATE.replace('{{personalityPrompt}}', personalityPrompt)
     .replace('{{chatLogText}}', chatLogText)
     .replace('{{latestHint}}', latestHint);
 }
@@ -332,3 +320,64 @@ export const PROMPT_SYSTEM = `[System] 你正在扮演一个"系统人格"。
 
 返回格式：
 - 单段文本`;
+
+// ============================================================================
+// 角色系统 Prompt（按场景组装）
+// ============================================================================
+// 参考文档：src/galgame/docs/角色系统详细设计.md 第 6.3 节
+//
+// 【角色管理面板说明】
+// 角色管理面板只负责展示角色，可以进行编辑，这个界面不需要调用第二 API。
+// 做法参考「酒馆助手脚本-物品栏.json」：直接从酒馆变量读取角色数据，
+// 用 jQuery 操作 DOM 展示列表，支持编辑/删除操作后更新变量。
+
+/**
+ * 场景：废土行路·派遣事件生成
+ * 只发送正在派遣的角色
+ * 用法：作为 callSecondApi 的 ordered_prompts 中的一项传入
+ */
+export function buildDispatchPrompt(
+  派遣角色列表: string,  // formatRoleListForAI 格式化后的角色列表文本
+  派遣结果: { 区域: string; 遭遇类型: string; 奖励: string },
+  技能效果汇总?: string,
+): string {
+  return `[System] 你是废土事件生成器。请根据以下派遣角色信息生成事件结果。
+
+${派遣角色列表}
+
+【派遣结果】
+- 探索区域：${派遣结果.区域}
+- 遭遇类型：${派遣结果.遭遇类型}
+- 基础奖励：${派遣结果.奖励}
+
+【技能效果汇总】
+${技能效果汇总 || '（无装备技能）'}
+
+请生成符合废土世界观的事件结果...`;
+}
+
+/**
+ * 场景：末世通讯·与角色聊天
+ * 只发送指定角色的档案
+ * 用法：作为 callSecondApi 的 ordered_prompts 中的一项传入
+ */
+export function buildChatPrompt(
+  角色档案文本: string,  // formatRoleForAI 格式化后的角色档案文本
+  聊天上下文: string,
+): string {
+  return `[System] 你现在扮演角色档案中的角色进行通讯。
+
+【角色档案】
+${角色档案文本}
+
+【通讯记录】
+${聊天上下文}
+
+请根据角色设定生成回复...`;
+}
+
+/**
+ * 场景：角色管理面板（仅展示，无需第二 API）
+ * 此场景不需要组装 prompt，面板直接从酒馆变量读取数据展示
+ * 做法参考物品栏脚本：使用 getVariables 获取 roles，直接渲染列表
+ */
