@@ -51,24 +51,25 @@
           </button>
         </div>
 
-        <!-- Pagination bar: floor navigation -->
+        <!-- Pagination bar: floor navigation (只更新预览索引，不触发主界面跳转) -->
         <div
-          class="flex items-center gap-3 px-6 py-2"
+          class="flex items-center gap-2 px-6 py-2"
           :style="{ borderBottom: '1px solid var(--theme-history-header-border, rgba(90,79,64,0.2))' }"
         >
           <button
             class="flex h-6 w-6 cursor-pointer items-center justify-center transition-colors"
             :style="{
-              color: store.historyDisplayIndex > 0 ? 'var(--theme-text-muted)' : 'var(--theme-text-faint, rgba(139,125,107,0.3))',
+              color: store.historyPreviewFloorIndex > 0 ? 'var(--theme-text-muted)' : 'var(--theme-text-faint, rgba(139,125,107,0.3))',
             }"
-            :disabled="store.historyDisplayIndex <= 0"
-            @click="prevPage"
+            :disabled="store.historyPreviewFloorIndex <= 0"
+            @click="prevFloor"
           >
             <i class="fa-solid fa-chevron-left text-xs" />
           </button>
+
           <input
             type="number"
-            :value="store.historyDisplayIndex + 1"
+            :value="store.historyPreviewFloorIndex + 1"
             :min="1"
             :max="totalFloors"
             class="w-12 bg-transparent text-center outline-none"
@@ -77,8 +78,8 @@
               font-size: 9px;
               font-family: monospace;
             "
-            @change="onPageInput"
-            @keydown.enter.prevent="onPageInput"
+            @change="onFloorInput"
+            @keydown.enter.prevent="onFloorInput"
           />
           <span
             style="
@@ -89,19 +90,21 @@
           >
             / {{ totalFloors }}
           </span>
+
           <button
             class="flex h-6 w-6 cursor-pointer items-center justify-center transition-colors"
             :style="{
               color:
-                store.historyDisplayIndex < totalFloors - 1
+                store.historyPreviewFloorIndex < totalFloors - 1
                   ? 'var(--theme-text-muted)'
                   : 'var(--theme-text-faint, rgba(139,125,107,0.3))',
             }"
-            :disabled="store.historyDisplayIndex >= totalFloors - 1"
-            @click="nextPage"
+            :disabled="store.historyPreviewFloorIndex >= totalFloors - 1"
+            @click="nextFloor"
           >
             <i class="fa-solid fa-chevron-right text-xs" />
           </button>
+
           <button
             class="ml-auto cursor-pointer px-3 py-1 text-xs transition-colors"
             style="color: var(--theme-accent)"
@@ -111,9 +114,9 @@
           </button>
         </div>
 
-        <!-- Info bar: block count of current preview floor -->
+        <!-- Info bar: block count of current preview floor + within-floor navigation -->
         <div
-          class="flex items-center px-6 py-2"
+          class="flex items-center justify-between px-6 py-2"
           :style="{ borderBottom: '1px solid var(--theme-history-header-border, rgba(90,79,64,0.2))' }"
         >
           <div
@@ -124,6 +127,33 @@
             "
           >
             共 {{ historyLines.length }} 条
+            <span v-if="previewFloorBlocks.length > 0" class="ml-2">
+              块 {{ store.historyPreviewBlockIndex + 1 }}/{{ previewFloorBlocks.length }}
+            </span>
+          </div>
+
+          <!-- Within-floor block navigation -->
+          <div v-if="previewFloorBlocks.length > 1" class="flex items-center gap-1">
+            <button
+              class="flex h-5 w-5 cursor-pointer items-center justify-center text-xs transition-colors"
+              :style="{
+                color: store.historyPreviewBlockIndex > 0 ? 'var(--theme-text-muted)' : 'var(--theme-text-faint)',
+              }"
+              :disabled="store.historyPreviewBlockIndex <= 0"
+              @click="prevBlock"
+            >
+              <i class="fa-solid fa-caret-left" />
+            </button>
+            <button
+              class="flex h-5 w-5 cursor-pointer items-center justify-center text-xs transition-colors"
+              :style="{
+                color: store.historyPreviewBlockIndex < previewFloorBlocks.length - 1 ? 'var(--theme-text-muted)' : 'var(--theme-text-faint)',
+              }"
+              :disabled="store.historyPreviewBlockIndex >= previewFloorBlocks.length - 1"
+              @click="nextBlock"
+            >
+              <i class="fa-solid fa-caret-right" />
+            </button>
           </div>
         </div>
 
@@ -137,7 +167,7 @@
             :style="{
               borderBottom: '1px solid var(--theme-history-row-border, rgba(90,79,64,0.1))',
               background:
-                index === activeBlockIndex ? 'var(--theme-history-active-bg, rgba(139,69,19,0.1))' : 'transparent',
+                index === store.historyPreviewBlockIndex ? 'var(--theme-history-active-bg, rgba(139,69,19,0.1))' : 'transparent',
             }"
             @click="goToLine(index)"
           >
@@ -180,7 +210,7 @@
                 </p>
               </div>
               <div
-                v-if="index === activeBlockIndex"
+                v-if="index === store.historyPreviewBlockIndex"
                 class="mt-1.5 shrink-0"
                 style="width: 6px; height: 6px; background: var(--theme-accent, var(--rust)); transform: rotate(45deg)"
               />
@@ -222,78 +252,93 @@ const visibleFloorIndices = computed(() => {
 
 const totalFloors = computed(() => visibleFloorIndices.value.length);
 
-// 历史面板翻页索引，直接使用 store 中的独立状态（翻页不会触发主界面跳转）
-const historyDisplayIndex = computed(() => store.historyDisplayIndex);
-
-// 当前预览楼层在 dialogues 中的实际索引
-const previewIndex = computed(() => {
+// 当前预览楼层在 dialogues 中的实际物理索引
+const previewFloorPhysicalIndex = computed(() => {
   const visible = visibleFloorIndices.value;
-  const displayIdx = store.historyDisplayIndex;
+  const displayIdx = store.historyPreviewFloorIndex;
   return visible[displayIdx] ?? 0;
 });
-const previewFloor = computed(() => store.dialogues[previewIndex.value] ?? null);
 
-// 当前楼层内的高亮块索引（由翻页按钮同步）
-const activeBlockIndex = ref(0);
+const previewFloor = computed(() => store.dialogues[previewFloorPhysicalIndex.value] ?? null);
 
-// 同步高亮块：当 previewIndex 变化时，重置到该楼层的第一块
-watch(previewIndex, () => {
-  activeBlockIndex.value = 0;
+// 当前预览楼层的可见块数组（过滤 user 类型）
+const previewFloorBlocks = computed<MessageBlock[]>(() => {
+  const floor = previewFloor.value;
+  if (!floor?.blocks) return [];
+  return floor.blocks.filter((block: MessageBlock) => block.type !== 'user');
 });
 
-// Ensure preview floor is parsed when previewing
+// 当前预览楼层的对话行（用于列表展示）
+const historyLines = computed<{ speaker?: string; text: string }[]>(() => {
+  return previewFloorBlocks.value.map((block: MessageBlock) => {
+    if (block.type === 'character') {
+      return { speaker: block.character, text: block.text ?? '' };
+    }
+    return { text: block.message ?? '' };
+  });
+});
+
+// Ensure preview floor is parsed
 watch(
   previewFloor,
   async floor => {
     if (floor && !floor.parsed) {
-      await store.parseCurrentFloor(previewIndex.value);
+      await store.parseCurrentFloor(previewFloorPhysicalIndex.value);
     }
   },
   { immediate: true },
 );
 
-const historyLines = computed<{ speaker?: string; text: string }[]>(() => {
-  const floor = previewFloor.value;
-  if (!floor?.blocks?.length) return [];
-  return floor.blocks
-    .filter((block: MessageBlock) => block.type !== 'user')
-    .map((block: MessageBlock) => {
-      if (block.type === 'character') {
-        return { speaker: block.character, text: block.text ?? '' };
-      }
-      return { text: block.message ?? '' };
-    });
-});
-
-function prevPage() {
-  const idx = store.historyDisplayIndex;
+// Floor-level pagination: only updates preview index, no main interface interaction
+function prevFloor() {
+  const idx = store.historyPreviewFloorIndex;
   if (idx > 0) {
-    store.historyDisplayIndex = idx - 1;
+    store.historyPreviewFloorIndex = idx - 1;
+    store.historyPreviewBlockIndex = 0;
   }
 }
 
-function nextPage() {
-  const idx = store.historyDisplayIndex;
+function nextFloor() {
+  const idx = store.historyPreviewFloorIndex;
   if (idx < totalFloors.value - 1) {
-    store.historyDisplayIndex = idx + 1;
+    store.historyPreviewFloorIndex = idx + 1;
+    store.historyPreviewBlockIndex = 0;
   }
 }
 
-function onPageInput(e: Event) {
+function onFloorInput(e: Event) {
   const val = parseInt((e.target as HTMLInputElement).value);
   if (!isNaN(val)) {
-    store.historyDisplayIndex = Math.max(0, Math.min(val - 1, totalFloors.value - 1));
+    store.historyPreviewFloorIndex = Math.max(0, Math.min(val - 1, totalFloors.value - 1));
+    store.historyPreviewBlockIndex = 0;
   }
 }
 
+// Within-floor block navigation: only updates preview block index
+function prevBlock() {
+  const idx = store.historyPreviewBlockIndex;
+  if (idx > 0) {
+    store.historyPreviewBlockIndex = idx - 1;
+  }
+}
+
+function nextBlock() {
+  const idx = store.historyPreviewBlockIndex;
+  if (idx < previewFloorBlocks.value.length - 1) {
+    store.historyPreviewBlockIndex = idx + 1;
+  }
+}
+
+// Jump to the currently previewed floor + block (main interface interaction)
 function jumpToFloor() {
-  store.navigateFloorTo(previewIndex.value);
+  store.navigateToHistoryPreview();
   store.setOverlay('none');
 }
 
+// Jump to a specific line within the preview floor
 function goToLine(index: number) {
-  store.navigateFloorTo(previewIndex.value);
-  store.currentBlockIndex = index;
+  store.historyPreviewBlockIndex = index;
+  store.navigateToHistoryPreview();
   store.setOverlay('none');
 }
 

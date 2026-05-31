@@ -194,6 +194,7 @@ const VNSettings = z
     portraitX: z.number().min(-50).max(50).default(0),
     portraitY: z.number().min(-50).max(50).default(0),
     portraitMode: z.boolean().default(false),
+    narrationSpriteInherit: z.boolean().default(true),
     skinId: z.string().default('newspaper-default'),
     themeId: z.enum(['newspaper', 'hedie', 'animal-island', 'liquid-glass']).default('newspaper'),
     themeEnabled: z.boolean().default(true),
@@ -788,14 +789,28 @@ export const useVNStore = defineStore('vn', () => {
 
   // 扁平可见块数组（跳过 user 角色和隐藏楼层的块，按顺序排列）
   // 每次 dialogues 或某个单元的 blocks 变化时重建
+  // narration 块会继承最近一次 character/user 块的立绘 URL，形成连续立绘显示
   const allBlocksFlat = computed<Array<{ floorIndex: number; blockIndex: number; block: MessageBlock }>>(() => {
     const result: Array<{ floorIndex: number; blockIndex: number; block: MessageBlock }> = [];
+    let lastSpriteImageUrl: string | undefined = undefined;
     for (let fi = 0; fi < dialogues.value.length; fi++) {
       const unit = dialogues.value[fi];
       if (unit.role === 'user' || unit.isHidden) continue;
       if (!unit.parsed) continue;
       for (let bi = 0; bi < unit.blocks.length; bi++) {
-        result.push({ floorIndex: fi, blockIndex: bi, block: unit.blocks[bi] });
+        const block = unit.blocks[bi];
+        if (block.type === 'character' || block.type === 'user') {
+          lastSpriteImageUrl = block.spriteImageUrl;
+          result.push({ floorIndex: fi, blockIndex: bi, block });
+        } else if (block.type === 'narration') {
+          const blockToPush =
+            settings.value.narrationSpriteInherit && lastSpriteImageUrl !== undefined
+              ? { ...block, spriteImageUrl: lastSpriteImageUrl }
+              : block;
+          result.push({ floorIndex: fi, blockIndex: bi, block: blockToPush });
+        } else {
+          result.push({ floorIndex: fi, blockIndex: bi, block });
+        }
       }
     }
     return result;
@@ -803,44 +818,90 @@ export const useVNStore = defineStore('vn', () => {
 
   // 当前在扁平数组中的索引
   const currentBlockFlatIndex = ref(0);
-  // 待跳转楼层索引（parseCurrentFloor 完成后 watcher 据此决定跳到该楼层的最后块）
-  let _pendingJumpFloorIndex: number | null = null;
 
-  // 是否正在浏览历史面板（浏览时不触发主界面自动跟随，且 watcher 不会误跳）
-  let _browsingHistory = false;
-
-  // 历史面板的翻页索引（独立于 previewDialogueIndex，翻页不触发主界面跳转）
-  const historyDisplayIndex = ref(0);
+  // ============================================================
+  // 预渲染系统：提前解析当前楼层上下各 2 层（共最多 5 层），保证播放流畅
+  // ============================================================
+  const _preRenderedFloors = new Set<number>();
 
   /**
-   * 进入历史浏览模式：暂停主界面的自动跟随，watcher 跳过初始化跳转。
-   * @param latestFloorIndex 当前最新楼层在 dialogues 中的物理索引，用于初始化翻页位置
+   * 预渲染指定楼层附近的多层（当前楼层 ±2 层，最多 5 层）。
+   * 已解析的楼层不会重复解析。
+   */
+  async function preRenderFloors(aroundFloor: number) {
+    const promises: Promise<void>[] = [];
+    for (let delta = -2; delta <= 2; delta++) {
+      const idx = aroundFloor + delta;
+      if (idx < 0 || idx >= dialogues.value.length) continue;
+      const unit = dialogues.value[idx];
+      if (unit && !unit.parsed) {
+        promises.push(parseCurrentFloor(idx));
+      }
+    }
+    if (promises.length > 0) {
+      console.info('[PreRender] 开始预渲染楼层', aroundFloor, '附近，共', promises.length, '层');
+      await Promise.all(promises);
+      console.info('[PreRender] 预渲染完成');
+    }
+  }
+
+  // 当某个楼层解析完成时，将其加入预渲染集合
+  watch(
+    () => dialogues.value.map(u => u.parsed),
+    () => {
+      dialogues.value.forEach((u, i) => {
+        if (u.parsed) _preRenderedFloors.add(i);
+      });
+    },
+    { immediate: true, deep: true },
+  );
+
+  // ============================================================
+  // 历史浏览系统（重写）：历史面板只做预览，点击跳转才操作主界面
+  // ============================================================
+
+  /**
+   * 历史面板当前预览的楼层索引（dialogues 中的物理索引）。
+   * 独立于主界面的 currentBlockFlatIndex，翻页不会触发主界面跳转。
+   */
+  const historyPreviewFloorIndex = ref(0);
+
+  /**
+   * 历史面板中当前预览楼层的块内索引（由面板内翻页操作）。
+   */
+  const historyPreviewBlockIndex = ref(0);
+
+  /**
+   * 进入历史浏览模式：初始化翻页位置为最新可见楼层。
    */
   function enterHistoryBrowse(latestFloorIndex: number) {
-    _browsingHistory = true;
-    historyDisplayIndex.value = Math.max(0, latestFloorIndex);
+    historyPreviewFloorIndex.value = Math.max(0, latestFloorIndex);
+    historyPreviewBlockIndex.value = 0;
   }
 
   /**
    * 退出历史浏览模式。
    */
   function exitHistoryBrowse() {
-    _browsingHistory = false;
+    // no-op，状态已在组件中独立管理
   }
 
   /**
-   * 在历史面板中设置当前块索引（只更新块，不跳转到楼层）。
-   * 调用此方法不会触发主界面的楼层切换。
+   * 跳转到历史面板预览的楼层（主界面真正跳转）。
+   * 若跳转距离过远（>5 层），先触发预渲染并延迟。
    */
-  function setHistoryBlockIndex(blockIndex: number) {
-    const flat = allBlocksFlat.value;
-    if (flat.length === 0) return;
-    // 找到 previewIndex 对应楼层内的第 blockIndex 个块的扁平索引
-    const floorIdx = previewDialogueIndex.value;
-    const targets = flat.filter(b => b.floorIndex === floorIdx);
-    const target = targets[blockIndex];
-    if (target) {
-      currentBlockFlatIndex.value = flat.indexOf(target);
+  function navigateToHistoryPreview() {
+    const target = historyPreviewFloorIndex.value;
+    const current = currentFloorIndex.value;
+    const distance = Math.abs(target - current);
+
+    if (distance <= 5) {
+      navigateFloorTo(target, historyPreviewBlockIndex.value);
+    } else {
+      console.info('[History] 跳转距离', distance, '层，先预渲染');
+      preRenderFloors(target).then(() => {
+        navigateFloorTo(target, historyPreviewBlockIndex.value);
+      });
     }
   }
 
@@ -889,6 +950,9 @@ export const useVNStore = defineStore('vn', () => {
         }
       }
 
+      // 初始化完成后：预渲染当前楼层附近的多层
+      preRenderFloors(previewDialogueIndex.value);
+
       // 初始化时：如果最新楼层已经包含图像标签，则立刻触发生图
       try {
         const initUnit = dialogues.value[previewDialogueIndex.value];
@@ -907,32 +971,18 @@ export const useVNStore = defineStore('vn', () => {
   }
 
   // When allBlocksFlat changes, adjust currentBlockFlatIndex.
-  // On init (empty → has items): jump to the LAST block.
-  // On parse async: if _pendingJumpFloorIndex is set, jump to last block of that floor.
   let _flatLenOnInit = 0;
   watch(allBlocksFlat, newBlocks => {
     if (newBlocks.length === 0) {
       currentBlockFlatIndex.value = 0;
       _flatLenOnInit = 0;
-      _pendingJumpFloorIndex = null;
       return;
     }
-    if (_pendingJumpFloorIndex !== null) {
-      // Navigating to a floor: find the last block of _pendingJumpFloorIndex
-      let targetIdx = 0;
-      for (let i = newBlocks.length - 1; i >= 0; i--) {
-        if (newBlocks[i].floorIndex === _pendingJumpFloorIndex) {
-          targetIdx = i;
-          break;
-        }
-      }
-      currentBlockFlatIndex.value = targetIdx;
-      _pendingJumpFloorIndex = null;
-    } else if (_flatLenOnInit === 0 && !_browsingHistory) {
-      // First meaningful fill (init): jump to FIRST block (latest floor's first block)
+    if (_flatLenOnInit === 0) {
+      // 初始化时：跳到最后一个块（最新楼层的第一块）
       // 目标体验：进入界面时先显示最新消息的第一块，而不是直接跳到最后（常常是 choice）。
       currentBlockFlatIndex.value = 0;
-    } else if (currentBlockFlatIndex.value >= newBlocks.length && !_browsingHistory) {
+    } else if (currentBlockFlatIndex.value >= newBlocks.length) {
       currentBlockFlatIndex.value = newBlocks.length - 1;
     }
     _flatLenOnInit = newBlocks.length;
@@ -1040,8 +1090,8 @@ export const useVNStore = defineStore('vn', () => {
       // 解析新楼层（user/隐藏楼层会被 allBlocksFlat 过滤，无需特殊处理）
       await parseCurrentFloor(newIndex);
 
-      // 只有当用户在"最新位置"且不在浏览历史时，才自动跟随新楼层。
-      if (wasAtLastBeforeAppend && !_browsingHistory) {
+      // 只有当用户在"最新位置"时，才自动跟随新楼层。
+      if (wasAtLastBeforeAppend) {
         // 目标体验：新楼层到达后，进入该楼层的第一个块（而不是停在旧的 choice）。
         const flatAfter = allBlocksFlat.value;
         const firstIdxOfNewFloor = flatAfter.findIndex(x => x.floorIndex === newIndex);
@@ -1050,6 +1100,8 @@ export const useVNStore = defineStore('vn', () => {
         }
         previewDialogueIndex.value = newIndex;
         clearChoices();
+        // 新楼层到达后，预渲染附近的多层
+        preRenderFloors(newIndex);
       }
 
       const unit = dialogues.value[newIndex];
@@ -1140,12 +1192,18 @@ export const useVNStore = defineStore('vn', () => {
       from: from ? { floorIndex: from.floorIndex, blockIndex: from.blockIndex, type: from.block?.type } : null,
       to: to ? { floorIndex: to.floorIndex, blockIndex: to.blockIndex, type: to.block?.type } : null,
     });
+
+    // 翻页后：尝试预渲染附近的楼层
+    const newFloorIdx = to?.floorIndex ?? 0;
+    preRenderFloors(newFloorIdx);
   }
 
   /**
-   * 跳转到指定楼层（显示该楼层的最后一块）
+   * 跳转到指定楼层。
+   * @param index 目标楼层在 dialogues 中的物理索引
+   * @param blockIndex 可选，要定位到该楼层内的第几个可见块（默认最后一块）
    */
-  function navigateFloorTo(index: number) {
+  function navigateFloorTo(index: number, blockIndex?: number) {
     if (index < 0 || index >= dialogues.value.length) return;
     const unit = dialogues.value[index];
     if (!unit) return;
@@ -1162,26 +1220,51 @@ export const useVNStore = defineStore('vn', () => {
     if (currentFlat && currentFlat.floorIndex === index) return;
 
     if (unit.parsed && unit.blocks.length > 0) {
-      // 已解析：找到该楼层在扁平数组中的最后一个块
+      // 已解析：找到该楼层在扁平数组中的块
       const flat = allBlocksFlat.value;
-      for (let i = flat.length - 1; i >= 0; i--) {
-        if (flat[i].floorIndex === index) {
-          currentBlockFlatIndex.value = i;
-          const to = allBlocksFlat.value[currentBlockFlatIndex.value];
-          vnLog.info('nav', 'navigateFloorTo', {
-            targetFloorIndex: index,
-            from: from ? { floorIndex: from.floorIndex, blockIndex: from.blockIndex, type: from.block?.type } : null,
-            to: to ? { floorIndex: to.floorIndex, blockIndex: to.blockIndex, type: to.block?.type } : null,
-          });
-          return;
-        }
+      const blocksOfTargetFloor = flat.filter(b => b.floorIndex === index);
+      if (blocksOfTargetFloor.length === 0) return;
+
+      let targetBlockFlatIdx: number;
+      if (blockIndex !== undefined) {
+        const clamped = Math.max(0, Math.min(blockIndex, blocksOfTargetFloor.length - 1));
+        targetBlockFlatIdx = flat.indexOf(blocksOfTargetFloor[clamped]);
+      } else {
+        targetBlockFlatIdx = flat.indexOf(blocksOfTargetFloor[blocksOfTargetFloor.length - 1]);
       }
+
+      currentBlockFlatIndex.value = targetBlockFlatIdx;
+      const to = allBlocksFlat.value[currentBlockFlatIndex.value];
+      vnLog.info('nav', 'navigateFloorTo', {
+        targetFloorIndex: index,
+        from: from ? { floorIndex: from.floorIndex, blockIndex: from.blockIndex, type: from.block?.type } : null,
+        to: to ? { floorIndex: to.floorIndex, blockIndex: to.blockIndex, type: to.block?.type } : null,
+      });
+      return;
     }
 
-    // 未解析：设置待跳转标记，parseCurrentFloor 完成后 watcher 会跳到该楼层的最后块
-    _pendingJumpFloorIndex = index;
-    vnLog.info('nav', 'navigateFloorTo pending parse', { targetFloorIndex: index });
-    parseCurrentFloor(index);
+    // 未解析：先解析，解析完成后再跳转
+    parseCurrentFloor(index).then(() => {
+      const flat = allBlocksFlat.value;
+      const blocksOfTargetFloor = flat.filter(b => b.floorIndex === index);
+      if (blocksOfTargetFloor.length === 0) return;
+
+      let targetBlockFlatIdx: number;
+      if (blockIndex !== undefined) {
+        const clamped = Math.max(0, Math.min(blockIndex, blocksOfTargetFloor.length - 1));
+        targetBlockFlatIdx = flat.indexOf(blocksOfTargetFloor[clamped]);
+      } else {
+        targetBlockFlatIdx = flat.indexOf(blocksOfTargetFloor[blocksOfTargetFloor.length - 1]);
+      }
+
+      currentBlockFlatIndex.value = targetBlockFlatIdx;
+      const to = allBlocksFlat.value[currentBlockFlatIndex.value];
+      vnLog.info('nav', 'navigateFloorTo (deferred)', {
+        targetFloorIndex: index,
+        from: from ? { floorIndex: from.floorIndex, blockIndex: from.blockIndex, type: from.block?.type } : null,
+        to: to ? { floorIndex: to.floorIndex, blockIndex: to.blockIndex, type: to.block?.type } : null,
+      });
+    });
   }
 
   /**
@@ -1422,16 +1505,25 @@ export const useVNStore = defineStore('vn', () => {
       const scene = newScene.trim();
       if (!scene) return;
 
-      // 尝试取背景绑定图
-      const bgBinding = sceneImageBindings.value[scene];
-      if (bgBinding && bgBinding.type === 'background') {
-        stageBackgroundImage.value = bgBinding.imageData;
-        console.info('[Bindings] 场景切换同步背景:', scene);
-        return;
+      // 场景切换时，强制清空舞台图片，让绑定逻辑重新接管
+      stageBackgroundImage.value = null;
+      stageCgImage.value = null;
+
+      // 遍历所有绑定，用 fuzzyMatchTitle 匹配当前场景名
+      // 因为绑定 key 是 image tag 的 title，不一定等于 scene 名称
+      for (const [bindingTitle, binding] of Object.entries(sceneImageBindings.value)) {
+        if (!fuzzyMatchTitle(scene, bindingTitle)) continue;
+        if (binding.type === 'background') {
+          stageBackgroundImage.value = binding.imageData;
+          console.info('[Bindings] 场景切换同步背景:', scene, '匹配到绑定:', bindingTitle);
+        } else {
+          stageCgImage.value = binding.imageData;
+          console.info('[Bindings] 场景切换同步CG:', scene, '匹配到绑定:', bindingTitle);
+        }
       }
 
-      // 没有绑定图时，清空舞台（让默认背景图生效）
-      stageBackgroundImage.value = null;
+      // 没有绑定图时，舞台保持清空（由大气背景生效）
+      // 不需要额外处理，null 值会触发大气背景显示
     },
   );
 
@@ -1940,13 +2032,25 @@ export const useVNStore = defineStore('vn', () => {
       }
 
       // 2. 检查卡牌队列是否已有相同 prompt 的图片
+      //    场景匹配时：仅当当前场景没有任何绑定时才使用队列图（防止未绑定卡覆盖绑定图）
+      //    场景不匹配时：允许使用队列图
       const existing = imageCardQueue.value.find(c => c.prompt === block.prompt);
       if (existing) {
-        console.info('[ImageGen] 使用已有图片:', block.title, 'directDisplay=', canDirectDisplay);
         if (canDirectDisplay) {
-          if (block.type === 'background') stageBackgroundImage.value = existing.imageData;
-          else stageCgImage.value = existing.imageData;
+          const sceneHasBindingForType = Object.entries(sceneImageBindings.value).some(
+            ([key, binding]) =>
+              fuzzyMatchTitle(currentTitleAnchor, key) && binding.type === block.type
+          );
+          if (!sceneHasBindingForType) {
+            console.info('[ImageGen] 使用队列已有图片:', block.title, 'prompt=', block.prompt.substring(0, 40));
+            if (block.type === 'background') stageBackgroundImage.value = existing.imageData;
+            else stageCgImage.value = existing.imageData;
+            continue;
+          } else {
+            console.info('[ImageGen] 跳过队列图（当前场景已有绑定）:', block.title);
+          }
         }
+        // 非场景匹配时，仅入队不展示（不覆盖舞台）
         continue;
       }
 
@@ -2112,7 +2216,9 @@ export const useVNStore = defineStore('vn', () => {
   function isCardBound(cardId: string): boolean {
     const card = getImageCardById(cardId);
     if (!card?.title) return false;
-    return !!sceneImageBindings.value[card.title];
+    const binding = sceneImageBindings.value[card.title];
+    if (!binding) return false;
+    return binding.imageData === card.imageData;
   }
 
   /**
@@ -3929,8 +4035,10 @@ export const useVNStore = defineStore('vn', () => {
     allBlocksFlat,
     enterHistoryBrowse,
     exitHistoryBrowse,
-    historyDisplayIndex,
-    setHistoryBlockIndex,
+    navigateToHistoryPreview,
+    historyPreviewFloorIndex,
+    historyPreviewBlockIndex,
+    preRenderFloors,
     currentFloorIndex,
     currentBlockInnerIndex,
     getVisibleBlockCountInFloor,

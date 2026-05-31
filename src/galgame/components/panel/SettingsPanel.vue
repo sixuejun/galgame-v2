@@ -79,6 +79,20 @@
               suffix="%"
               @update="v => store.updateSettings({ portraitY: v })"
             />
+            <div class="flex items-center justify-between py-2">
+              <div>
+                <span class="text-xs" style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.7))"
+                  >旁白继承立绘</span
+                >
+                <p style="font-size: 10px; color: var(--theme-text-muted, var(--vn-muted)); margin-top: 2px">
+                  旁白块显示上一个角色的立绘（如角色与旁白穿插时保持立绘不消失）
+                </p>
+              </div>
+              <ToggleSwitch
+                :checked="store.settings.narrationSpriteInherit"
+                @update="v => store.updateSettings({ narrationSpriteInherit: v })"
+              />
+            </div>
           </div>
 
           <!-- Text -->
