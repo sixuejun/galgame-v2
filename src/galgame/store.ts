@@ -1,9 +1,10 @@
 import { klona } from 'klona';
 import { z } from 'zod';
-import type { GameEvent } from './boardgame/types';
 import type { ComponentKey, ComponentSkin, ThemeDefinition } from './themes';
 import { getComponentSkin, getTheme } from './themes';
 import type { ImageTagBlock, MessageBlock } from './types/message';
+import type { 角色, 技能, DispatchRun, DispatchActive, 结算结果, 地图配置 } from './types/role';
+import type { GameEvent } from './boardgame/types';
 import {
   extractContentTag,
   extractDanmakuBlock,
@@ -423,6 +424,14 @@ const DEMO_MODULES: GameModule[] = [
     openMode: 'overlay',
     closeBehavior: 'returnHub',
   },
+  {
+    moduleId: 'dispatch',
+    displayName: '派遣任务',
+    description: '派遣角色前往各地点探索，获取资源与故事',
+    icon: 'fa-route',
+    openMode: 'overlay',
+    closeBehavior: 'returnHub',
+  },
 ];
 
 
@@ -759,6 +768,9 @@ export const useVNStore = defineStore('vn', () => {
     imageGen: false,
     shop: false,
     boardGameEvent: false,
+    roleProfile: false,
+    workshopOrder: false,
+    dispatchStory: false,
     // riddle 和 system 任务不使用预设，无需任务控制变量
   });
 
@@ -776,11 +788,431 @@ export const useVNStore = defineStore('vn', () => {
         vn_task_imageGen: secondApiTaskControl.value.imageGen,
         vn_task_shop: secondApiTaskControl.value.shop,
         vn_task_boardGameEvent: secondApiTaskControl.value.boardGameEvent,
+        vn_task_roleProfile: secondApiTaskControl.value.roleProfile,
+        vn_task_workshopOrder: secondApiTaskControl.value.workshopOrder,
+        vn_task_dispatchStory: secondApiTaskControl.value.dispatchStory,
         // riddle 和 system 任务不使用预设，无需同步变量
       },
       { type: 'chat' },
     );
   });
+
+  // --- Character System State ---
+  const _rawRoleVars = getVariables({ type: 'chat' });
+  const roleDbMap = ref<Record<string, 角色>>(
+    typeof _rawRoleVars?.role_db_map === 'object' && _rawRoleVars?.role_db_map !== null
+      ? (_rawRoleVars.role_db_map as Record<string, 角色>)
+      : {},
+  );
+  const roleMaxId = ref<number>(
+    typeof _rawRoleVars?.role_max_id === 'number' ? _rawRoleVars.role_max_id : 0,
+  );
+  const roles = ref<Record<string, 角色>>(
+    typeof _rawRoleVars?.roles === 'object' && _rawRoleVars?.roles !== null
+      ? (_rawRoleVars.roles as Record<string, 角色>)
+      : {},
+  );
+  const skillsInventory = ref<技能[]>(
+    Array.isArray(_rawRoleVars?.skillsInventory) ? _rawRoleVars.skillsInventory : [],
+  );
+  const skillMaxId = ref<number>(
+    typeof _rawRoleVars?.skill_max_id === 'number' ? _rawRoleVars.skill_max_id : 0,
+  );
+  const skillDbMap = ref<Record<string, 技能>>(
+    typeof _rawRoleVars?.skill_db_map === 'object' && _rawRoleVars?.skill_db_map !== null
+      ? (_rawRoleVars.skill_db_map as Record<string, 技能>)
+      : {},
+  );
+  const dispatchRuns = ref<DispatchRun[]>(
+    Array.isArray(_rawRoleVars?.dispatchRuns) ? _rawRoleVars.dispatchRuns : [],
+  );
+
+  // --- Dispatch System State ---
+  const dispatchActive = ref<DispatchActive | null>(null);
+  const dispatchMapConfig = ref<地图配置 | null>(null);
+  const dispatchEventPool = ref<GameEvent[]>([]);
+  const isDispatchRunning = ref(false);
+
+  // 同步角色数据到聊天变量
+  watchEffect(() => {
+    insertOrAssignVariables(klona({
+      role_db_map: roleDbMap.value,
+      role_max_id: roleMaxId.value,
+      roles: klona(roles.value),
+      skillsInventory: klona(skillsInventory.value),
+      skill_max_id: skillMaxId.value,
+      skill_db_map: klona(skillDbMap.value),
+      dispatchRuns: klona(dispatchRuns.value),
+    }), { type: 'chat' });
+  });
+
+  // ====== Character System Actions ======
+
+  function getRole(id: string): 角色 | null {
+    return roles.value[id] ?? null;
+  }
+
+  function getRoleByName(name: string): 角色 | null {
+    return Object.values(roleDbMap.value).find(r => r.姓名 === name) ?? null;
+  }
+
+  function getAllRoles(): 角色[] {
+    return Object.values(roles.value);
+  }
+
+  function addRole(role: 角色): void {
+    roleDbMap.value[role.id] = klona(role);
+    roles.value[role.id] = klona(role);
+    const numPart = parseInt(role.id.split('_')[1] ?? '0', 10);
+    if (numPart > roleMaxId.value) roleMaxId.value = numPart;
+  }
+
+  function updateRole(role: 角色): void {
+    roleDbMap.value[role.id] = klona(role);
+    roles.value[role.id] = klona(role);
+  }
+
+  function deleteRole(id: string): void {
+    delete roleDbMap.value[id];
+    delete roles.value[id];
+  }
+
+  function equipSkill(roleId: string, skillId: string): boolean {
+    const role = roles.value[roleId];
+    if (!role) return false;
+    if (!role.已装备技能.includes(skillId)) {
+      const updated = klona(role);
+      updated.已装备技能 = [...role.已装备技能, skillId];
+      updateRole(updated);
+    }
+    return true;
+  }
+
+  function unequipSkill(roleId: string, skillId: string): boolean {
+    const role = roles.value[roleId];
+    if (!role) return false;
+    const idx = role.已装备技能.indexOf(skillId);
+    if (idx === -1) return false;
+    const updated = klona(role);
+    updated.已装备技能 = [...role.已装备技能];
+    updated.已装备技能.splice(idx, 1);
+    updateRole(updated);
+    return true;
+  }
+
+  function getSkill(id: string): 技能 | null {
+    return skillDbMap.value[id] ?? null;
+  }
+
+  function getSkillByName(name: string): 技能 | null {
+    return Object.values(skillDbMap.value).find(s => s.名称 === name) ?? null;
+  }
+
+  function getAllSkills(): 技能[] {
+    return Object.values(skillDbMap.value);
+  }
+
+  function addSkill(skill: 技能): void {
+    skillDbMap.value[skill.id] = klona(skill);
+    if (!skillsInventory.value.find(s => s.id === skill.id)) {
+      skillsInventory.value = [...skillsInventory.value, klona(skill)];
+    }
+    const numPart = parseInt(skill.id.split('_')[1] ?? '0', 10);
+    if (numPart > skillMaxId.value) skillMaxId.value = numPart;
+  }
+
+  function deleteSkill(id: string): void {
+    delete skillDbMap.value[id];
+    skillsInventory.value = skillsInventory.value.filter(s => s.id !== id);
+  }
+
+  function appendDispatchRun(run: DispatchRun): void {
+    dispatchRuns.value = [...dispatchRuns.value, klona(run)];
+  }
+
+  function getAvailableRoles(): 角色[] {
+    return Object.values(roles.value).filter(r => r.状态 === '空闲' || r.状态 === '休息中');
+  }
+
+  // ====== Dispatch System Actions ======
+
+  function startDispatch(roleId: string, mapConfig: 地图配置): boolean {
+    const role = roles.value[roleId];
+    if (!role) return false;
+    if (role.状态 !== '空闲' && role.状态 !== '休息中') return false;
+
+    const updatedRole = klona(role);
+    updatedRole.状态 = '派遣中';
+    updateRole(updatedRole);
+
+    dispatchActive.value = {
+      派遣id: `dispatch_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      角色id: roleId,
+      状态: '派遣中',
+      开始时间: Date.now(),
+      地图配置: mapConfig,
+      当前节点: 0,
+      步数: 0,
+      hp: 100,
+      sanity: 100,
+      事件历史: [],
+      触发战斗次数: 0,
+    };
+    dispatchMapConfig.value = mapConfig;
+    isDispatchRunning.value = true;
+
+    return true;
+  }
+
+  function endDispatch(result: 结算结果, story?: string): void {
+    if (!dispatchActive.value) return;
+
+    const role = roles.value[dispatchActive.value.角色id];
+    if (role) {
+      const updatedRole = klona(role);
+      updatedRole.状态 = '空闲';
+      updatedRole.金币 = (updatedRole.金币 ?? 0) + result.总金币;
+      updateRole(updatedRole);
+    }
+
+    const run: DispatchRun = {
+      派遣id: dispatchActive.value.派遣id,
+      角色id: dispatchActive.value.角色id,
+      状态: result.状态 === '成功' ? '成功' : result.状态 === '强制结算' ? '强制结算' : '失败',
+      开始时间: dispatchActive.value.开始时间,
+      结束时间: Date.now(),
+      地图配置: dispatchActive.value.地图配置,
+      事件历史: dispatchActive.value.事件历史,
+      触发战斗次数: dispatchActive.value.触发战斗次数,
+      结算结果: {
+        ...result,
+        小故事: story ?? result.小故事,
+      },
+    };
+    appendDispatchRun(run);
+
+    dispatchActive.value = null;
+    dispatchMapConfig.value = null;
+    isDispatchRunning.value = false;
+  }
+
+  function getDispatchActive(): DispatchActive | null {
+    return dispatchActive.value;
+  }
+
+  function cancelDispatch(roleId: string): void {
+    if (!dispatchActive.value || dispatchActive.value.角色id !== roleId) return;
+
+    const role = roles.value[roleId];
+    if (role) {
+      const updatedRole = klona(role);
+      updatedRole.状态 = '休息中';
+      updateRole(updatedRole);
+    }
+
+    const run: DispatchRun = {
+      派遣id: dispatchActive.value.派遣id,
+      角色id: roleId,
+      状态: '失败',
+      开始时间: dispatchActive.value.开始时间,
+      结束时间: Date.now(),
+      地图配置: dispatchActive.value.地图配置,
+      事件历史: dispatchActive.value.事件历史,
+      触发战斗次数: dispatchActive.value.触发战斗次数,
+      结算结果: {
+        状态: '失败',
+        基础金币: 0,
+        战斗加成: 0,
+        总金币: 0,
+        纪念品: [],
+      },
+    };
+    appendDispatchRun(run);
+
+    dispatchActive.value = null;
+    dispatchMapConfig.value = null;
+    isDispatchRunning.value = false;
+  }
+
+  function modifyDispatchHp(delta: number): void {
+    if (!dispatchActive.value) return;
+    dispatchActive.value.hp = Math.max(0, Math.min(100, dispatchActive.value.hp + delta));
+    if (dispatchActive.value.hp <= 0) {
+      endDispatch({ 状态: '失败', 基础金币: 0, 战斗加成: 0, 总金币: 0, 纪念品: [] });
+    }
+  }
+
+  function modifyDispatchSanity(delta: number): void {
+    if (!dispatchActive.value) return;
+    dispatchActive.value.sanity = Math.max(0, Math.min(100, dispatchActive.value.sanity + delta));
+    if (dispatchActive.value.sanity <= 0) {
+      endDispatch({ 状态: '强制结算', 基础金币: 0, 战斗加成: 0, 总金币: 0, 纪念品: [] });
+    }
+  }
+
+  function triggerDispatchEvent(event: GameEvent): void {
+    if (!dispatchActive.value) return;
+
+    const entry = {
+      时间戳: Date.now(),
+      节点: event.id,
+      事件类型: event.tendency,
+      描述: event.description,
+    };
+    dispatchActive.value.事件历史 = [...dispatchActive.value.事件历史, entry];
+    dispatchActive.value.步数 += 1;
+
+    if (event.effect.hp) {
+      modifyDispatchHp(event.effect.hp);
+    }
+    if (event.effect.sanity) {
+      modifyDispatchSanity(event.effect.sanity);
+    }
+  }
+
+  async function generateDispatchStory(run: DispatchRun): Promise<string> {
+    const role = roles.value[run.角色id];
+    if (!role) return '';
+
+    const userPrompt = `【派遣记录】
+角色：${role.姓名}
+开始时间：${new Date(run.开始时间).toLocaleString()}
+地图：${run.地图配置.区域}
+路线：${run.地图配置.路线.join(' → ')}
+
+【事件历史】
+${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
+
+【结算结果】
+状态：${run.结算结果?.状态 ?? '未知'}
+总金币：${run.结算结果?.总金币 ?? 0}
+纪念品：${run.结算结果?.纪念品?.join('、') || '无'}`;
+
+    try {
+      const raw = await callSecondApi('dispatchStory', { contentText: userPrompt });
+      return typeof raw === 'string' ? raw : '';
+    } catch {
+      console.warn('[Dispatch] 故事生成失败');
+      return '';
+    }
+  }
+
+  // ====== Workshop V2 Backend ======
+
+  type WorkshopOrder = {
+    名称: string;
+    描述: string;
+    技能类型: string;
+    建议属性: string;
+    预计价格: number;
+    预计mod: string[];
+  };
+
+  type WorkshopLogEntry = {
+    时间: string;
+    角色: string;
+    操作: '购买' | '学习' | '遗忘';
+    技能: string;
+    金币: number;
+  };
+
+  type WorkshopStats = {
+    总花费: number;
+    总订单数: number;
+    角色数: number;
+  };
+
+  const workshopLogs = ref<WorkshopLogEntry[]>([]);
+
+  async function generateWorkshopOrder(scene?: string): Promise<WorkshopOrder | null> {
+    const existingSkills = skillsInventory.value.map(s => `${s.名称}: ${s.描述}`).join('\n');
+    const worldInfo = scene || '废土世界的日常工坊任务';
+
+    const userPrompt = `【当前剧情背景】
+${worldInfo}
+
+【工坊信息】
+- 工坊等级：${gameData.value.workshopLevel} 级
+- 已有技能：${existingSkills || '无'}
+
+请生成一个符合废土工坊风格的技能订单，格式如下：
+名称|描述|技能类型|建议属性|预计价格|预计mod`;
+
+    try {
+      const raw = await callSecondApi('workshopOrder', { contentText: userPrompt });
+      if (typeof raw !== 'string' || !raw.trim()) return null;
+
+      const lines = raw.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+      for (const line of lines) {
+        const parts = line.split('|').map(p => p.trim());
+        if (parts.length >= 5) {
+          return {
+            名称: parts[0],
+            描述: parts[1] || '',
+            技能类型: parts[2] || '通用',
+            建议属性: parts[3] || '',
+            预计价格: parseInt(parts[4], 10) || 100,
+            预计mod: parts[5] ? parts[5].split(',').map(m => m.trim()) : [],
+          };
+        }
+      }
+      return null;
+    } catch {
+      console.warn('[Workshop] 订单生成失败');
+      return null;
+    }
+  }
+
+  function getWorkshopSkillCost(skill: 技能): number {
+    let cost = 50;
+    cost += skill.效果.length * 20;
+    for (const effect of skill.效果) {
+      if (effect.域 && effect.键) {
+        cost += 10;
+      }
+    }
+    return cost;
+  }
+
+  function purchaseSkill(roleId: string, skill: 技能, gold: number): boolean {
+    const cost = getWorkshopSkillCost(skill);
+    if (gold < cost) return false;
+
+    addSkill(skill);
+
+    const role = roles.value[roleId];
+    if (role && (role.状态 === '工坊中' || role.状态 === '空闲')) {
+      equipSkill(roleId, skill.id);
+    }
+
+    changeGold(-cost, '工坊', `购买技能：${skill.名称}`);
+
+    workshopLogs.value = [
+      ...workshopLogs.value,
+      {
+        时间: new Date().toLocaleString(),
+        角色: role?.姓名 ?? roleId,
+        操作: '购买',
+        技能: skill.名称,
+        金币: -cost,
+      },
+    ];
+
+    return true;
+  }
+
+  function addWorkshopLog(entry: WorkshopLogEntry): void {
+    workshopLogs.value = [...workshopLogs.value, entry];
+  }
+
+  function getWorkshopStats(): WorkshopStats {
+    const logs = workshopLogs.value;
+    return {
+      总花费: logs.filter(l => l.操作 === '购买').reduce((sum, l) => sum + Math.abs(l.金币), 0),
+      总订单数: logs.filter(l => l.操作 === '购买').length,
+      角色数: new Set(logs.map(l => l.角色)).size,
+    };
+  }
 
   // --- Dialogue Units (Multi-floor management) ---
   const dialogues = ref<DialogueUnit[]>([]);
@@ -2257,7 +2689,7 @@ export const useVNStore = defineStore('vn', () => {
 
   // --- Second API unified entry ---
   async function callSecondApi(
-    task: 'danmaku' | 'shop' | 'system' | 'riddle' | 'imageTag' | 'danmakuAndImageGen' | 'boardGameEvent',
+    task: 'danmaku' | 'shop' | 'system' | 'riddle' | 'imageTag' | 'danmakuAndImageGen' | 'boardGameEvent' | 'roleProfile' | 'workshopOrder' | 'dispatchStory',
     payload: SecondApiPayload,
   ): Promise<string[] | ShopItem[] | string> {
     const url = settings.value.secondApiUrl?.trim();
@@ -4160,5 +4592,48 @@ export const useVNStore = defineStore('vn', () => {
     updateWorldbookAutoControl,
     filterAndApplyWorldbookForSecondApi,
     restoreWorldbookStates,
+    // Character system
+    roleDbMap,
+    roleMaxId,
+    roles,
+    skillsInventory,
+    skillMaxId,
+    skillDbMap,
+    dispatchRuns,
+    getRole,
+    getRoleByName,
+    getAllRoles,
+    addRole,
+    updateRole,
+    deleteRole,
+    equipSkill,
+    unequipSkill,
+    getSkill,
+    getSkillByName,
+    getAllSkills,
+    addSkill,
+    deleteSkill,
+    appendDispatchRun,
+    getAvailableRoles,
+    // Dispatch system
+    dispatchActive,
+    dispatchMapConfig,
+    dispatchEventPool,
+    isDispatchRunning,
+    startDispatch,
+    endDispatch,
+    getDispatchActive,
+    cancelDispatch,
+    modifyDispatchHp,
+    modifyDispatchSanity,
+    triggerDispatchEvent,
+    generateDispatchStory,
+    // Workshop v2
+    workshopLogs,
+    generateWorkshopOrder,
+    getWorkshopSkillCost,
+    purchaseSkill,
+    addWorkshopLog,
+    getWorkshopStats,
   };
 });

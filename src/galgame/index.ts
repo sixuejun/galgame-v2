@@ -5,7 +5,7 @@ import App from './App.vue';
 import './styles/theme.css';
 import { extractContentTag, extractDanmakuBlock, extractPlainTextFromContent } from './utils/messageParser';
 import { createVNLogger } from './utils/vnLogger';
-
+import { initRoleScanner, manualFullScan } from './utils/roleScanner';
 const vnLog = createVNLogger('[VN]');
 
 declare global {
@@ -31,7 +31,11 @@ declare global {
         appendNewMessage: (messageId: number) => Promise<void>;
         updateDialogueUnit: (messageId: number) => Promise<void>;
       } | null;
+      /** 角色系统就绪标志 */
+      roleSystemReady?: boolean;
     };
+    /** 角色系统就绪标志（供外部检查） */
+    __roleSystemReady?: boolean;
   }
 }
 
@@ -40,12 +44,30 @@ $(() => {
   window.__galgameState = {
     activeGenerationMesId: null,
     mainStore: null,
+    roleSystemReady: false,
   };
 
   const { unmount } = mountStreamingMessages(() => createApp(App).use(createPinia()), {
     host: 'iframe',
     filter: message_id => message_id === 0,
   });
+
+  // Initialize role system scanner after streaming and store are ready
+  function initRoleSystem(): void {
+    try {
+      initRoleScanner();
+      console.info('[VN] Role system scanner initialized');
+      window.__galgameState!.roleSystemReady = true;
+      window.__roleSystemReady = true;
+    } catch (e) {
+      console.warn('[VN] Role system scanner init failed:', e);
+    }
+  }
+
+  // Defer role system init to ensure store is ready
+  setTimeout(() => {
+    initRoleSystem();
+  }, 100);
 
   eventOn(tavern_events.STREAM_TOKEN_RECEIVED, () => {
     vnLog.count('STREAM_TOKEN_RECEIVED');
@@ -300,6 +322,18 @@ $(() => {
 
     return null;
   }
+
+  /**
+   * 手动触发角色系统全量扫描
+   * 可供 UI 按钮调用（如 CharacterPanel 中的刷新按钮）
+   */
+  function triggerFullRoleScan(): void {
+    console.info('[VN] Manual full role scan triggered');
+    manualFullScan();
+  }
+
+  // 导出到全局，供 UI 组件调用
+  (window as any).__triggerFullRoleScan = triggerFullRoleScan;
 
   $(window).on('pagehide', () => unmount());
 });

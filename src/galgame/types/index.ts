@@ -4,3 +4,4 @@
 
 export * from './dialogue';
 export * from './message';
+export * from './role';

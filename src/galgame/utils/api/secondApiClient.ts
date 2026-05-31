@@ -36,7 +36,8 @@ export type SecondApiTask =
   | 'shop'
   | 'riddle'
   | 'comms'
-  | 'boardGameEvent';
+  | 'boardGameEvent'
+  | 'dispatchStory';
 
 export interface SecondApiPayload {
   contentText?: string;

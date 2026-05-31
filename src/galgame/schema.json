@@ -1,0 +1,453 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "galgame-role-schema",
+  "title": "角色系统 JSON Schema",
+  "description": "基于 role.ts 生成的 JSON Schema，用于 YAML 配置文件验证",
+  "definitions": {
+    "属性": {
+      "type": "object",
+      "description": "属性值范围：0~5 整数",
+      "properties": {
+        "战力": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 5,
+          "multipleOf": 1,
+          "default": 0
+        },
+        "技巧": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 5,
+          "multipleOf": 1,
+          "default": 0
+        },
+        "智慧": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 5,
+          "multipleOf": 1,
+          "default": 0
+        },
+        "社交": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 5,
+          "multipleOf": 1,
+          "default": 0
+        },
+        "谨慎": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 5,
+          "multipleOf": 1,
+          "default": 0
+        },
+        "运气": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 5,
+          "multipleOf": 1,
+          "default": 0
+        }
+      },
+      "required": ["战力", "技巧", "智慧", "社交", "谨慎", "运气"]
+    },
+    "角色状态": {
+      "type": "string",
+      "enum": ["空闲", "派遣中", "工坊中", "逃跑中", "休息中", "加班中", "受伤"],
+      "description": "角色状态枚举"
+    },
+    "记录类型枚举": {
+      "type": "string",
+      "enum": ["派遣", "工坊", "通讯", "其他"],
+      "description": "记录类型枚举"
+    },
+    "角色记录条目": {
+      "type": "object",
+      "properties": {
+        "时间": {
+          "type": "number",
+          "description": "时间戳"
+        },
+        "类型": {
+          "$ref": "#/definitions/记录类型枚举",
+          "default": "其他"
+        },
+        "内容": {
+          "type": "string",
+          "default": ""
+        }
+      },
+      "required": ["时间"]
+    },
+    "技能效果": {
+      "type": "object",
+      "properties": {
+        "域": {
+          "type": "string",
+          "description": "效果所属域，如 '派遣'、'工坊'"
+        },
+        "键": {
+          "type": "string",
+          "description": "效果键名"
+        },
+        "值": {
+          "type": "number",
+          "description": "效果数值"
+        }
+      },
+      "required": ["域", "键", "值"]
+    },
+    "技能": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "唯一标识（系统生成）"
+        },
+        "名称": {
+          "type": "string",
+          "description": "展示名"
+        },
+        "emoji": {
+          "type": "string",
+          "default": ""
+        },
+        "描述": {
+          "type": "string",
+          "default": ""
+        },
+        "效果": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/技能效果"
+          },
+          "default": []
+        }
+      },
+      "required": ["id", "名称"]
+    },
+    "角色": {
+      "type": "object",
+      "description": "角色对象 - 姓名、属性固定必填，其它字段均为可选，支持用户自定义扩展",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "唯一标识（系统生成）"
+        },
+        "姓名": {
+          "type": "string",
+          "description": "固定必填"
+        },
+        "属性": {
+          "$ref": "#/definitions/属性",
+          "description": "固定必填"
+        },
+        "外貌": {
+          "type": "string"
+        },
+        "性格": {
+          "type": "string"
+        },
+        "出身": {
+          "type": "string"
+        },
+        "定位": {
+          "type": "string"
+        },
+        "说话风格": {
+          "type": "string"
+        },
+        "喜好": {
+          "type": "string"
+        },
+        "特长": {
+          "type": "string"
+        },
+        "职业": {
+          "type": "string"
+        },
+        "背景故事": {
+          "type": "string"
+        },
+        "已装备技能": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "状态": {
+          "$ref": "#/definitions/角色状态",
+          "default": "空闲"
+        },
+        "当前任务": {
+          "type": ["string", "null"],
+          "default": null
+        },
+        "记录": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/角色记录条目"
+          },
+          "default": []
+        }
+      },
+      "required": ["id", "姓名", "属性"],
+      "additionalProperties": true
+    },
+    "角色检查点": {
+      "type": "object",
+      "description": "角色扫描检查点 Schema",
+      "properties": {
+        "message_id": {
+          "type": "number",
+          "default": 0
+        },
+        "max_id": {
+          "type": "number",
+          "default": 0
+        },
+        "db_map": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/角色"
+          },
+          "default": {}
+        }
+      },
+      "default": {
+        "message_id": 0,
+        "max_id": 0,
+        "db_map": {}
+      }
+    },
+    "派遣事件条目": {
+      "type": "object",
+      "description": "派遣事件条目 - 记录派遣过程中的单个事件",
+      "properties": {
+        "时间戳": {
+          "type": "number"
+        },
+        "节点": {
+          "type": "string"
+        },
+        "事件类型": {
+          "type": "string"
+        },
+        "描述": {
+          "type": "string"
+        }
+      },
+      "required": ["时间戳", "节点", "事件类型", "描述"]
+    },
+    "地图配置": {
+      "type": "object",
+      "description": "地图配置 - 用于派遣的地图设置",
+      "properties": {
+        "区域": {
+          "type": "string"
+        },
+        "路线": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "附加剧情": {
+          "type": "string"
+        }
+      },
+      "required": ["区域"]
+    },
+    "结算状态": {
+      "type": "string",
+      "enum": ["成功", "强制结算", "失败"],
+      "description": "结算状态枚举"
+    },
+    "结算结果": {
+      "type": "object",
+      "description": "结算结果 - 派遣结算时的收益信息",
+      "properties": {
+        "状态": {
+          "$ref": "#/definitions/结算状态",
+          "default": "成功"
+        },
+        "基础金币": {
+          "type": "number",
+          "default": 0
+        },
+        "战斗加成": {
+          "type": "number",
+          "default": 0
+        },
+        "总金币": {
+          "type": "number",
+          "default": 0
+        },
+        "纪念品": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "小故事": {
+          "type": "string"
+        }
+      }
+    },
+    "DispatchRun状态": {
+      "type": "string",
+      "enum": ["成功", "强制结算", "失败", "进行中"],
+      "description": "派遣运行状态枚举"
+    },
+    "DispatchRun": {
+      "type": "object",
+      "description": "派遣结算记录 - 存储已完成的派遣记录",
+      "properties": {
+        "派遣id": {
+          "type": "string"
+        },
+        "角色id": {
+          "type": "string"
+        },
+        "状态": {
+          "$ref": "#/definitions/DispatchRun状态",
+          "default": "进行中"
+        },
+        "开始时间": {
+          "type": "number"
+        },
+        "结束时间": {
+          "type": ["number", "null"],
+          "default": null
+        },
+        "地图配置": {
+          "$ref": "#/definitions/地图配置"
+        },
+        "事件历史": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/派遣事件条目"
+          },
+          "default": []
+        },
+        "触发战斗次数": {
+          "type": "number",
+          "default": 0
+        },
+        "结算结果": {
+          "$ref": "#/definitions/结算结果"
+        }
+      },
+      "required": ["派遣id", "角色id", "开始时间", "地图配置"]
+    },
+    "DispatchActive": {
+      "type": "object",
+      "description": "派遣进行中状态 - 存储正在进行的派遣状态",
+      "properties": {
+        "派遣id": {
+          "type": "string"
+        },
+        "角色id": {
+          "type": "string"
+        },
+        "状态": {
+          "$ref": "#/definitions/角色状态",
+          "default": "派遣中"
+        },
+        "开始时间": {
+          "type": "number"
+        },
+        "地图配置": {
+          "$ref": "#/definitions/地图配置"
+        },
+        "当前节点": {
+          "type": "number",
+          "default": 0
+        },
+        "步数": {
+          "type": "number",
+          "default": 0
+        },
+        "hp": {
+          "type": "number",
+          "default": 100
+        },
+        "sanity": {
+          "type": "number",
+          "default": 100
+        },
+        "事件历史": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/派遣事件条目"
+          },
+          "default": []
+        },
+        "触发战斗次数": {
+          "type": "number",
+          "default": 0
+        }
+      },
+      "required": ["派遣id", "角色id", "开始时间", "地图配置"]
+    },
+    "角色系统变量": {
+      "type": "object",
+      "description": "角色系统顶层变量 - 包含角色系统的所有持久化变量",
+      "properties": {
+        "role_db_map": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/角色"
+          },
+          "default": {}
+        },
+        "role_max_id": {
+          "type": "number",
+          "default": 0
+        },
+        "role_checkpoint": {
+          "$ref": "#/definitions/角色检查点",
+          "default": {}
+        },
+        "roles": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/角色"
+          },
+          "default": {}
+        },
+        "skillsInventory": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/技能"
+          },
+          "default": []
+        },
+        "skill_max_id": {
+          "type": "number",
+          "default": 0
+        },
+        "skill_db_map": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/技能"
+          },
+          "default": {}
+        },
+        "dispatchRuns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/DispatchRun"
+          },
+          "default": []
+        }
+      }
+    }
+  },
+  "$ref": "#/definitions/角色系统变量"
+}
