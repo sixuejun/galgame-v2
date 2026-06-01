@@ -7,13 +7,10 @@
  */
 
 import { useVNStore } from '../store';
-import type { 角色, 技能 } from '../types/role';
-import { 角色Schema, 技能Schema } from '../types/role';
-import {
-  fieldsToRole,
-  parseKeyValuePairs,
-} from './roleParser';
+import type { 技能, 角色 } from '../types/role';
+import { 技能Schema, 角色Schema } from '../types/role';
 import { nextRoleId, nextSkillId } from './roleIdGenerator';
+import { fieldsToRole, parseKeyValuePairs } from './roleParser';
 import { isValidDomainKey, 随机分配效果值 } from './skillEffectWhitelist';
 
 // ============================================================================
@@ -154,12 +151,14 @@ export function buildBulkRoleGenerationSystemPrompt(): string {
  * @param params.existingSkills 已有技能列表（用于去重）
  * @param params.count 要生成的角色数量
  */
-export function buildRoleGenerationUserPrompt(params: {
-  scene?: string;
-  existingRoles?: string;
-  existingSkills?: string;
-  count?: number;
-} = {}): string {
+export function buildRoleGenerationUserPrompt(
+  params: {
+    scene?: string;
+    existingRoles?: string;
+    existingSkills?: string;
+    count?: number;
+  } = {},
+): string {
   const { scene, existingRoles, existingSkills, count = 1 } = params;
 
   let prompt = '';
@@ -195,11 +194,13 @@ export function buildRoleGenerationUserPrompt(params: {
  * @param params.scene 场景描述
  * @param params.existingRoleNames 已有角色姓名列表（用于去重）
  */
-export function buildBulkGenerationUserPrompt(params: {
-  count: number;
-  scene?: string;
-  existingRoleNames?: string[];
-} = { count: 1 }): string {
+export function buildBulkGenerationUserPrompt(
+  params: {
+    count: number;
+    scene?: string;
+    existingRoleNames?: string[];
+  } = { count: 1 },
+): string {
   const { count, scene, existingRoleNames } = params;
 
   let prompt = '';
@@ -252,7 +253,7 @@ function parseSkillBlockContent(blockContent: string): {
 } | null {
   // 匹配 CMD:ADD | 名称 | emoji | 描述 | mod:域.键
   const match = blockContent.match(
-    /CMD:ADD\s*[|｜]\s*([^\|｜]+?)\s*[|｜]\s*([^\|｜]+?)\s*[|｜]\s*([^\|｜]+?)(?:\s*[|｜]\s*(.+))?/i
+    /CMD:ADD\s*[|｜]\s*([^\|｜]+?)\s*[|｜]\s*([^\|｜]+?)\s*[|｜]\s*([^\|｜]+?)(?:\s*[|｜]\s*(.+))?/i,
   );
 
   if (!match) return null;
@@ -289,7 +290,8 @@ export function parseGeneratedRoles(llmOutput: string): {
   rawSkills: Array<{ 名称: string; emoji: string; 描述: string; modEntries: Array<{ 域: string; 键: string }> }>;
 } {
   const rawRoleFields: Record<string, string>[] = [];
-  const rawSkills: Array<{ 名称: string; emoji: string; 描述: string; modEntries: Array<{ 域: string; 键: string }> }> = [];
+  const rawSkills: Array<{ 名称: string; emoji: string; 描述: string; modEntries: Array<{ 域: string; 键: string }> }> =
+    [];
 
   // 解析 Character 块
   const charMatches = llmOutput.matchAll(/<Character>\s*([\s\S]*?)\s*<\/Character>/gi);
@@ -321,7 +323,7 @@ export function parseGeneratedRoles(llmOutput: string): {
  */
 function buildSkillFromRaw(
   rawSkill: { 名称: string; emoji: string; 描述: string; modEntries: Array<{ 域: string; 键: string }> },
-  skillId: string
+  skillId: string,
 ): 技能 | null {
   const 效果 = rawSkill.modEntries.map(mod => {
     const 值 = 随机分配效果值(mod.域, mod.键);
@@ -432,11 +434,13 @@ function delay(ms: number): Promise<void> {
  * @param params.existingSkills 已有技能列表（用于去重）
  * @returns 生成的角色和技能数组
  */
-export async function generateRoles(params: {
-  scene?: string;
-  existingRoles?: 角色[];
-  existingSkills?: 技能[];
-} = {}): Promise<{ roles: 角色[]; skills: 技能[] }> {
+export async function generateRoles(
+  params: {
+    scene?: string;
+    existingRoles?: 角色[];
+    existingSkills?: 技能[];
+  } = {},
+): Promise<{ roles: 角色[]; skills: 技能[] }> {
   const { scene, existingRoles = [], existingSkills = [] } = params;
 
   // 构建已有角色信息
@@ -444,13 +448,11 @@ export async function generateRoles(params: {
   const existingSkillNames = extractSkillNames(existingSkills);
 
   // 构建已有角色/技能描述（用于 LLM 参考）
-  const existingRolesText = existingRoles.length > 0
-    ? existingRoles.map(r => `${r.姓名}（${r.定位 || '未定位'}）`).join('\n')
-    : undefined;
+  const existingRolesText =
+    existingRoles.length > 0 ? existingRoles.map(r => `${r.姓名}（${r.定位 || '未定位'}）`).join('\n') : undefined;
 
-  const existingSkillsText = existingSkills.length > 0
-    ? existingSkills.map(s => `${s.名称}：${s.描述}`).join('\n')
-    : undefined;
+  const existingSkillsText =
+    existingSkills.length > 0 ? existingSkills.map(s => `${s.名称}：${s.描述}`).join('\n') : undefined;
 
   // 构建提示词
   const systemPrompt = buildRoleGenerationSystemPrompt();
@@ -560,11 +562,9 @@ export async function generateRoles(params: {
     }
   }
 
-  throw new RoleGenerationError(
-    `角色生成失败：${lastError?.message || '未知错误'}`,
-    'GENERATION_FAILED',
-    { lastError }
-  );
+  throw new RoleGenerationError(`角色生成失败：${lastError?.message || '未知错误'}`, 'GENERATION_FAILED', {
+    lastError,
+  });
 }
 
 /**
@@ -574,10 +574,12 @@ export async function generateRoles(params: {
  * @param params.scene 场景描述
  * @returns 生成的角色数组
  */
-export async function generateMultipleRoles(params: {
-  count: number;
-  scene?: string;
-} = { count: 1 }): Promise<角色[]> {
+export async function generateMultipleRoles(
+  params: {
+    count: number;
+    scene?: string;
+  } = { count: 1 },
+): Promise<角色[]> {
   const { count, scene } = params;
 
   if (count <= 0) {
@@ -675,11 +677,9 @@ export async function generateMultipleRoles(params: {
     }
   }
 
-  throw new RoleGenerationError(
-    `批量角色生成失败：${lastError?.message || '未知错误'}`,
-    'BULK_GENERATION_FAILED',
-    { lastError }
-  );
+  throw new RoleGenerationError(`批量角色生成失败：${lastError?.message || '未知错误'}`, 'BULK_GENERATION_FAILED', {
+    lastError,
+  });
 }
 
 /**
@@ -693,12 +693,14 @@ export async function generateMultipleRoles(params: {
  * @param params.existingSkills 已有技能（用于去重）
  * @returns 生成的角色和技能
  */
-export async function generateRolesWithSkills(params: {
-  count: number;
-  scene?: string;
-  existingRoles?: 角色[];
-  existingSkills?: 技能[];
-} = { count: 1 }): Promise<{ roles: 角色[]; skills: 技能[] }> {
+export async function generateRolesWithSkills(
+  params: {
+    count: number;
+    scene?: string;
+    existingRoles?: 角色[];
+    existingSkills?: 技能[];
+  } = { count: 1 },
+): Promise<{ roles: 角色[]; skills: 技能[] }> {
   const { count, scene, existingRoles = [], existingSkills = [] } = params;
 
   if (count <= 0) {
@@ -710,9 +712,7 @@ export async function generateRolesWithSkills(params: {
     ...extractRoleNames(existingRoles),
     ...extractRoleNames([]), // 后续添加
   ];
-  const allSkillNames = [
-    ...extractSkillNames(existingSkills),
-  ];
+  const allSkillNames = [...extractSkillNames(existingSkills)];
 
   const validatedRoles: 角色[] = [];
   const validatedSkills: 技能[] = [];

@@ -523,11 +523,11 @@ const chatMessagesRef = ref<HTMLElement>();
 
 const displayModules = computed(() =>
   store.gameModules
-    .filter(m => m.moduleId !== 'inventory')
+    .filter(m => m.moduleId !== 'inventory' && m.moduleId !== 'gold_log')
     .map(m => ({
       ...m,
       lockReason: store.getModuleLockReason(m.moduleId),
-    })),
+    }))
 );
 
 const currentChatHistory = computed(() => {

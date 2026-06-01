@@ -6,46 +6,8 @@
       @click="handleBackdropClose"
     />
 
-    <!-- Special: board game needs a wide panel -->
-    <template v-if="moduleId === 'board_game'">
-      <div class="relative mx-4 border overflow-hidden animate-fade-in-up" :style="boardGamePanel">
-        <div
-          :style="{
-            height: '3px',
-            background:
-              'linear-gradient(to right, transparent, var(--theme-accent-soft, rgba(139,69,19,0.6)), transparent)',
-          }"
-        />
-        <div
-          class="flex items-center justify-between px-5 py-2.5"
-          :style="{ borderBottom: '1px solid rgba(90,79,64,0.3)' }"
-        >
-          <div class="flex items-center gap-3">
-            <span style="color: var(--theme-accent, var(--rust))"
-              ><i class="fa-solid fa-dice-d6" style="font-size: 0.9rem"
-            /></span>
-            <h2
-              class="text-sm font-bold tracking-widest"
-              style="color: var(--theme-text-main, rgba(212, 197, 160, 0.9))"
-            >
-              废土行路
-            </h2>
-          </div>
-          <button
-            class="flex items-center gap-1 text-xs cursor-pointer"
-            style="color: var(--theme-text-muted, var(--vn-muted))"
-            @click="$emit('close')"
-          >
-            <i class="fa-solid fa-arrow-left" style="font-size: 0.75rem" />
-            <span>返回</span>
-          </button>
-        </div>
-        <BoardGameModule />
-      </div>
-    </template>
-
     <!-- Special: dispatch module with custom wide panel -->
-    <template v-else-if="moduleId === 'dispatch'">
+    <template v-if="moduleId === 'dispatch'">
       <div class="relative mx-4 border overflow-hidden animate-fade-in-up" :style="dispatchPanel">
         <div
           :style="{
@@ -133,6 +95,7 @@
           <RiddleModule v-else-if="moduleId === 'ai_riddle'" />
           <InventoryModule v-else-if="moduleId === 'inventory'" />
           <GoldLogModule v-else-if="moduleId === 'gold_log'" />
+          <CharacterManagementModule v-else-if="moduleId === 'character_management'" />
 
           <!-- Fallback -->
           <div v-else class="px-6 py-12 flex flex-col items-center justify-center text-center">
@@ -164,7 +127,7 @@
 </template>
 
 <script setup lang="ts">
-import BoardGameModule from './BoardGameModule.vue';
+import CharacterManagementModule from './CharacterManagementModule.vue';
 import DispatchModule from '../../dispatch/DispatchModule.vue';
 import GoldLogModule from './GoldLogModule.vue';
 import InventoryModule from './InventoryModule.vue';
@@ -214,17 +177,6 @@ const puzzle2048Panel = {
   borderColor: 'var(--vn-border)',
   background: 'var(--vn-bg)',
   overflow: 'auto' as const,
-  display: 'flex',
-  flexDirection: 'column',
-};
-
-const boardGamePanel = {
-  maxHeight: 'calc(100vh - 80px)',
-  maxWidth: '900px',
-  width: '100%',
-  borderColor: 'rgba(90,79,64,0.6)',
-  background: 'var(--vn-panel-bg)',
-  backdropFilter: 'blur(12px)',
   display: 'flex',
   flexDirection: 'column',
 };

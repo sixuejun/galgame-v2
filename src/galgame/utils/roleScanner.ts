@@ -8,25 +8,10 @@
  */
 
 import { klona } from 'klona';
-import type {
-  角色,
-  技能,
-  角色检查点,
-} from '../types/role';
-import {
-  角色Schema,
-  技能Schema,
-  预定义角色字段列表,
-} from '../types/role';
-import {
-  nextRoleId,
-  nextSkillId,
-} from './roleIdGenerator';
-import {
-  isValidDomainKey,
-  随机分配效果值,
-  checkSingleModLimit,
-} from './skillEffectWhitelist';
+import type { 技能, 角色, 角色检查点 } from '../types/role';
+import { 技能Schema, 角色Schema, 预定义角色字段列表 } from '../types/role';
+import { nextRoleId, nextSkillId } from './roleIdGenerator';
+import { checkSingleModLimit, isValidDomainKey, 随机分配效果值 } from './skillEffectWhitelist';
 
 // ============================================================================
 // 模块级运行时状态
@@ -78,7 +63,8 @@ const REGEX_CHAR_UNEQUIP = /CMD:UNEQUIP\s*[|｜]\s*([^\|｜]+?)\s*[|｜]\s*([^\|
 const REGEX_SKILL_BLOCK = /<Skill>\s*([\s\S]*?)\s*<\/Skill>/gi;
 
 /** 技能 CMD:ADD 匹配（名称|emoji|描述|mod:域.键） */
-const REGEX_SKILL_ADD = /CMD:ADD\s*[|｜]\s*([^\|｜]+?)\s*[|｜]\s*([^\|｜]+?)\s*[|｜]\s*([^\|｜]+?)(?:\s*[|｜]\s*(.+))?/gi;
+const REGEX_SKILL_ADD =
+  /CMD:ADD\s*[|｜]\s*([^\|｜]+?)\s*[|｜]\s*([^\|｜]+?)\s*[|｜]\s*([^\|｜]+?)(?:\s*[|｜]\s*(.+))?/gi;
 
 /** 技能 CMD:DEL_SKILL 匹配 */
 const REGEX_SKILL_DEL = /CMD:DEL_SKILL\s*[|｜]\s*([^\|｜]+?)(?=\s*[|｜]?\s*CMD:|$)/gi;
@@ -208,7 +194,7 @@ function shouldSaveCheckpoint(): boolean {
 
   const allMessages = getChatMessages('all');
   const latestId = allMessages[allMessages.length - 1]?.message_id ?? 0;
-  return (latestId - checkpoint.message_id) >= CONFIG.checkpointInterval;
+  return latestId - checkpoint.message_id >= CONFIG.checkpointInterval;
 }
 
 /**
@@ -246,10 +232,13 @@ function restoreRuntimeState(): void {
  * 将运行时状态同步到酒馆变量
  */
 function syncRuntimeState(): void {
-  replaceVariables(klona({
-    role_db_map: roleDbMap,
-    role_max_id: roleMaxId,
-  }), { type: 'chat' });
+  replaceVariables(
+    klona({
+      role_db_map: roleDbMap,
+      role_max_id: roleMaxId,
+    }),
+    { type: 'chat' },
+  );
 }
 
 // ============================================================================
@@ -304,10 +293,7 @@ function handleCharAdd(cmdPart: string, _msgId: number): 角色 | null {
     };
 
     // 填充预定义可选字段
-    const predefinedFields = [
-      '外貌', '性格', '出身', '定位', '说话风格',
-      '喜好', '特长', '职业', '背景故事',
-    ];
+    const predefinedFields = ['外貌', '性格', '出身', '定位', '说话风格', '喜好', '特长', '职业', '背景故事'];
     for (const field of predefinedFields) {
       if (fields[field]) {
         rawRole[field] = fields[field];
@@ -612,10 +598,13 @@ function handleSkillAdd(cmdPart: string, _msgId: number): 技能 | null {
     let skillsInventory = (vars?.skillsInventory as 技能[]) || [];
     skillsInventory = [...skillsInventory, skill];
 
-    replaceVariables(klona({
-      skill_db_map: skillDbMap,
-      skillsInventory,
-    }), { type: 'chat' });
+    replaceVariables(
+      klona({
+        skill_db_map: skillDbMap,
+        skillsInventory,
+      }),
+      { type: 'chat' },
+    );
 
     console.info(`[roleScanner] 添加技能: ${skill.名称} (${skill.id})`);
     return skill;
@@ -652,10 +641,13 @@ function handleSkillDel(name: string): boolean {
     let skillsInventory = (vars?.skillsInventory as 技能[]) || [];
     skillsInventory = skillsInventory.filter(s => s.名称 !== name);
 
-    replaceVariables(klona({
-      skill_db_map: skillDbMap,
-      skillsInventory,
-    }), { type: 'chat' });
+    replaceVariables(
+      klona({
+        skill_db_map: skillDbMap,
+        skillsInventory,
+      }),
+      { type: 'chat' },
+    );
 
     console.info(`[roleScanner] 删除技能: ${name}`);
     return true;
@@ -739,12 +731,7 @@ export function scanMessage(msg: any): void {
     let addMatch;
     REGEX_SKILL_ADD.lastIndex = 0;
     while ((addMatch = REGEX_SKILL_ADD.exec(blockContent)) !== null) {
-      const cmdPart = [
-        addMatch[1].trim(),
-        addMatch[2].trim(),
-        addMatch[3].trim(),
-        addMatch[4]?.trim() || '',
-      ].join('|');
+      const cmdPart = [addMatch[1].trim(), addMatch[2].trim(), addMatch[3].trim(), addMatch[4]?.trim() || ''].join('|');
       handleSkillAdd(cmdPart, msgId);
     }
 
@@ -892,11 +879,7 @@ export function initRoleScanner(): void {
     });
 
     // 删楼/回滚/修改楼层 → 全量扫描
-    [
-      tavern_events.MESSAGE_DELETED,
-      tavern_events.MESSAGE_SWIPED,
-      tavern_events.MESSAGE_UPDATED,
-    ].forEach(e => {
+    [tavern_events.MESSAGE_DELETED, tavern_events.MESSAGE_SWIPED, tavern_events.MESSAGE_UPDATED].forEach(e => {
       eventOn(e, () => {
         clearCheckpoint();
         scheduleScan('full');
@@ -930,7 +913,6 @@ export function initRoleScanner(): void {
 
   console.info('[roleScanner] 角色扫描器初始化完成');
 }
-
 // ============================================================================
 // 导出运行时状态访问器（供其他模块使用）
 // ============================================================================

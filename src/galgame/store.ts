@@ -288,6 +288,7 @@ type BoardGameEventPayload = {
   contentText: string;
   systemPrompt?: string;
 };
+type RoleProfilePayload = { ordered_prompts: { role: 'system' | 'assistant' | 'user'; content: string }[] };
 
 type SecondApiPayload =
   | DanmakuPayload
@@ -295,7 +296,8 @@ type SecondApiPayload =
   | SystemPayload
   | RiddlePayload
   | ImageTagPayload
-  | BoardGameEventPayload;
+  | BoardGameEventPayload
+  | RoleProfilePayload;
 
 const VNGameData = z
   .object({
@@ -386,8 +388,8 @@ const DEMO_MODULES: GameModule[] = [
   },
   {
     moduleId: 'idle_workshop',
-    displayName: '工坊 & 交易',
-    description: '挂机生产金币 / 股票交易',
+    displayName: '工坊',
+    description: '订单制生产金币，角色在工坊持续工作获取收益',
     icon: 'fa-hammer',
     openMode: 'overlay',
     closeBehavior: 'returnHub',
@@ -417,24 +419,22 @@ const DEMO_MODULES: GameModule[] = [
     closeBehavior: 'returnHub',
   },
   {
-    moduleId: 'board_game',
-    displayName: '废土行路',
-    description: '掷骰走格子，在末日废墟中行路探险',
-    icon: 'fa-dice-d6',
+    moduleId: 'character_management',
+    displayName: '角色管理',
+    description: '生成角色、查看档案、装备技能、管理状态',
+    icon: 'fa-users',
     openMode: 'overlay',
     closeBehavior: 'returnHub',
   },
   {
     moduleId: 'dispatch',
-    displayName: '派遣任务',
-    description: '派遣角色前往各地点探索，获取资源与故事',
+    displayName: '废土行路',
+    description: '派遣角色在末日废墟格子地图中探索，获取资源与故事',
     icon: 'fa-route',
     openMode: 'overlay',
     closeBehavior: 'returnHub',
   },
 ];
-
-
 
 // ====== Utility: Commission / Fee ======
 
@@ -861,15 +861,50 @@ export const useVNStore = defineStore('vn', () => {
   }
 
   function addRole(role: 角色): void {
-    roleDbMap.value[role.id] = klona(role);
-    roles.value[role.id] = klona(role);
     const numPart = parseInt(role.id.split('_')[1] ?? '0', 10);
     if (numPart > roleMaxId.value) roleMaxId.value = numPart;
+    roleDbMap.value[role.id] = klona(role);
+    roles.value[role.id] = klona(role);
   }
 
   function updateRole(role: 角色): void {
     roleDbMap.value[role.id] = klona(role);
     roles.value[role.id] = klona(role);
+  }
+
+  /**
+   * 向角色追加一条记录（派遣/工坊/通讯等）
+   *
+   * @param roleId - 角色 ID
+   * @param type - 记录类型
+   * @param content - 内容（建议传 JSON 字符串，便于后续解析）
+   */
+  function appendRoleLog(
+    roleId: string,
+    type: '派遣' | '工坊' | '通讯' | '其他',
+    content: string,
+  ): void {
+    const role = roles.value[roleId];
+    if (!role) {
+      console.warn(`[store] appendRoleLog: 角色 ${roleId} 不存在`);
+      return;
+    }
+
+    const updated = klona(role);
+    if (!updated.记录) updated.记录 = [];
+
+    updated.记录.push({
+      时间: Date.now(),
+      类型: type,
+      内容: content,
+    });
+
+    // 限制记录数量（最多保留最近 100 条）
+    if (updated.记录.length > 100) {
+      updated.记录 = updated.记录.slice(-100);
+    }
+
+    updateRole(updated);
   }
 
   function deleteRole(id: string): void {
@@ -932,6 +967,61 @@ export const useVNStore = defineStore('vn', () => {
 
   function getAvailableRoles(): 角色[] {
     return Object.values(roles.value).filter(r => r.状态 === '空闲' || r.状态 === '休息中');
+  }
+
+  /**
+   * 处理聊天扫描器解析出的 CMD 结果
+   *
+   * scanner.ts 在扫描消息后，将解析结果通过此函数 dispatch 回 store，
+   * 由 store 统一更新 roleDbMap / roles / skillDbMap / skillsInventory 等状态。
+   * 后续 watchEffect 自动将状态同步到聊天变量。
+   *
+   * @param action - 扫描到的操作类型
+   * @param data - 操作数据
+   */
+  function scanDispatch(
+    action:
+      | { type: 'ADD_ROLE'; role: 角色 }
+      | { type: 'MOD_ROLE'; id: string; updates: Partial<角色> }
+      | { type: 'DEL_ROLE'; id: string }
+      | { type: 'EQUIP_SKILL'; roleId: string; skillId: string }
+      | { type: 'UNEQUIP_SKILL'; roleId: string; skillId: string }
+      | { type: 'ADD_SKILL'; skill: 技能 }
+      | { type: 'DEL_SKILL'; id: string },
+  ): void {
+    switch (action.type) {
+      case 'ADD_ROLE': {
+        addRole(action.role);
+        break;
+      }
+      case 'MOD_ROLE': {
+        const existing = roles.value[action.id];
+        if (existing) {
+          updateRole({ ...existing, ...action.updates } as 角色);
+        }
+        break;
+      }
+      case 'DEL_ROLE': {
+        deleteRole(action.id);
+        break;
+      }
+      case 'EQUIP_SKILL': {
+        equipSkill(action.roleId, action.skillId);
+        break;
+      }
+      case 'UNEQUIP_SKILL': {
+        unequipSkill(action.roleId, action.skillId);
+        break;
+      }
+      case 'ADD_SKILL': {
+        addSkill(action.skill);
+        break;
+      }
+      case 'DEL_SKILL': {
+        deleteSkill(action.id);
+        break;
+      }
+    }
   }
 
   // ====== Dispatch System Actions ======
@@ -2712,10 +2802,13 @@ ${worldInfo}
         ? [{ role: 'user', content: danmakuPayload.contentText }]
         : task === 'boardGameEvent'
           ? buildBoardGamePrompts(boardGameEventPayload)
-          : (payload as RiddlePayload).ordered_prompts || [];
+          : task === 'roleProfile'
+            ? (payload as { ordered_prompts: { role: 'system' | 'assistant' | 'user'; content: string }[] }).ordered_prompts
+            : (payload as RiddlePayload).ordered_prompts || [];
 
     // 猜谜和系统聊天任务不使用预设，直接用代码中构造的提示词
-    const usePreset = presetName && task !== 'riddle' && task !== 'system';
+    // roleProfile 不使用预设，ordered_prompts 由调用方构建
+    const usePreset = presetName && task !== 'riddle' && task !== 'system' && task !== 'roleProfile';
     let currentPreset: string | null = null;
     if (usePreset) {
       try {
@@ -2756,6 +2849,9 @@ ${worldInfo}
       // 弹幕和生图合并调用，同时开启两个开关
       secondApiTaskControl.value.danmaku = true;
       secondApiTaskControl.value.imageGen = true;
+    } else if (task === 'roleProfile') {
+      // 角色生成不使用预设，ordered_prompts 由调用方构建（payload 必须是 RoleProfilePayload）
+      // 跳过任务控制变量设置
     }
     // riddle 和 system 任务不使用预设，跳过任务控制变量设置
 
@@ -4606,6 +4702,8 @@ ${worldInfo}
     addRole,
     updateRole,
     deleteRole,
+    appendRoleLog,
+    scanDispatch,
     equipSkill,
     unequipSkill,
     getSkill,

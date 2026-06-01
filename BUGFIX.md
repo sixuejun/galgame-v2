@@ -1,5 +1,115 @@
 # Galgame Bugfix Log
 
+## [2026-06-01] CharacterManagementModule 详情 Tab 崩溃：v-show 无法阻止 null 访问
+
+### 问题描述
+
+点击玩法面板的「角色管理」入口后，界面只有顶栏，主体内容完全不显示。Console 报错：
+
+```
+TypeError: Cannot read properties of null (reading '姓名')
+  at lm (vue.runtime.global.prod.min.js)
+```
+
+### 根因
+
+`CharacterManagementModule.vue` 第 254 行，详情 Tab 的条件使用了 `v-show`：
+
+```vue
+<div v-show="activeTab === 'detail' && selectedRole" class="cm-content">
+  ...
+  {{ selectedRole!.姓名?.charAt(0) || '?' }}
+```
+
+`v-show` 只控制 CSS `display` 属性的显示/隐藏，DOM 节点**始终会被渲染**，Vue 仍会执行其中的模板表达式。当 `activeTab === 'detail'` 但 `selectedRole` 为 `null` 时，`selectedRole!.姓名` 在非生产环境断言通过后访问 `.charAt(0)`，导致空指针崩溃。
+
+### 修复
+
+将 `v-show` 改为 `v-if`，让条件不满足时**完全不渲染**该区块：
+
+```vue
+<!-- 修复前 -->
+<div v-show="activeTab === 'detail' && selectedRole" class="cm-content">
+
+<!-- 修复后 -->
+<div v-if="activeTab === 'detail' && selectedRole" class="cm-content">
+```
+
+### 教训
+
+**`v-show` vs `v-if` 的根本区别不在于"性能"，而在于是否会触发子组件/模板初始化：**
+
+- `v-show`：始终渲染 DOM，只是切换 `display`，模板内所有表达式仍会求值
+- `v-if`：条件为假时**完全不渲染**，不会执行子组件的 `setup()`，不会求值模板内任何表达式
+
+当模板内部有对可选对象的属性访问（如 `selectedRole!.姓名`）时，必须确保该对象非空才能渲染。用 `v-show` 不能达到这个目的——它只是隐藏 DOM，不阻止渲染阶段的求值。
+
+防范措施：
+
+1. **凡模板中有 `obj!.prop` 或 `obj.prop` 断言的地方，外层必须用 `v-if` 包裹**，不能用 `v-show`
+2. `v-show` 仅适合那些**不需要条件跳过初始化**的场景（如简单的加载/完成状态切换）
+3. 对可选对象使用可选链 `obj?.prop ?? default` 是更健壮的防御手段，即使换了 `v-if` 也建议加上
+
+## [2026-05-31] DispatchModule.vue 所有 import 路径多写了一级 `../`
+
+### 问题描述
+
+DispatchModule.vue 在酒馆中加载时，控制台大量报错：
+
+```
+Cannot find module '../../store'
+webpackMissingModule @ DispatchModule.vue:7
+```
+
+进而导致整个 galgame 界面级联崩溃，所有依赖的组件（ModuleView → GameplayPanel → App → index）全部报错。
+
+### 根因
+
+`src/galgame/dispatch/DispatchModule.vue` 中的 import 路径全部多写了一级 `../`。
+
+文件目录结构：
+
+```
+src/galgame/
+├── store.ts                      ← 需要导入
+├── boardgame/
+│   ├── boardGameStore.ts
+│   ├── mapGenerator.ts
+│   └── types.ts
+├── types/
+│   └── role.ts
+└── dispatch/
+    └── DispatchModule.vue        ← 当前文件
+```
+
+错误写法用了 `../../`，会退到 `src/` 一级，但实际目标都在 `src/galgame/` 同级目录下：
+
+```typescript
+import { useVNStore } from '../../store';              // 错：退到了 src/，store.ts 在 src/galgame/
+import { useBoardGameStore } from '../../boardgame/...'; // 同上
+import { generateMap } from '../../boardgame/...';       // 同上
+import type { ... } from '../../types/...';              // 同上
+```
+
+### 修复
+
+```typescript
+import { useVNStore } from '../store';
+import { useBoardGameStore } from '../boardgame/boardGameStore';
+import { generateMap } from '../boardgame/mapGenerator';
+import type { MapNode, MapConfig, NodeType } from '../boardgame/types';
+import type { DispatchRun, 结算结果 } from '../types/role';
+```
+
+### 教训
+
+**`dispatch/` 是 `galgame/` 的子目录，只需 `../` 一级回退即可到达同级模块。**
+
+- `../../` 退两级 → `src/`
+- `../` 退一级 → `src/galgame/`
+
+这是同一个模块中多行 import 路径同时写错的典型场景。防范措施：新增独立子目录后，统一检查该目录下所有文件的 import 路径是否与实际目录层级匹配。
+
 ## [2026-05-29] 界面部分初始化失败：两处 import 路径错误
 
 ### 问题描述
