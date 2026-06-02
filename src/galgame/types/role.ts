@@ -135,7 +135,7 @@ export const 角色检查点Schema = z
   .object({
     message_id: z.number().default(0),
     max_id: z.number().default(0),
-    db_map: z.record(z.string(), 角色Schema).default({}),
+    roles: z.record(z.string(), 角色Schema).default({}),
   })
   ;
 export type 角色检查点 = z.infer<typeof 角色检查点Schema>;
@@ -250,12 +250,11 @@ export type DispatchActive = z.infer<typeof DispatchActiveSchema>;
 export const 角色系统变量Schema = z
   .object({
     // ---- 扫描管理 ----
-    role_db_map: z.record(z.string(), 角色Schema).default({}),
-    role_max_id: z.number().default(0),
-    role_checkpoint: 角色检查点Schema.default(() => ({ message_id: 0, max_id: 0, db_map: {} })),
+    role_checkpoint: 角色检查点Schema.default(() => ({ message_id: 0, max_id: 0, roles: {} })),
 
     // ---- 角色数据 ----
     roles: z.record(z.string(), 角色Schema).default({}),
+    role_max_id: z.number().default(0),
 
     // ---- 技能数据 ----
     skillsInventory: z.array(技能Schema).default([]),

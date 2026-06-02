@@ -6,6 +6,7 @@ import './styles/theme.css';
 import { extractContentTag, extractDanmakuBlock, extractPlainTextFromContent } from './utils/messageParser';
 import { createVNLogger } from './utils/vnLogger';
 import { initRoleScanner, manualFullScan } from './utils/roleScanner';
+import type { SecondApiConfig } from './store';
 const vnLog = createVNLogger('[VN]');
 
 declare global {
@@ -27,7 +28,7 @@ declare global {
         requestBackgroundImage: (prompt: string) => void;
         requestCgImage: (prompt: string) => void;
         pushDanmaku: (texts: string[]) => void;
-        callSecondApi: (task: string, payload: any) => Promise<string[] | string>;
+        callSecondApi: (config: SecondApiConfig) => Promise<string[] | string>;
         appendNewMessage: (messageId: number) => Promise<void>;
         updateDialogueUnit: (messageId: number) => Promise<void>;
       } | null;
@@ -142,7 +143,7 @@ $(() => {
       requestCgImage: (p: string) => void;
       pushDanmaku: (texts: string[]) => void;
       displayDanmakuFromMessage: (message: string) => void;
-      callSecondApi: (task: string, payload: { contentText: string }) => Promise<string[] | string>;
+        callSecondApi: (config: SecondApiConfig) => Promise<string[] | string>;
     } | null,
   ) {
     if (!mainStore) return;
@@ -190,7 +191,8 @@ $(() => {
     // 如果弹幕和生图都需要第二API，尝试合并调用
     if (mainStore.settings.apiTaskDanmaku === 'second' && needImageGen) {
       try {
-        const result = (await mainStore.callSecondApi('danmakuAndImageGen', {
+        const result = (await mainStore.callSecondApi({
+          task: 'danmakuAndImageGen',
           contentText,
         })) as string;
 
@@ -262,7 +264,10 @@ $(() => {
     // 只处理弹幕（不需要生图或生图使用主API）
     if (mainStore.settings.apiTaskDanmaku === 'second') {
       try {
-        const lines = (await mainStore.callSecondApi('danmaku', { contentText })) as string[];
+        const lines = (await mainStore.callSecondApi({
+          task: 'danmaku',
+          contentText,
+        })) as string[];
         if (lines.length === 0) return;
 
         // 将弹幕写入 <dm> 标签

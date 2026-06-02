@@ -309,31 +309,6 @@
                   {{ store.secondApiModelListLoading ? '…' : '拉取模型' }}
                 </button>
               </div>
-              <div class="mb-3 flex gap-2">
-                <select
-                  class="vn-input flex-1 text-xs"
-                  :value="store.settings.secondApiPreset"
-                  @change="store.updateSettings({ secondApiPreset: ($event.target as HTMLSelectElement).value })"
-                >
-                  <option value="">不使用预设（使用默认参数）</option>
-                  <option v-for="preset in presetList" :key="preset" :value="preset">{{ preset }}</option>
-                </select>
-                <button
-                  class="cursor-pointer border px-2 py-1 text-xs whitespace-nowrap"
-                  style="
-                    border-color: rgba(90, 79, 64, 0.4);
-                    border-radius: 2px;
-                    color: var(--theme-text-muted, var(--vn-muted));
-                  "
-                  :disabled="loadingPresetList"
-                  @click="refreshPresetList"
-                >
-                  {{ loadingPresetList ? '…' : '刷新' }}
-                </button>
-              </div>
-              <p style="font-size: 9px; color: var(--theme-text-muted, var(--vn-muted)); margin-bottom: 8px">
-                选择预设后，将使用该预设的提示词等配置，但 API 请求仍使用上方配置的第二 API
-              </p>
               <div class="mb-3 flex items-center justify-between gap-3">
                 <div class="flex items-center gap-2">
                   <span class="shrink-0 text-xs" style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.7))"
@@ -818,8 +793,6 @@ const currentFloorCount = computed(() => {
 
 const testingSecondApi = ref(false);
 const secondApiTestResult = ref<string | null>(null);
-const loadingPresetList = ref(false);
-const presetList = ref<string[]>([]);
 const showApiTaskConfig = ref(false);
 const showWorldbookManager = ref(false);
 const themeFileInput = ref<HTMLInputElement | null>(null);
@@ -834,19 +807,6 @@ const actionIconStyle = {
 
 // 只要 URL 和 Key 已填写就允许测试（不依赖 secondApiStatus 避免降级状态干扰）
 const canTestSecondApi = computed(() => !!(store.settings.secondApiUrl?.trim() && store.settings.secondApiKey?.trim()));
-
-function refreshPresetList() {
-  loadingPresetList.value = true;
-  try {
-    presetList.value = getPresetNames();
-    console.info('[SettingsPanel] 获取预设列表:', presetList.value);
-  } catch (e) {
-    console.error('[SettingsPanel] 获取预设列表失败:', e);
-    store.showToast('获取预设列表失败');
-  } finally {
-    loadingPresetList.value = false;
-  }
-}
 
 async function testSecondApi() {
   if (!store.settings.secondApiModel?.trim()) {
@@ -974,9 +934,4 @@ function clearThemeCss() {
     themeEnabled: true,
   });
 }
-
-// 初始化时加载预设列表
-onMounted(() => {
-  refreshPresetList();
-});
 </script>

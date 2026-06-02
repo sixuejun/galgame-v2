@@ -36,6 +36,10 @@
           <i class="fa-solid fa-users" />
           <span>共 {{ allRoles.length }} 名角色</span>
         </div>
+        <button class="cm-btn-secondary" @click="handleRescan">
+          <i class="fa-solid fa-rotate" />
+          重新扫描
+        </button>
         <button class="cm-btn-primary" :disabled="isGenerating" @click="activeTab = 'generate'">
           <i class="fa-solid fa-plus" />
           生成新角色
@@ -158,9 +162,12 @@
             <i class="fa-solid fa-code" />
             提示词预览（可编辑）
           </h4>
-          <div class="cm-gen-preview">
-            <pre class="cm-gen-preview-text">{{ editablePrompt }}</pre>
-          </div>
+          <textarea
+            v-model="editablePromptText"
+            class="cm-gen-textarea cm-gen-prompt-editor"
+            rows="12"
+            spellcheck="false"
+          />
         </div>
 
         <!-- Generate button -->
@@ -180,7 +187,7 @@
             角色预览
           </h4>
 
-          <div v-if="!previewRole" class="cm-empty" style="padding: 20px 0;">
+          <div v-if="!previewRole" class="cm-empty" style="padding: 20px 0">
             <i class="fa-solid fa-circle-exclamation" />
             <p>解析失败</p>
             <span>无法从 AI 输出中解析出角色，请重试</span>
@@ -229,11 +236,14 @@
         <div v-if="previewCmdString" class="cm-gen-section">
           <h4 class="cm-section-title">
             <i class="fa-solid fa-terminal" />
-            插入内容
+            插入内容（可编辑）
           </h4>
-          <div class="cm-gen-preview">
-            <pre class="cm-gen-preview-text">{{ previewCmdString }}</pre>
-          </div>
+          <textarea
+            v-model="previewCmdString"
+            class="cm-gen-textarea cm-gen-prompt-editor"
+            rows="4"
+            spellcheck="false"
+          />
         </div>
 
         <!-- Actions -->
@@ -368,7 +378,9 @@
           <span class="cm-section-count">{{ selectedRole!.已装备技能?.length || 0 }}</span>
         </h4>
 
-        <div v-if="!selectedRole!.已装备技能?.length" class="cm-empty-skill">暂无装备技能（前往商店购买技能后在此装配）</div>
+        <div v-if="!selectedRole!.已装备技能?.length" class="cm-empty-skill">
+          暂无装备技能（前往商店购买技能后在此装配）
+        </div>
 
         <div v-else class="cm-skill-list">
           <div v-for="skillId in selectedRole!.已装备技能" :key="skillId" class="cm-skill-card">
@@ -426,17 +438,9 @@
           <span class="cm-section-count">{{ selectedRole!.记录.length }}</span>
         </h4>
         <div class="cm-record-list">
-          <div
-            v-for="(record, idx) in groupedRecords"
-            :key="idx"
-            class="cm-record-group"
-          >
+          <div v-for="(record, idx) in groupedRecords" :key="idx" class="cm-record-group">
             <div class="cm-record-group-header">{{ record.type }}</div>
-            <div
-              v-for="(r, i) in record.items"
-              :key="i"
-              class="cm-record-item"
-            >
+            <div v-for="(r, i) in record.items" :key="i" class="cm-record-item">
               <span class="cm-record-content">{{ r.内容 }}</span>
               <span class="cm-record-time">{{ formatTime(r.时间) }}</span>
             </div>
@@ -461,10 +465,14 @@
 
 <script setup lang="ts">
 import { klona } from 'klona';
+import { buildChatPrompt, registerAsPersonality } from '../../prompts';
+import { buildRoleOutputFormatLine } from '../../prompts/role';
+import { formatRoleForAI } from '../../prompts/roleFormat';
 import { useVNStore } from '../../store';
 import type { 技能, 角色 } from '../../types/role';
 import { 角色状态枚举 } from '../../types/role';
-import { parseCharacterCMD, fieldsToRole } from '../../utils/roleParser';
+import { fieldsToRole, parseCharacterCMD } from '../../utils/roleParser';
+import { nextRoleId } from '../../utils/roleIdGenerator';
 
 const store = useVNStore();
 
@@ -486,8 +494,10 @@ const genStep = ref<'config' | 'preview'>('config');
 
 /** 预览用角色对象（从 AI 输出解析而来） */
 const previewRole = ref<角色 | null>(null);
-/** 预览用 CMD 字符串（待插入聊天） */
+/** 预览用 CMD 字符串（待插入聊天，可编辑） */
 const previewCmdString = ref<string>('');
+/** 可编辑的提示词文本（预览区编辑后直接用于发送） */
+const editablePromptText = ref('');
 
 const optionalFields = [
   { key: '外貌', label: '外貌' },
@@ -557,37 +567,54 @@ const groupedRecords = computed(() => {
 
 /** 构建输出格式行（根据选中的字段动态拼接） */
 function buildOutputFormatLine(selected: Set<string>): string {
-  const fieldParts: string[] = ['姓名：'];
+  const fields = ['姓名'];
   for (const f of optionalFields) {
     if (selected.has(f.key)) {
-      fieldParts.push(`${f.label}：`);
+      fields.push(f.label);
     }
   }
-  fieldParts.push('属性：战力:X/技巧:X/智慧:X/社交:X/谨慎:X/运气:X');
-  return `CMD:ADD | ${fieldParts.join(' | ')}`;
+  fields.push('属性');
+  return buildRoleOutputFormatLine(fields);
 }
 
-const editablePrompt = computed(() => {
-  const fields = ['属性', ...selectedFields.value].join('、');
-  const extra = extraFieldRequirements.value.trim() || '玩家可以在这里添加自定义字段要求，如：\n- 年龄：角色的年龄\n- 特殊能力：角色拥有的特殊能力\n（在此行上方添加自定义字段要求）';
+/** 构建可编辑提示词文本（由 watchEffect 同步到 editablePromptText） */
+function buildEditablePromptText(): string {
+  const fields = ['姓名', '性别', ...selectedFields.value, '属性'].join('、');
+  const extra =
+    extraFieldRequirements.value.trim() ||
+    '玩家可以在这里添加自定义字段要求，如：\n- 年龄：角色的年龄\n- 特殊能力：角色拥有的特殊能力\n（在此行上方添加自定义字段要求）';
   const scene = sceneDescription.value.trim() ? `\n当前场景：${sceneDescription.value.trim()}` : '';
 
   return `<system>
-需要生成的字段：${fields}
+现暂停角色扮演，禁止输出正文、状态栏和任何其它格式，仅严格按照以下格式输出。本次回复必须体现指令执行后的结果，不进行任何形式的二次确认或解释。
+
 ${scene}
+需要生成的字段：${fields}
 
 额外要求：
 ${extra}
 
 输出格式（严格遵守，仅输出一组角色档案）：
-<Character>
 ${buildOutputFormatLine(selectedFields.value)}
-</Character>
 
 格式说明：
-- 属性数值范围 0~5，每项必须为整数
-- 仅输出一组角色档案
+**属性系统**：属性数值范围 0~5，每项必须为整数
+   - 战力：角色的战斗能力
+   - 技巧：角色的技术/手艺熟练度
+   - 智慧：角色的知识水平/分析能力
+   - 社交：角色的人际交往/说服能力
+   - 谨慎：角色的风险评估/安全意识
+   - 运气：角色的运气/随机事件成功率
+- 仅输出一组角色档案，不要输出其他解释文本
 </system>`;
+}
+
+// 初始化 editablePromptText，并在配置变化时自动同步
+editablePromptText.value = buildEditablePromptText();
+watchEffect(() => {
+  if (genStep.value === 'config') {
+    editablePromptText.value = buildEditablePromptText();
+  }
 });
 
 // ============================================================
@@ -604,11 +631,23 @@ function resetGenerateTab() {
   extraFieldRequirements.value = '';
   selectedFields.value = new Set(['外貌', '性格', '出身', '定位', '说话风格']);
   generationResult.value = null;
+  editablePromptText.value = buildEditablePromptText();
 }
 
 function selectRole(role: 角色) {
   selectedRoleId.value = role.id;
   activeTab.value = 'detail';
+}
+
+async function handleRescan() {
+  try {
+    const { manualFullScan } = await import('../../utils/roleScanner');
+    manualFullScan();
+    toastr.success('扫描完成');
+  } catch (e) {
+    console.warn('[CharacterManagement] 重新扫描失败', e);
+    toastr.error('重新扫描失败');
+  }
 }
 
 function toggleField(key: string) {
@@ -632,13 +671,9 @@ async function handleGenerateStep1() {
   previewCmdString.value = '';
 
   try {
-    const result = (await store.callSecondApi('roleProfile', {
-      ordered_prompts: [
-        { role: 'system', content: 'world_info' },
-        { role: 'system', content: 'char_persona' },
-        { role: 'system', content: 'chat_history' },
-        { role: 'system', content: editablePrompt.value },
-      ],
+    const result = (await store.callSecondApi({
+      task: 'roleProfile',
+      systemPrompt: editablePromptText.value,
     })) as string;
 
     if (!result || typeof result !== 'string') {
@@ -681,24 +716,43 @@ async function handleConfirmInsert() {
   generatingMessage.value = '正在插入聊天…';
 
   try {
+    // 从用户编辑后的内容重新解析角色数据（以防用户在预览区修改了字段值）
+    const parsed = parseCharacterCMD(previewCmdString.value);
+    if (!parsed) {
+      toastr.error('无法解析角色内容，请检查格式是否正确');
+      return;
+    }
+    const roleForRegister = fieldsToRole(parsed.fields);
+    if (!roleForRegister) {
+      toastr.error('角色数据无效，请检查格式是否正确');
+      return;
+    }
+
+    // 为角色分配 ID 并直接写入 store（绕过扫描器，避免状态不一致）
+    roleForRegister.id = nextRoleId();
+    store.addRole(roleForRegister);
+
     // 获取最后一条消息，追加角色 CMD
-    const messages = getChatMessages('all');
+    const lastId = getLastMessageId();
+    const messages = getChatMessages(`0-${lastId}`);
     const lastMsg = messages[messages.length - 1];
     const currentContent = lastMsg?.message || '';
     const newContent = currentContent
-      ? `${currentContent.trimEnd()}\n\n${previewCmdString.value}`
-      : previewCmdString.value;
+      ? `${currentContent.trimEnd()}\n\n${parsed.cmdString}`
+      : parsed.cmdString;
 
-    setChatMessages(
-      messages.map((m, i) => (i === messages.length - 1 ? { ...m, message: newContent } : m)),
-    );
+    setChatMessages(messages.map((m, i) => (i === messages.length - 1 ? { ...m, message: newContent } : m)));
 
-    // 手动触发增量扫描（从插入的消息 ID 之后开始）
-    try {
-      const { manualIncrementalScan } = await import('../../utils/roleScanner');
-      manualIncrementalScan();
-    } catch (e) {
-      console.warn('[CharacterManagement] 扫描引擎手动触发失败', e);
+    // 将角色注册为通讯人格
+    if (roleForRegister) {
+      const roleInfo = formatRoleForAI(roleForRegister);
+      const chatPrompt = buildChatPrompt(roleInfo, '');
+      registerAsPersonality(roleForRegister.id, {
+        name: roleForRegister.姓名,
+        systemPrompt: chatPrompt,
+        avatar: roleForRegister.头像,
+        proactiveLines: undefined,
+      });
     }
 
     toastr.success('角色已插入聊天并入库');
@@ -896,7 +950,9 @@ function formatTime(timestamp: number): string {
   animation: cm-spin 0.8s linear infinite;
 }
 @keyframes cm-spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 .cm-loading-text {
   font-size: 12px;
@@ -954,9 +1010,16 @@ function formatTime(timestamp: number): string {
   flex-direction: column;
   gap: 12px;
 }
-.cm-content::-webkit-scrollbar { width: 4px; }
-.cm-content::-webkit-scrollbar-track { background: transparent; }
-.cm-content::-webkit-scrollbar-thumb { background: rgba(90, 79, 64, 0.3); border-radius: 2px; }
+.cm-content::-webkit-scrollbar {
+  width: 4px;
+}
+.cm-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+.cm-content::-webkit-scrollbar-thumb {
+  background: rgba(90, 79, 64, 0.3);
+  border-radius: 2px;
+}
 
 /* Action bar */
 .cm-action-bar {
@@ -997,7 +1060,10 @@ function formatTime(timestamp: number): string {
   background: rgba(139, 69, 19, 0.28);
   box-shadow: 0 0 8px rgba(139, 69, 19, 0.2);
 }
-.cm-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.cm-btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 .cm-btn-secondary {
   display: flex;
@@ -1016,7 +1082,10 @@ function formatTime(timestamp: number): string {
   background: rgba(74, 64, 53, 0.25);
   border-color: rgba(90, 79, 64, 0.6);
 }
-.cm-btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+.cm-btn-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 /* Empty state */
 .cm-empty {
@@ -1029,12 +1098,26 @@ function formatTime(timestamp: number): string {
   padding: 40px 0;
   color: var(--theme-text-muted, var(--vn-muted));
 }
-.cm-empty i { font-size: 2.5rem; opacity: 0.2; }
-.cm-empty p { font-size: 14px; font-weight: bold; margin: 0; }
-.cm-empty span { font-size: 11px; opacity: 0.7; }
+.cm-empty i {
+  font-size: 2.5rem;
+  opacity: 0.2;
+}
+.cm-empty p {
+  font-size: 14px;
+  font-weight: bold;
+  margin: 0;
+}
+.cm-empty span {
+  font-size: 11px;
+  opacity: 0.7;
+}
 
 /* Role list */
-.cm-role-list { display: flex; flex-direction: column; gap: 8px; }
+.cm-role-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 .cm-role-card {
   display: flex;
   align-items: center;
@@ -1071,10 +1154,27 @@ function formatTime(timestamp: number): string {
   color: var(--theme-accent, var(--rust));
   flex-shrink: 0;
 }
-.cm-role-info { flex: 1; min-width: 0; }
-.cm-role-name-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-.cm-role-name { font-size: 13px; font-weight: bold; color: var(--theme-text-main, rgba(212, 197, 160, 0.9)); }
-.cm-role-attrs { display: flex; flex-wrap: wrap; gap: 3px; margin-bottom: 3px; }
+.cm-role-info {
+  flex: 1;
+  min-width: 0;
+}
+.cm-role-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.cm-role-name {
+  font-size: 13px;
+  font-weight: bold;
+  color: var(--theme-text-main, rgba(212, 197, 160, 0.9));
+}
+.cm-role-attrs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-bottom: 3px;
+}
 .cm-attr-chip {
   display: inline-block;
   font-size: 9px;
@@ -1084,8 +1184,14 @@ function formatTime(timestamp: number): string {
   border-radius: 2px;
   font-family: monospace;
 }
-.cm-role-skills { font-size: 10px; color: var(--theme-accent, var(--rust)); margin-top: 2px; }
-.cm-role-skills i { margin-right: 3px; }
+.cm-role-skills {
+  font-size: 10px;
+  color: var(--theme-accent, var(--rust));
+  margin-top: 2px;
+}
+.cm-role-skills i {
+  margin-right: 3px;
+}
 .cm-role-tag {
   font-size: 9px;
   color: var(--theme-text-muted, var(--vn-muted));
@@ -1112,13 +1218,41 @@ function formatTime(timestamp: number): string {
   border-radius: 2px;
   font-family: monospace;
 }
-.cm-status-空闲 { background: rgba(90, 122, 74, 0.2); color: var(--vn-success); border: 1px solid rgba(90, 122, 74, 0.3); }
-.cm-status-派遣中 { background: rgba(139, 69, 19, 0.2); color: var(--theme-accent, var(--rust)); border: 1px solid rgba(139, 69, 19, 0.3); }
-.cm-status-工坊中 { background: rgba(196, 162, 101, 0.15); color: var(--stain); border: 1px solid rgba(196, 162, 101, 0.3); }
-.cm-status-逃跑中 { background: rgba(199, 62, 58, 0.15); color: #c73e3a; border: 1px solid rgba(199, 62, 58, 0.3); }
-.cm-status-休息中 { background: rgba(90, 79, 64, 0.2); color: var(--theme-text-muted, var(--vn-muted)); border: 1px solid rgba(90, 79, 64, 0.3); }
-.cm-status-加班中 { background: rgba(199, 62, 58, 0.1); color: #c73e3a; border: 1px solid rgba(199, 62, 58, 0.25); }
-.cm-status-受伤 { background: rgba(199, 62, 58, 0.1); color: #c73e3a; border: 1px solid rgba(199, 62, 58, 0.25); }
+.cm-status-空闲 {
+  background: rgba(90, 122, 74, 0.2);
+  color: var(--vn-success);
+  border: 1px solid rgba(90, 122, 74, 0.3);
+}
+.cm-status-派遣中 {
+  background: rgba(139, 69, 19, 0.2);
+  color: var(--theme-accent, var(--rust));
+  border: 1px solid rgba(139, 69, 19, 0.3);
+}
+.cm-status-工坊中 {
+  background: rgba(196, 162, 101, 0.15);
+  color: var(--stain);
+  border: 1px solid rgba(196, 162, 101, 0.3);
+}
+.cm-status-逃跑中 {
+  background: rgba(199, 62, 58, 0.15);
+  color: #c73e3a;
+  border: 1px solid rgba(199, 62, 58, 0.3);
+}
+.cm-status-休息中 {
+  background: rgba(90, 79, 64, 0.2);
+  color: var(--theme-text-muted, var(--vn-muted));
+  border: 1px solid rgba(90, 79, 64, 0.3);
+}
+.cm-status-加班中 {
+  background: rgba(199, 62, 58, 0.1);
+  color: #c73e3a;
+  border: 1px solid rgba(199, 62, 58, 0.25);
+}
+.cm-status-受伤 {
+  background: rgba(199, 62, 58, 0.1);
+  color: #c73e3a;
+  border: 1px solid rgba(199, 62, 58, 0.25);
+}
 
 /* Back button */
 .cm-back-btn {
@@ -1134,7 +1268,9 @@ function formatTime(timestamp: number): string {
   transition: color 0.2s;
   align-self: flex-start;
 }
-.cm-back-btn:hover { color: var(--theme-accent, var(--rust)); }
+.cm-back-btn:hover {
+  color: var(--theme-accent, var(--rust));
+}
 
 /* API warning */
 .cm-api-warning {
@@ -1147,15 +1283,37 @@ function formatTime(timestamp: number): string {
   border-radius: 2px;
   color: var(--theme-text-muted, var(--vn-muted));
 }
-.cm-api-warning i { font-size: 1.2rem; color: var(--theme-accent, var(--rust)); flex-shrink: 0; margin-top: 2px; }
-.cm-api-warning strong { font-size: 12px; color: var(--theme-text-main, rgba(212, 197, 160, 0.9)); }
-.cm-api-warning p { font-size: 11px; margin: 4px 0 0; }
+.cm-api-warning i {
+  font-size: 1.2rem;
+  color: var(--theme-accent, var(--rust));
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.cm-api-warning strong {
+  font-size: 12px;
+  color: var(--theme-text-main, rgba(212, 197, 160, 0.9));
+}
+.cm-api-warning p {
+  font-size: 11px;
+  margin: 4px 0 0;
+}
 
 /* Generation form */
-.cm-gen-form { display: flex; flex-direction: column; gap: 16px; }
-.cm-gen-section { padding: 0; }
-.cm-section { padding: 12px 0; border-bottom: 1px solid rgba(90, 79, 64, 0.15); }
-.cm-section:last-child { border-bottom: none; }
+.cm-gen-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.cm-gen-section {
+  padding: 0;
+}
+.cm-section {
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(90, 79, 64, 0.15);
+}
+.cm-section:last-child {
+  border-bottom: none;
+}
 .cm-section-title {
   display: flex;
   align-items: center;
@@ -1165,7 +1323,10 @@ function formatTime(timestamp: number): string {
   color: var(--theme-text-main, rgba(212, 197, 160, 0.85));
   margin-bottom: 10px;
 }
-.cm-section-title i { color: var(--theme-accent, var(--rust)); font-size: 10px; }
+.cm-section-title i {
+  color: var(--theme-accent, var(--rust));
+  font-size: 10px;
+}
 .cm-section-count {
   margin-left: auto;
   font-size: 9px;
@@ -1177,9 +1338,19 @@ function formatTime(timestamp: number): string {
 }
 
 /* Generation config */
-.cm-gen-fields { margin-bottom: 12px; }
-.cm-gen-hint { font-size: 11px; color: var(--theme-text-muted, var(--vn-muted)); margin-bottom: 8px; }
-.cm-gen-toggles { display: flex; flex-wrap: wrap; gap: 6px; }
+.cm-gen-fields {
+  margin-bottom: 12px;
+}
+.cm-gen-hint {
+  font-size: 11px;
+  color: var(--theme-text-muted, var(--vn-muted));
+  margin-bottom: 8px;
+}
+.cm-gen-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 .cm-gen-toggle {
   display: flex;
   align-items: center;
@@ -1193,14 +1364,24 @@ function formatTime(timestamp: number): string {
   cursor: pointer;
   transition: all 0.2s;
 }
-.cm-gen-toggle:hover { border-color: rgba(139, 69, 19, 0.4); color: var(--theme-text-main, rgba(212, 197, 160, 0.8)); }
+.cm-gen-toggle:hover {
+  border-color: rgba(139, 69, 19, 0.4);
+  color: var(--theme-text-main, rgba(212, 197, 160, 0.8));
+}
 .cm-gen-toggle-active {
   border-color: var(--theme-accent, var(--rust));
   color: var(--theme-accent, var(--rust));
   background: rgba(139, 69, 19, 0.1);
 }
-.cm-gen-scene { margin-bottom: 12px; }
-.cm-gen-label { font-size: 11px; color: var(--theme-text-muted, var(--vn-muted)); margin-bottom: 6px; display: block; }
+.cm-gen-scene {
+  margin-bottom: 12px;
+}
+.cm-gen-label {
+  font-size: 11px;
+  color: var(--theme-text-muted, var(--vn-muted));
+  margin-bottom: 6px;
+  display: block;
+}
 .cm-gen-textarea {
   width: 100%;
   padding: 8px 10px;
@@ -1213,7 +1394,9 @@ function formatTime(timestamp: number): string {
   outline: none;
   font-family: inherit;
 }
-.cm-gen-textarea:focus { border-color: rgba(139, 69, 19, 0.5); }
+.cm-gen-textarea:focus {
+  border-color: rgba(139, 69, 19, 0.5);
+}
 
 /* Prompt preview */
 .cm-gen-preview {
@@ -1238,7 +1421,10 @@ function formatTime(timestamp: number): string {
   justify-content: center;
   padding: 4px 0;
 }
-.cm-btn-generate { padding: 10px 28px; font-size: 13px; }
+.cm-btn-generate {
+  padding: 10px 28px;
+  font-size: 13px;
+}
 
 /* Preview card */
 .cm-preview-card {
@@ -1281,7 +1467,9 @@ function formatTime(timestamp: number): string {
   display: inline-block;
   margin-top: 3px;
 }
-.cm-preview-section { margin-bottom: 10px; }
+.cm-preview-section {
+  margin-bottom: 10px;
+}
 .cm-preview-section-title {
   font-size: 10px;
   color: var(--theme-text-muted, var(--vn-muted));
@@ -1289,10 +1477,24 @@ function formatTime(timestamp: number): string {
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
-.cm-preview-fields { display: flex; flex-direction: column; gap: 4px; }
-.cm-preview-field-item { display: flex; gap: 8px; font-size: 11px; }
-.cm-preview-field-item .cm-field-label { color: var(--theme-text-muted, var(--vn-muted)); min-width: 50px; flex-shrink: 0; }
-.cm-preview-field-item .cm-field-value { color: var(--theme-text-main, rgba(212, 197, 160, 0.8)); }
+.cm-preview-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cm-preview-field-item {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+}
+.cm-preview-field-item .cm-field-label {
+  color: var(--theme-text-muted, var(--vn-muted));
+  min-width: 50px;
+  flex-shrink: 0;
+}
+.cm-preview-field-item .cm-field-value {
+  color: var(--theme-text-main, rgba(212, 197, 160, 0.8));
+}
 
 /* Profile header */
 .cm-profile-header {
@@ -1318,8 +1520,16 @@ function formatTime(timestamp: number): string {
   color: var(--theme-accent, var(--rust));
   flex-shrink: 0;
 }
-.cm-profile-meta { flex: 1; min-width: 0; }
-.cm-profile-name-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.cm-profile-meta {
+  flex: 1;
+  min-width: 0;
+}
+.cm-profile-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
 .cm-profile-name {
   font-size: 16px;
   font-weight: bold;
@@ -1330,7 +1540,11 @@ function formatTime(timestamp: number): string {
   gap: 6px;
   cursor: pointer;
 }
-.cm-profile-id { font-size: 9px; color: var(--theme-text-faint, rgba(139, 125, 107, 0.5)); font-family: monospace; }
+.cm-profile-id {
+  font-size: 9px;
+  color: var(--theme-text-faint, rgba(139, 125, 107, 0.5));
+  font-family: monospace;
+}
 .cm-name-input {
   font-size: 14px;
   font-weight: bold;
@@ -1342,28 +1556,81 @@ function formatTime(timestamp: number): string {
   outline: none;
   font-family: inherit;
 }
-.cm-edit-icon { font-size: 10px; color: var(--theme-text-muted, var(--vn-muted)); opacity: 0; transition: opacity 0.2s; }
-.cm-profile-name:hover .cm-edit-icon { opacity: 1; }
-.cm-edit-icon-sm { font-size: 8px; color: var(--theme-text-muted, var(--vn-muted)); opacity: 0; transition: opacity 0.2s; margin-left: 4px; }
+.cm-edit-icon {
+  font-size: 10px;
+  color: var(--theme-text-muted, var(--vn-muted));
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.cm-profile-name:hover .cm-edit-icon {
+  opacity: 1;
+}
+.cm-edit-icon-sm {
+  font-size: 8px;
+  color: var(--theme-text-muted, var(--vn-muted));
+  opacity: 0;
+  transition: opacity 0.2s;
+  margin-left: 4px;
+}
 
 /* Status grid */
-.cm-status-grid { display: flex; flex-wrap: wrap; gap: 6px; }
-.cm-status-btn { padding: 2px; background: transparent; border: none; cursor: pointer; border-radius: 2px; transition: all 0.2s; opacity: 0.5; }
-.cm-status-btn:hover { opacity: 0.8; }
-.cm-status-btn-active { opacity: 1; }
+.cm-status-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.cm-status-btn {
+  padding: 2px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  border-radius: 2px;
+  transition: all 0.2s;
+  opacity: 0.5;
+}
+.cm-status-btn:hover {
+  opacity: 0.8;
+}
+.cm-status-btn-active {
+  opacity: 1;
+}
 
 /* Attribute grid */
-.cm-attr-grid { display: flex; flex-direction: column; gap: 6px; }
-.cm-attr-item { display: flex; align-items: center; gap: 8px; }
-.cm-attr-name { font-size: 11px; color: var(--theme-text-muted, var(--vn-muted)); width: 32px; flex-shrink: 0; font-family: monospace; }
-.cm-attr-bar-wrap { flex: 1; height: 6px; background: rgba(90, 79, 64, 0.2); border-radius: 3px; overflow: hidden; }
+.cm-attr-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cm-attr-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cm-attr-name {
+  font-size: 11px;
+  color: var(--theme-text-muted, var(--vn-muted));
+  width: 32px;
+  flex-shrink: 0;
+  font-family: monospace;
+}
+.cm-attr-bar-wrap {
+  flex: 1;
+  height: 6px;
+  background: rgba(90, 79, 64, 0.2);
+  border-radius: 3px;
+  overflow: hidden;
+}
 .cm-attr-bar {
   height: 100%;
   background: linear-gradient(to right, var(--theme-accent, var(--rust)), rgba(196, 162, 101, 0.8));
   border-radius: 3px;
   transition: width 0.3s;
 }
-.cm-attr-val-row { display: flex; align-items: center; gap: 4px; }
+.cm-attr-val-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
 .cm-attr-btn {
   width: 18px;
   height: 18px;
@@ -1378,16 +1645,53 @@ function formatTime(timestamp: number): string {
   cursor: pointer;
   transition: all 0.15s;
 }
-.cm-attr-btn:hover { background: rgba(139, 69, 19, 0.2); border-color: rgba(139, 69, 19, 0.4); color: var(--theme-accent, var(--rust)); }
-.cm-attr-val { font-size: 11px; color: var(--theme-accent, var(--rust)); font-family: monospace; font-weight: bold; width: 16px; text-align: center; }
+.cm-attr-btn:hover {
+  background: rgba(139, 69, 19, 0.2);
+  border-color: rgba(139, 69, 19, 0.4);
+  color: var(--theme-accent, var(--rust));
+}
+.cm-attr-val {
+  font-size: 11px;
+  color: var(--theme-accent, var(--rust));
+  font-family: monospace;
+  font-weight: bold;
+  width: 16px;
+  text-align: center;
+}
 
 /* Profile fields */
-.cm-profile-fields { display: flex; flex-direction: column; gap: 6px; }
-.cm-profile-field-item { display: flex; align-items: flex-start; gap: 10px; }
-.cm-field-label { font-size: 10px; color: var(--theme-text-muted, var(--vn-muted)); flex-shrink: 0; min-width: 56px; font-family: monospace; }
-.cm-field-value { font-size: 11px; color: var(--theme-text-main, rgba(212, 197, 160, 0.8)); flex: 1; line-height: 1.5; }
-.cm-field-clickable { cursor: pointer; display: flex; align-items: flex-start; gap: 4px; }
-.cm-field-clickable:hover .cm-edit-icon-sm { opacity: 1; }
+.cm-profile-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cm-profile-field-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.cm-field-label {
+  font-size: 10px;
+  color: var(--theme-text-muted, var(--vn-muted));
+  flex-shrink: 0;
+  min-width: 56px;
+  font-family: monospace;
+}
+.cm-field-value {
+  font-size: 11px;
+  color: var(--theme-text-main, rgba(212, 197, 160, 0.8));
+  flex: 1;
+  line-height: 1.5;
+}
+.cm-field-clickable {
+  cursor: pointer;
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+.cm-field-clickable:hover .cm-edit-icon-sm {
+  opacity: 1;
+}
 .cm-field-input {
   flex: 1;
   font-size: 11px;
@@ -1401,8 +1705,18 @@ function formatTime(timestamp: number): string {
 }
 
 /* Skills */
-.cm-empty-skill { font-size: 11px; color: var(--theme-text-muted, var(--vn-muted)); padding: 8px 0; font-style: italic; }
-.cm-skill-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.cm-empty-skill {
+  font-size: 11px;
+  color: var(--theme-text-muted, var(--vn-muted));
+  padding: 8px 0;
+  font-style: italic;
+}
+.cm-skill-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
 .cm-skill-card {
   display: flex;
   align-items: flex-start;
@@ -1413,11 +1727,30 @@ function formatTime(timestamp: number): string {
   border-radius: 2px;
   gap: 8px;
 }
-.cm-skill-icon { font-size: 16px; flex-shrink: 0; }
-.cm-skill-info { flex: 1; min-width: 0; }
-.cm-skill-name { font-size: 12px; font-weight: bold; color: var(--theme-text-main, rgba(212, 197, 160, 0.9)); }
-.cm-skill-desc { font-size: 10px; color: var(--theme-text-muted, var(--vn-muted)); margin-top: 2px; }
-.cm-skill-mods { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
+.cm-skill-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+.cm-skill-info {
+  flex: 1;
+  min-width: 0;
+}
+.cm-skill-name {
+  font-size: 12px;
+  font-weight: bold;
+  color: var(--theme-text-main, rgba(212, 197, 160, 0.9));
+}
+.cm-skill-desc {
+  font-size: 10px;
+  color: var(--theme-text-muted, var(--vn-muted));
+  margin-top: 2px;
+}
+.cm-skill-mods {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 4px;
+}
 .cm-mod-tag {
   font-size: 9px;
   padding: 1px 4px;
@@ -1442,7 +1775,9 @@ function formatTime(timestamp: number): string {
   white-space: nowrap;
   flex-shrink: 0;
 }
-.cm-btn-unequip:hover { background: rgba(199, 62, 58, 0.18); }
+.cm-btn-unequip:hover {
+  background: rgba(199, 62, 58, 0.18);
+}
 
 /* Equip section */
 .cm-equip-section {
@@ -1460,8 +1795,19 @@ function formatTime(timestamp: number): string {
   margin-bottom: 8px;
   font-weight: bold;
 }
-.cm-no-skills { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--theme-text-muted, var(--vn-muted)); padding: 8px 0; }
-.cm-skill-pool { display: flex; flex-wrap: wrap; gap: 6px; }
+.cm-no-skills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--theme-text-muted, var(--vn-muted));
+  padding: 8px 0;
+}
+.cm-skill-pool {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 .cm-skill-pool-item {
   display: flex;
   align-items: center;
@@ -1475,14 +1821,30 @@ function formatTime(timestamp: number): string {
   cursor: pointer;
   transition: all 0.2s;
 }
-.cm-skill-pool-item:hover { background: rgba(90, 122, 74, 0.12); border-color: rgba(90, 122, 74, 0.4); }
-.cm-skill-pool-emoji { font-size: 13px; }
-.cm-skill-pool-name { font-size: 11px; }
-.cm-skill-pool-add { color: var(--vn-success); font-size: 9px; margin-left: 3px; }
+.cm-skill-pool-item:hover {
+  background: rgba(90, 122, 74, 0.12);
+  border-color: rgba(90, 122, 74, 0.4);
+}
+.cm-skill-pool-emoji {
+  font-size: 13px;
+}
+.cm-skill-pool-name {
+  font-size: 11px;
+}
+.cm-skill-pool-add {
+  color: var(--vn-success);
+  font-size: 9px;
+  margin-left: 3px;
+}
 
 /* Records */
-.cm-record-list { display: flex; flex-direction: column; gap: 8px; }
-.cm-record-group { }
+.cm-record-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cm-record-group {
+}
 .cm-record-group-header {
   font-size: 10px;
   color: var(--theme-text-muted, var(--vn-muted));
@@ -1501,13 +1863,33 @@ function formatTime(timestamp: number): string {
   border-radius: 2px;
   font-size: 11px;
 }
-.cm-record-content { flex: 1; color: var(--theme-text-main, rgba(212, 197, 160, 0.8)); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cm-record-time { font-size: 9px; color: var(--theme-text-faint, rgba(139, 125, 107, 0.5)); flex-shrink: 0; font-family: monospace; }
+.cm-record-content {
+  flex: 1;
+  color: var(--theme-text-main, rgba(212, 197, 160, 0.8));
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cm-record-time {
+  font-size: 9px;
+  color: var(--theme-text-faint, rgba(139, 125, 107, 0.5));
+  flex-shrink: 0;
+  font-family: monospace;
+}
 
 /* Danger zone */
-.cm-danger-zone { border-top: 1px solid rgba(199, 62, 58, 0.15); margin-top: 8px; padding-top: 12px; }
-.cm-danger-title { color: #c73e3a !important; }
-.cm-danger-title i { color: #c73e3a !important; }
+.cm-danger-zone {
+  border-top: 1px solid rgba(199, 62, 58, 0.15);
+  margin-top: 8px;
+  padding-top: 12px;
+}
+.cm-danger-title {
+  color: #c73e3a !important;
+}
+.cm-danger-title i {
+  color: #c73e3a !important;
+}
 .cm-btn-danger {
   display: flex;
   align-items: center;
@@ -1521,5 +1903,7 @@ function formatTime(timestamp: number): string {
   cursor: pointer;
   transition: all 0.2s;
 }
-.cm-btn-danger:hover { background: rgba(199, 62, 58, 0.18); }
+.cm-btn-danger:hover {
+  background: rgba(199, 62, 58, 0.18);
+}
 </style>

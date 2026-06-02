@@ -96,6 +96,7 @@ import QuickAccessMenu from './components/layout/QuickAccessMenu.vue';
 import SettingsPanel from './components/panel/SettingsPanel.vue';
 import StageArea from './components/stage/StageArea.vue';
 import { parseChoices, useVNStore } from './store';
+import { setScanCompleteCallback } from './utils/roleScanner';
 import { extractDanmakuBlock, extractImageTagBlocks } from './utils/messageParser';
 import { logThemeVarDiff, snapshotThemeVars } from './utils/themeDebug';
 
@@ -401,6 +402,11 @@ onMounted(async () => {
     }
   ).mainStore = store;
   store.setupImageGenListener();
+
+  // 注册扫描器回调：扫描完成后同步数据到 pinia ref
+  setScanCompleteCallback(params => {
+    store.syncRolesFromScanner(params);
+  });
 
   // 初始化 dialogues（获取全部楼层）
   const lastId = getLastMessageId();

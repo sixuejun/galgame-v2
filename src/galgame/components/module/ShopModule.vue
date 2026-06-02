@@ -259,9 +259,7 @@ async function handleSearch() {
   loadingMessage.value = '正在生成商品列表…';
 
   try {
-    const result = await store.callSecondApi('shop', {
-      ordered_prompts: [],
-    });
+    const result = await store.callSecondApi({ task: 'shop' });
     const items = result as ShopItem[];
     if (items.length > 0) {
       store.shopItems.splice(0, store.shopItems.length, ...items);

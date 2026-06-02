@@ -5,6 +5,8 @@
  * 配合: docs/玩法总计划.md Phase 0
  */
 
+import { SKILL_MOD_WHITELIST } from './skillModWhitelist';
+
 export type WhitelistValueType = 'percent' | 'integer' | 'boolean';
 
 export interface WhitelistEntry {
@@ -187,12 +189,55 @@ export function parseModEntries(cmdStr: string): Array<{ 域: string; 键: strin
 }
 
 /**
- * 根据白名单为技能生成随机效果值
- * 用于商城生成时随机分配 mod:域.键 的具体数值
- * @param 域 域名称
- * @param 键 键名称
- * @returns 随机分配的数值，若键不在白名单中返回 null
+ * 生成随机效果值（已迁移到 skillEffectWhitelist.ts）
+ * @deprecated 请使用 skillEffectWhitelist.ts 中的 随机分配效果值
  */
 export function generateRandomEffectValue(域: string, 键: string): number | null {
   return 随机分配效果值(域, 键);
+}
+
+// ============================================================================
+// Prompt 格式化函数（供 AI prompt 引用白名单）
+// ============================================================================
+
+/**
+ * 格式化白名单为 AI prompt 可读的文本（按域分类，不含值范围）
+ * 用于生成技能时告诉 AI "可以用哪些域.键"
+ */
+export function formatWhitelistForPrompt(): string {
+  const parts: string[] = [];
+
+  // 派遣
+  const dispatch = SKILL_MOD_WHITELIST.派遣;
+  parts.push('## 派遣域（按子域分类）');
+  for (const [子域, 键列表] of Object.entries(dispatch)) {
+    parts.push(`### ${子域}`);
+    for (const 键 of 键列表) {
+      parts.push(`- ${键}`);
+    }
+  }
+
+  // 工坊
+  const workshop = SKILL_MOD_WHITELIST.工坊;
+  parts.push('\n## 工坊域（按子域分类）');
+  parts.push('### 通用（适用于所有工种）');
+  for (const 键 of workshop.通用) {
+    parts.push(`- ${键}`);
+  }
+  parts.push('### 工种专用');
+  for (const [工种, 键列表] of Object.entries(workshop)) {
+    if (工种 === '通用') continue;
+    parts.push(`#### ${工种}`);
+    for (const 键 of 键列表) {
+      parts.push(`- ${键}`);
+    }
+  }
+
+  // 猜谜
+  parts.push('\n## 猜谜域');
+  for (const 键 of SKILL_MOD_WHITELIST.猜谜) {
+    parts.push(`- ${键}`);
+  }
+
+  return parts.join('\n');
 }

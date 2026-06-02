@@ -1,10 +1,19 @@
 import { klona } from 'klona';
+import _ from 'lodash';
 import { z } from 'zod';
+import type { GameEvent } from './boardgame/types';
+import { useLatestMvuStore } from './latestMvuStore';
+import { PROMPT_BOARD_GAME_EVENT_POOL } from './prompts/boardGameEvent';
+import { PROMPT_DANMAKU, PROMPT_DANMAKU_AND_IMAGE } from './prompts/danmaku';
+import { buildDispatchPrompt } from './prompts/dispatch';
+import { buildRiddlePrompt } from './prompts/riddle';
+import { PROMPT_SHOP } from './prompts/shop';
+import { DEFAULT_PERSONALITY_PROMPT, SYSTEM_PERSONALITIES, type SystemPersonality } from './prompts/system';
+import { buildWorkshopOrdersUserPrompt, PROMPT_WORKSHOP_ORDERS } from './prompts/workshopOrder';
 import type { ComponentKey, ComponentSkin, ThemeDefinition } from './themes';
 import { getComponentSkin, getTheme } from './themes';
 import type { ImageTagBlock, MessageBlock } from './types/message';
-import type { 角色, 技能, DispatchRun, DispatchActive, 结算结果, 地图配置 } from './types/role';
-import type { GameEvent } from './boardgame/types';
+import type { DispatchActive, DispatchRun, 地图配置, 技能, 结算结果, 角色 } from './types/role';
 import {
   extractContentTag,
   extractDanmakuBlock,
@@ -14,15 +23,6 @@ import {
   parseMessageBlocks,
 } from './utils/messageParser';
 import { createVNLogger } from './utils/vnLogger';
-import {
-  buildRiddlePrompt,
-  DEFAULT_PERSONALITY_PROMPT,
-  PROMPT_BOARD_GAME_EVENT_POOL,
-  SYSTEM_PERSONALITIES,
-  type SystemPersonality,
-} from './allPrompts';
-import { useLatestMvuStore } from './latestMvuStore';
-import _ from 'lodash';
 import { clearResourceCache } from './utils/worldbookLoader';
 
 // ====== Types ======
@@ -274,30 +274,93 @@ export type ImageGenResponseData = {
   change?: string;
 };
 
-type DanmakuPayload = {
-  contentText: string;
-};
-type ShopPayload = { ordered_prompts: { role: 'system' | 'assistant' | 'user'; content: string }[] };
-type SystemPayload = {
-  ordered_prompts: { role: 'system' | 'assistant' | 'user'; content: string }[];
-  injects?: { depth: number; role: 'system' | 'assistant' | 'user'; content: string }[];
-};
-type RiddlePayload = { ordered_prompts: { role: 'system' | 'assistant' | 'user'; content: string }[] };
-type ImageTagPayload = { contentText: string };
-type BoardGameEventPayload = {
-  contentText: string;
-  systemPrompt?: string;
-};
-type RoleProfilePayload = { ordered_prompts: { role: 'system' | 'assistant' | 'user'; content: string }[] };
+type OrderedPrompt = { role: 'system' | 'assistant' | 'user'; content: string };
 
-type SecondApiPayload =
-  | DanmakuPayload
-  | ShopPayload
-  | SystemPayload
-  | RiddlePayload
-  | ImageTagPayload
-  | BoardGameEventPayload
-  | RoleProfilePayload;
+export type SecondApiPayload = {
+  ordered_prompts: OrderedPrompt[];
+};
+
+// ====== Second API Config Types ======
+
+/** 所有 task 标识的联合类型 */
+export type SecondApiTask =
+  | 'danmaku'
+  | 'shop'
+  | 'system'
+  | 'riddle'
+  | 'imageTag'
+  | 'danmakuAndImageGen'
+  | 'boardGameEvent'
+  | 'roleProfile'
+  | 'workshopOrder'
+  | 'dispatchStory';
+
+/** 通用基础配置 */
+interface BaseTaskConfig {
+  task: SecondApiTask;
+  silent?: boolean;
+}
+
+interface DispatchStoryConfig extends BaseTaskConfig {
+  task: 'dispatchStory';
+  userPrompt: string;
+}
+
+interface WorkshopOrderConfig extends BaseTaskConfig {
+  task: 'workshopOrder';
+  userPrompt: string;
+}
+
+interface ShopConfig extends BaseTaskConfig {
+  task: 'shop';
+}
+
+interface BoardGameEventConfig extends BaseTaskConfig {
+  task: 'boardGameEvent';
+  sceneText: string;
+}
+
+interface RoleProfileConfig extends BaseTaskConfig {
+  task: 'roleProfile';
+  systemPrompt: string;
+}
+
+interface RiddleConfig extends BaseTaskConfig {
+  task: 'riddle';
+  personalityPrompt: string;
+  chatLogText: string;
+  latestHint: string;
+}
+
+interface SystemConfig extends BaseTaskConfig {
+  task: 'system';
+  personalityId: string;
+  manualHistory: { role: 'assistant' | 'user'; content: string }[];
+  userInput: string;
+  context?: string;
+}
+
+interface DanmakuConfig extends BaseTaskConfig {
+  task: 'danmaku' | 'danmakuAndImageGen';
+  contentText: string;
+}
+
+interface ImageTagConfig extends BaseTaskConfig {
+  task: 'imageTag';
+  sceneDescription: string;
+}
+
+/** 第二 API 调用配置的联合类型 */
+export type SecondApiConfig =
+  | DispatchStoryConfig
+  | WorkshopOrderConfig
+  | ShopConfig
+  | BoardGameEventConfig
+  | RoleProfileConfig
+  | RiddleConfig
+  | SystemConfig
+  | DanmakuConfig
+  | ImageTagConfig;
 
 const VNGameData = z
   .object({
@@ -761,71 +824,28 @@ export const useVNStore = defineStore('vn', () => {
     );
   });
 
-  // --- Second API Task Control Variables (MVU) ---
-  // 用于在调用第二API前临时控制哪些提示词生效（仅预设任务需要）
-  const secondApiTaskControl = ref({
-    danmaku: false,
-    imageGen: false,
-    shop: false,
-    boardGameEvent: false,
-    roleProfile: false,
-    workshopOrder: false,
-    dispatchStory: false,
-    // riddle 和 system 任务不使用预设，无需任务控制变量
-  });
-
   // --- Second API Error Tracking ---
   const secondApiLastErrorType = ref<'timeout' | 'network' | null>(null);
   const secondApiConsecutiveFailures = ref(0);
   const secondApiStatusOverride = ref<ProviderStatus>('available');
   const SECOND_API_DEGRADED_THRESHOLD = 3;
 
-  // 同步到聊天变量，供 EJS 使用（仅预设任务需要）
-  watchEffect(() => {
-    insertOrAssignVariables(
-      {
-        vn_task_danmaku: secondApiTaskControl.value.danmaku,
-        vn_task_imageGen: secondApiTaskControl.value.imageGen,
-        vn_task_shop: secondApiTaskControl.value.shop,
-        vn_task_boardGameEvent: secondApiTaskControl.value.boardGameEvent,
-        vn_task_roleProfile: secondApiTaskControl.value.roleProfile,
-        vn_task_workshopOrder: secondApiTaskControl.value.workshopOrder,
-        vn_task_dispatchStory: secondApiTaskControl.value.dispatchStory,
-        // riddle 和 system 任务不使用预设，无需同步变量
-      },
-      { type: 'chat' },
-    );
-  });
-
   // --- Character System State ---
   const _rawRoleVars = getVariables({ type: 'chat' });
-  const roleDbMap = ref<Record<string, 角色>>(
-    typeof _rawRoleVars?.role_db_map === 'object' && _rawRoleVars?.role_db_map !== null
-      ? (_rawRoleVars.role_db_map as Record<string, 角色>)
-      : {},
-  );
-  const roleMaxId = ref<number>(
-    typeof _rawRoleVars?.role_max_id === 'number' ? _rawRoleVars.role_max_id : 0,
-  );
+  const roleMaxId = ref<number>(typeof _rawRoleVars?.role_max_id === 'number' ? _rawRoleVars.role_max_id : 0);
   const roles = ref<Record<string, 角色>>(
     typeof _rawRoleVars?.roles === 'object' && _rawRoleVars?.roles !== null
       ? (_rawRoleVars.roles as Record<string, 角色>)
       : {},
   );
-  const skillsInventory = ref<技能[]>(
-    Array.isArray(_rawRoleVars?.skillsInventory) ? _rawRoleVars.skillsInventory : [],
-  );
-  const skillMaxId = ref<number>(
-    typeof _rawRoleVars?.skill_max_id === 'number' ? _rawRoleVars.skill_max_id : 0,
-  );
+  const skillsInventory = ref<技能[]>(Array.isArray(_rawRoleVars?.skillsInventory) ? _rawRoleVars.skillsInventory : []);
+  const skillMaxId = ref<number>(typeof _rawRoleVars?.skill_max_id === 'number' ? _rawRoleVars.skill_max_id : 0);
   const skillDbMap = ref<Record<string, 技能>>(
     typeof _rawRoleVars?.skill_db_map === 'object' && _rawRoleVars?.skill_db_map !== null
       ? (_rawRoleVars.skill_db_map as Record<string, 技能>)
       : {},
   );
-  const dispatchRuns = ref<DispatchRun[]>(
-    Array.isArray(_rawRoleVars?.dispatchRuns) ? _rawRoleVars.dispatchRuns : [],
-  );
+  const dispatchRuns = ref<DispatchRun[]>(Array.isArray(_rawRoleVars?.dispatchRuns) ? _rawRoleVars.dispatchRuns : []);
 
   // --- Dispatch System State ---
   const dispatchActive = ref<DispatchActive | null>(null);
@@ -835,15 +855,17 @@ export const useVNStore = defineStore('vn', () => {
 
   // 同步角色数据到聊天变量
   watchEffect(() => {
-    insertOrAssignVariables(klona({
-      role_db_map: roleDbMap.value,
-      role_max_id: roleMaxId.value,
-      roles: klona(roles.value),
-      skillsInventory: klona(skillsInventory.value),
-      skill_max_id: skillMaxId.value,
-      skill_db_map: klona(skillDbMap.value),
-      dispatchRuns: klona(dispatchRuns.value),
-    }), { type: 'chat' });
+    insertOrAssignVariables(
+      klona({
+        role_max_id: roleMaxId.value,
+        roles: klona(roles.value),
+        skillsInventory: klona(skillsInventory.value),
+        skill_max_id: skillMaxId.value,
+        skill_db_map: klona(skillDbMap.value),
+        dispatchRuns: klona(dispatchRuns.value),
+      }),
+      { type: 'chat' },
+    );
   });
 
   // ====== Character System Actions ======
@@ -853,7 +875,7 @@ export const useVNStore = defineStore('vn', () => {
   }
 
   function getRoleByName(name: string): 角色 | null {
-    return Object.values(roleDbMap.value).find(r => r.姓名 === name) ?? null;
+    return Object.values(roles.value).find(r => r.姓名 === name) ?? null;
   }
 
   function getAllRoles(): 角色[] {
@@ -863,12 +885,10 @@ export const useVNStore = defineStore('vn', () => {
   function addRole(role: 角色): void {
     const numPart = parseInt(role.id.split('_')[1] ?? '0', 10);
     if (numPart > roleMaxId.value) roleMaxId.value = numPart;
-    roleDbMap.value[role.id] = klona(role);
     roles.value[role.id] = klona(role);
   }
 
   function updateRole(role: 角色): void {
-    roleDbMap.value[role.id] = klona(role);
     roles.value[role.id] = klona(role);
   }
 
@@ -879,11 +899,7 @@ export const useVNStore = defineStore('vn', () => {
    * @param type - 记录类型
    * @param content - 内容（建议传 JSON 字符串，便于后续解析）
    */
-  function appendRoleLog(
-    roleId: string,
-    type: '派遣' | '工坊' | '通讯' | '其他',
-    content: string,
-  ): void {
+  function appendRoleLog(roleId: string, type: '派遣' | '工坊' | '通讯' | '其他', content: string): void {
     const role = roles.value[roleId];
     if (!role) {
       console.warn(`[store] appendRoleLog: 角色 ${roleId} 不存在`);
@@ -908,7 +924,6 @@ export const useVNStore = defineStore('vn', () => {
   }
 
   function deleteRole(id: string): void {
-    delete roleDbMap.value[id];
     delete roles.value[id];
   }
 
@@ -970,10 +985,28 @@ export const useVNStore = defineStore('vn', () => {
   }
 
   /**
+   * 从扫描器批量同步角色/技能数据到 pinia ref
+   *
+   * 扫描器在扫描完成后调用此函数，确保 store 的 ref 与聊天变量保持一致，
+   * 避免 store 的 watchEffect 把旧状态写回聊天变量导致数据丢失。
+   */
+  function syncRolesFromScanner(params: {
+    roles: Record<string, 角色>;
+    roleMaxId: number;
+    skillDbMap: Record<string, 技能>;
+    skillsInventory: 技能[];
+  }): void {
+    roles.value = klona(params.roles);
+    roleMaxId.value = params.roleMaxId;
+    skillsInventory.value = klona(params.skillsInventory);
+    skillDbMap.value = klona(params.skillDbMap);
+  }
+
+  /**
    * 处理聊天扫描器解析出的 CMD 结果
    *
    * scanner.ts 在扫描消息后，将解析结果通过此函数 dispatch 回 store，
-   * 由 store 统一更新 roleDbMap / roles / skillDbMap / skillsInventory 等状态。
+   * 由 store 统一更新 roles / skillDbMap / skillsInventory 等状态。
    * 后续 watchEffect 自动将状态同步到聊天变量。
    *
    * @param action - 扫描到的操作类型
@@ -1179,7 +1212,10 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
 纪念品：${run.结算结果?.纪念品?.join('、') || '无'}`;
 
     try {
-      const raw = await callSecondApi('dispatchStory', { contentText: userPrompt });
+      const raw = await callSecondApi({
+        task: 'dispatchStory',
+        userPrompt,
+      });
       return typeof raw === 'string' ? raw : '';
     } catch {
       console.warn('[Dispatch] 故事生成失败');
@@ -1217,32 +1253,34 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
   async function generateWorkshopOrder(scene?: string): Promise<WorkshopOrder | null> {
     const existingSkills = skillsInventory.value.map(s => `${s.名称}: ${s.描述}`).join('\n');
     const worldInfo = scene || '废土世界的日常工坊任务';
-
-    const userPrompt = `【当前剧情背景】
-${worldInfo}
-
-【工坊信息】
-- 工坊等级：${gameData.value.workshopLevel} 级
-- 已有技能：${existingSkills || '无'}
-
-请生成一个符合废土工坊风格的技能订单，格式如下：
-名称|描述|技能类型|建议属性|预计价格|预计mod`;
+    const userPrompt = buildWorkshopOrdersUserPrompt(
+      worldInfo,
+      gameData.value.workshopLevel,
+      Object.keys(roles.value).length,
+      existingSkills,
+    );
 
     try {
-      const raw = await callSecondApi('workshopOrder', { contentText: userPrompt });
+      const raw = await callSecondApi({
+        task: 'workshopOrder',
+        userPrompt,
+      });
       if (typeof raw !== 'string' || !raw.trim()) return null;
 
-      const lines = raw.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+      const lines = raw
+        .split('\n')
+        .map(l => l.trim())
+        .filter(l => l.length > 0);
       for (const line of lines) {
         const parts = line.split('|').map(p => p.trim());
-        if (parts.length >= 5) {
+        if (parts.length >= 4) {
           return {
-            名称: parts[0],
-            描述: parts[1] || '',
-            技能类型: parts[2] || '通用',
-            建议属性: parts[3] || '',
-            预计价格: parseInt(parts[4], 10) || 100,
-            预计mod: parts[5] ? parts[5].split(',').map(m => m.trim()) : [],
+            名称: parts[1] || '',
+            描述: parts[2] || '',
+            技能类型: parts[0] || '通用',
+            建议属性: '',
+            预计价格: Math.floor(Math.random() * 100) + 30,
+            预计mod: parts[3] ? parts[3].split(',').map(m => m.trim()) : [],
           };
         }
       }
@@ -1837,6 +1875,24 @@ ${worldInfo}
     await loadAllDialogues();
   });
 
+  // --- Worldbook Scan Debugging ---
+  eventOn(tavern_events.WORLDINFO_SCAN_DONE, data => {
+    console.group('[Worldbook Scan]');
+    console.info('扫描文本长度:', data.activated.text.length);
+    console.info('候选条目数:', data.new.all.length);
+    console.info('激活条目数:', data.new.successful.length);
+    if (data.new.successful.length > 0) {
+      for (const entry of data.new.successful) {
+        console.info(
+          `  激活: ${entry.comment ?? '(无标题)'} (keys: ${entry.key.join(', ')}, position: ${entry.position})`,
+        );
+      }
+    }
+    console.info('递归层级:', data.recursionDelay.currentLevel, '/', data.recursionDelay.availableLevels);
+    console.info('Token 预算:', data.budget.current, '溢出:', data.budget.overflowed);
+    console.groupEnd();
+  });
+
   // --- Derived ---
   const latestMvu = useLatestMvuStore();
   latestMvu.startAutoSync();
@@ -1846,7 +1902,8 @@ ${worldInfo}
     if (!raw || typeof raw !== 'object') return [] as InventoryItem[];
 
     return Object.entries(raw as Record<string, any>).map(([name, v]) => {
-      const description = typeof v?.描述 === 'string' ? v.描述 : typeof v?.description === 'string' ? v.description : '';
+      const description =
+        typeof v?.描述 === 'string' ? v.描述 : typeof v?.description === 'string' ? v.description : '';
       const quantity = Number(v?.数量 ?? v?.quantity ?? 0) || 0;
       const icon = typeof v?.图标 === 'string' ? v.图标 : typeof v?.icon === 'string' ? v.icon : undefined;
       return {
@@ -2542,7 +2599,9 @@ ${worldInfo}
           if (!boundCard) {
             // 不在队列，插入队列（即使已在队列中也要取到卡牌引用）
             const inserted = insertBindingToQueue(normalizedTitle);
-            boundCard = inserted ? imageCardQueue.value[imageCardQueue.value.length - 1] : findBoundCardInQueue(normalizedTitle);
+            boundCard = inserted
+              ? imageCardQueue.value[imageCardQueue.value.length - 1]
+              : findBoundCardInQueue(normalizedTitle);
           }
           if (boundCard) {
             console.info('[ImageGen] 绑定图从队列展示:', normalizedTitle);
@@ -2560,8 +2619,7 @@ ${worldInfo}
       if (existing) {
         if (canDirectDisplay) {
           const sceneHasBindingForType = Object.entries(sceneImageBindings.value).some(
-            ([key, binding]) =>
-              fuzzyMatchTitle(currentTitleAnchor, key) && binding.type === block.type
+            ([key, binding]) => fuzzyMatchTitle(currentTitleAnchor, key) && binding.type === block.type,
           );
           if (!sceneHasBindingForType) {
             console.info('[ImageGen] 使用队列已有图片:', block.title, 'prompt=', block.prompt.substring(0, 40));
@@ -2767,97 +2825,19 @@ ${worldInfo}
     return undefined;
   }
 
-  /** 将 boardGameEvent 的 systemPrompt 和 userMessage 组装成 ordered_prompts */
-  function buildBoardGamePrompts(payload: BoardGameEventPayload) {
-    const msgs: { role: 'system' | 'assistant' | 'user'; content: string }[] = [];
-    if (payload.systemPrompt) {
-      msgs.push({ role: 'system', content: payload.systemPrompt });
-    }
-    msgs.push({ role: 'user', content: payload.contentText });
-    return msgs;
-  }
-
   // --- Second API unified entry ---
-  async function callSecondApi(
-    task: 'danmaku' | 'shop' | 'system' | 'riddle' | 'imageTag' | 'danmakuAndImageGen' | 'boardGameEvent' | 'roleProfile' | 'workshopOrder' | 'dispatchStory',
-    payload: SecondApiPayload,
-  ): Promise<string[] | ShopItem[] | string> {
+  async function callSecondApi(config: SecondApiConfig): Promise<string[] | ShopItem[] | string> {
+    const { task, silent = false } = config;
+
+    // 配置检查
     const url = settings.value.secondApiUrl?.trim();
     const key = settings.value.secondApiKey?.trim();
     if (!url || !key) {
-      showToast('第二 API 未配置');
+      if (!silent) showToast('第二 API 未配置');
       vnLog.warn('secondApi', 'second api not configured', { task });
-      return task === 'shop' ? [] : task === 'danmaku' || task === 'danmakuAndImageGen' ? [] : '';
+      return task === 'shop' ? [] : '';
     }
     const model = settings.value.secondApiModel?.trim() || 'gpt-3.5-turbo';
-
-    // 获取预设名称（猜谜和系统聊天任务不使用预设）
-    const presetName = settings.value.secondApiPreset?.trim();
-
-    // 构建 ordered_prompts，不再硬编码提示词，完全依赖预设中的 EJS
-    const danmakuPayload = payload as DanmakuPayload;
-    const boardGameEventPayload = payload as BoardGameEventPayload;
-    const ordered_prompts: { role: 'system' | 'assistant' | 'user'; content: string }[] =
-      task === 'danmaku' || task === 'danmakuAndImageGen'
-        ? [{ role: 'user', content: danmakuPayload.contentText }]
-        : task === 'boardGameEvent'
-          ? buildBoardGamePrompts(boardGameEventPayload)
-          : task === 'roleProfile'
-            ? (payload as { ordered_prompts: { role: 'system' | 'assistant' | 'user'; content: string }[] }).ordered_prompts
-            : (payload as RiddlePayload).ordered_prompts || [];
-
-    // 猜谜和系统聊天任务不使用预设，直接用代码中构造的提示词
-    // roleProfile 不使用预设，ordered_prompts 由调用方构建
-    const usePreset = presetName && task !== 'riddle' && task !== 'system' && task !== 'roleProfile';
-    let currentPreset: string | null = null;
-    if (usePreset) {
-      try {
-        // 保存当前预设
-        currentPreset = getLoadedPresetName();
-        // 加载指定预设
-        await loadPreset(presetName);
-        vnLog.info('secondApi', 'preset loaded', { task, presetName });
-      } catch (e) {
-        vnLog.warn('secondApi', 'preset load failed', {
-          task,
-          presetName,
-          error: e instanceof Error ? e.message : String(e),
-        });
-      }
-    } else if (presetName) {
-      vnLog.info('secondApi', 'skip preset load (riddle/system)', { task, presetName });
-    }
-
-    // 设置任务控制变量（在发送前临时修改，仅预设任务需要）
-    const taskControlBackup = { ...secondApiTaskControl.value };
-
-    // 重置所有任务开关为 false
-    Object.keys(secondApiTaskControl.value).forEach(key => {
-      secondApiTaskControl.value[key as keyof typeof secondApiTaskControl.value] = false;
-    });
-
-    // 只开启当前任务对应的开关（riddle 和 system 任务不使用预设，无需设置）
-    if (task === 'danmaku') {
-      secondApiTaskControl.value.danmaku = true;
-    } else if (task === 'imageTag') {
-      secondApiTaskControl.value.imageGen = true;
-    } else if (task === 'shop') {
-      secondApiTaskControl.value.shop = true;
-    } else if (task === 'boardGameEvent') {
-      secondApiTaskControl.value.boardGameEvent = true;
-    } else if (task === 'danmakuAndImageGen') {
-      // 弹幕和生图合并调用，同时开启两个开关
-      secondApiTaskControl.value.danmaku = true;
-      secondApiTaskControl.value.imageGen = true;
-    } else if (task === 'roleProfile') {
-      // 角色生成不使用预设，ordered_prompts 由调用方构建（payload 必须是 RoleProfilePayload）
-      // 跳过任务控制变量设置
-    }
-    // riddle 和 system 任务不使用预设，跳过任务控制变量设置
-
-    // 等待变量同步（watchEffect 是异步的，需要等待下一个 tick）
-    await nextTick();
-    vnLog.debug('secondApi', 'task control set', { task, taskControl: { ...secondApiTaskControl.value } });
 
     const custom_api = {
       apiurl: url,
@@ -2870,7 +2850,7 @@ ${worldInfo}
       top_k: settings.value.secondApiTopK === 'unset' ? undefined : settings.value.secondApiTopK,
     };
 
-    const doRequest = async (): Promise<string> => {
+    const doRequest = async (ordered_prompts: OrderedPrompt[]): Promise<string> => {
       const result = await Promise.race([
         generateRaw({ custom_api, should_stream: false, should_silence: true, ordered_prompts }),
         new Promise<never>((_, reject) =>
@@ -2883,36 +2863,20 @@ ${worldInfo}
       return typeof result === 'string' ? result : String(result ?? '');
     };
 
-    // 调试日志：输出完整提示词（只输出摘要，避免刷屏）
-    vnLog.info('secondApi', 'request prepared', {
-      task,
-      model,
-      usePreset: !!usePreset,
-      presetName: presetName || null,
-      orderedPromptsLen: ordered_prompts.length,
-    });
+    vnLog.info('secondApi', 'request prepared', { task, model });
 
-    // 过滤世界书条目，仅保留 targetApi 为 'second' 或 'both' 的条目
-    let worldbookStates: WorldbookEntryState[] = [];
-    try {
-      worldbookStates = await filterAndApplyWorldbookForSecondApi();
-    } catch (e) {
-      console.warn('[SecondAPI] 世界书过滤失败，继续请求:', e);
-    }
+    // ========== 按 task 分发构建 ordered_prompts ==========
 
-    try {
-      for (let attempt = 0; attempt <= SECOND_API_RETRY_COUNT; attempt++) {
+    switch (task) {
+      case 'danmaku':
+      case 'danmakuAndImageGen': {
+        const { contentText } = config as DanmakuConfig;
+        const ordered_prompts: OrderedPrompt[] = [
+          { role: 'system', content: task === 'danmaku' ? PROMPT_DANMAKU : PROMPT_DANMAKU_AND_IMAGE },
+          { role: 'user', content: contentText },
+        ];
         try {
-          const raw = await doRequest();
-          secondApiConsecutiveFailures.value = 0;
-          secondApiStatusOverride.value = 'available';
-
-          // 弹幕和生图合并调用的解析
-          if (task === 'danmakuAndImageGen') {
-            // 返回原始字符串，由调用方自行解析弹幕和生图标签
-            return raw;
-          }
-
+          const raw = await doRequest(ordered_prompts);
           if (task === 'danmaku') {
             const lines = raw
               .split(/\n/)
@@ -2920,90 +2884,194 @@ ${worldInfo}
               .filter(Boolean);
             return lines;
           }
-          if (task === 'shop') {
-            const items: ShopItem[] = [];
-            // 支持: id|名称|图标|描述|价格|tags?
-            const lineRegex = /^(?:([^|｜]+?)\s*[|｜]\s*)?(.+?)\s*[|｜]\s*(.+?)\s*[|｜]\s*(.+?)\s*[|｜]\s*(\d+)\s*(?:[|｜]\s*(.+?)\s*)?$/;
-            for (const line of raw
-              .split(/\n/)
-              .map(s => s.trim())
-              .filter(Boolean)) {
-              const m = line.match(lineRegex);
-              if (!m) continue;
-
-              const rawId = (m[1] ?? '').trim();
-              const name = (m[2] ?? '').trim();
-              const icon = (m[3] ?? '').trim();
-              const effect = (m[4] ?? '').trim();
-              const price = Number((m[5] ?? '').trim());
-              const tagsRaw = (m[6] ?? '').trim();
-
-              const tags = tagsRaw ? tagsRaw.split(/[,，\s]+/).map(s => s.trim()).filter(Boolean) : undefined;
-
-              items.push({
-                id: rawId || `s${Date.now()}_${items.length}`,
-                name,
-                icon: icon || undefined,
-                effect,
-                price: Number.isFinite(price) ? price : 0,
-                tags,
-              });
-            }
-            if (items.length === 0) {
-              try {
-                const parsed = JSON.parse(raw) as { id?: string; name?: string; icon?: string; effect?: string; price?: number; tags?: string[] }[];
-                if (Array.isArray(parsed))
-                  parsed.forEach((p, i) =>
-                    items.push({
-                      id: p.id || `s${Date.now()}_${i}`,
-                      name: p.name ?? '',
-                      icon: p.icon,
-                      effect: p.effect ?? '',
-                      price: Number(p.price) || 0,
-                      tags: Array.isArray(p.tags) ? p.tags : undefined,
-                    }),
-                  );
-              } catch {
-                /* ignore */
-              }
-            }
-            return items;
-          }
           return raw;
-        } catch {
-          secondApiConsecutiveFailures.value++;
-          if (secondApiConsecutiveFailures.value >= SECOND_API_DEGRADED_THRESHOLD)
-            secondApiStatusOverride.value = 'degraded';
-        }
-      }
-      showToast(task === 'shop' ? '商店解析失败' : '请求失败');
-      if (task === 'shop') return [];
-      return '';
-    } finally {
-      // 恢复任务控制变量
-      Object.assign(secondApiTaskControl.value, taskControlBackup);
-      await nextTick();
-      console.info(`[SecondAPI] 任务控制变量已恢复:`, secondApiTaskControl.value);
-
-      // 恢复原预设
-      if (currentPreset && presetName) {
-        try {
-          await loadPreset(currentPreset);
-          console.info(`[SecondAPI] 已恢复预设: ${currentPreset}`);
         } catch (e) {
-          console.warn(`[SecondAPI] 恢复预设失败: ${currentPreset}`, e);
+          console.error('[SecondAPI] danmaku 请求异常:', e);
+          return '';
         }
       }
 
-      // 恢复世界书条目的原始状态
-      if (worldbookStates.length > 0) {
+      case 'shop': {
+        const context = await buildSecondApiContext({ maxChatHistory: 20 });
+        const ordered_prompts: OrderedPrompt[] = [
+          ...context,
+          { role: 'system', content: PROMPT_SHOP },
+          { role: 'user', content: '请生成废土风格的商店商品列表。' },
+        ];
         try {
-          await restoreWorldbookStates(worldbookStates);
+          const raw = await doRequest(ordered_prompts);
+          return parseShopResult(raw);
         } catch (e) {
-          console.warn('[SecondAPI] 恢复世界书状态失败:', e);
+          console.error('[SecondAPI] shop 请求异常:', e);
+          return [];
         }
+      }
+
+      case 'boardGameEvent': {
+        const { sceneText } = config as BoardGameEventConfig;
+        const context = await buildSecondApiContext({ maxChatHistory: 20 });
+        const ordered_prompts: OrderedPrompt[] = [
+          ...context,
+          { role: 'system', content: PROMPT_BOARD_GAME_EVENT_POOL },
+          { role: 'user', content: `当前场景：${sceneText}` },
+        ];
+        try {
+          return await doRequest(ordered_prompts);
+        } catch (e) {
+          console.error('[SecondAPI] boardGameEvent 请求异常:', e);
+          return '';
+        }
+      }
+
+      case 'roleProfile': {
+        const { systemPrompt } = config as RoleProfileConfig;
+        const context = await buildSecondApiContext({ maxChatHistory: 20 });
+        const ordered_prompts: OrderedPrompt[] = [...context, { role: 'system', content: systemPrompt }];
+        try {
+          return await doRequest(ordered_prompts);
+        } catch (e) {
+          console.error('[SecondAPI] roleProfile 请求异常:', e);
+          return '';
+        }
+      }
+
+      case 'riddle': {
+        const { personalityPrompt, chatLogText, latestHint } = config as RiddleConfig;
+        const systemPrompt = buildRiddlePrompt(personalityPrompt, chatLogText, latestHint);
+        const ordered_prompts: OrderedPrompt[] = [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: '请回复你的猜测。' },
+        ];
+        try {
+          return await doRequest(ordered_prompts);
+        } catch (e) {
+          console.error('[SecondAPI] riddle 请求异常:', e);
+          return '';
+        }
+      }
+
+      case 'system': {
+        const { personalityId, manualHistory, userInput, context } = config as SystemConfig;
+        const personality = SYSTEM_PERSONALITIES.find(p => p.id === personalityId);
+        if (!personality) {
+          if (!silent) showToast('未找到指定人格');
+          return '';
+        }
+        const contextPrompts = await buildSecondApiContext({ includeChatHistory: false });
+        const ordered_prompts: OrderedPrompt[] = [
+          ...contextPrompts,
+          { role: 'system', content: personality.systemPrompt },
+          ...manualHistory,
+        ];
+        // 剧情参考注入：插入到用户输入之前
+        if (context) {
+          ordered_prompts.push(
+            { role: 'user', content: `[剧情参考]\n${context}` },
+            { role: 'assistant', content: '好的，我已了解相关剧情内容。' },
+          );
+        }
+        ordered_prompts.push({ role: 'user', content: userInput });
+        try {
+          return await doRequest(ordered_prompts);
+        } catch (e) {
+          console.error('[SecondAPI] system 请求异常:', e);
+          return '';
+        }
+      }
+
+      case 'workshopOrder': {
+        const { userPrompt } = config as WorkshopOrderConfig;
+        const context = await buildSecondApiContext({ includeWorldbook: true });
+        const ordered_prompts: OrderedPrompt[] = [
+          ...context,
+          { role: 'system', content: PROMPT_WORKSHOP_ORDERS },
+          { role: 'user', content: userPrompt },
+        ];
+        try {
+          return await doRequest(ordered_prompts);
+        } catch (e) {
+          console.error('[SecondAPI] workshopOrder 请求异常:', e);
+          return '';
+        }
+      }
+
+      case 'dispatchStory': {
+        const { userPrompt } = config as DispatchStoryConfig;
+        // dispatchStory 走 generate()，世界书自动注入
+        try {
+          const result = await generate({
+            user_input: buildDispatchPrompt('', { 区域: '', 遭遇类型: '结算', 奖励: '' }) + '\n\n' + userPrompt,
+          });
+          return result;
+        } catch (e) {
+          console.error('[SecondAPI] dispatchStory 请求异常:', e);
+          return '';
+        }
+      }
+
+      default:
+        throw new Error(`Unknown task: ${(config as any).task}`);
+    }
+  }
+
+  /** 解析商店结果 */
+  function parseShopResult(raw: string): ShopItem[] {
+    const items: ShopItem[] = [];
+    const lineRegex =
+      /^(?:([^|｜]+?)\s*[|｜]\s*)?(.+?)\s*[|｜]\s*(.+?)\s*[|｜]\s*(.+?)\s*[|｜]\s*(\d+)\s*(?:[|｜]\s*(.+?)\s*)?$/;
+    for (const line of raw
+      .split(/\n/)
+      .map(s => s.trim())
+      .filter(Boolean)) {
+      const m = line.match(lineRegex);
+      if (!m) continue;
+      const rawId = (m[1] ?? '').trim();
+      const name = (m[2] ?? '').trim();
+      const icon = (m[3] ?? '').trim();
+      const effect = (m[4] ?? '').trim();
+      const price = Number((m[5] ?? '').trim());
+      const tagsRaw = (m[6] ?? '').trim();
+      const tags = tagsRaw
+        ? tagsRaw
+            .split(/[,，\s]+/)
+            .map(s => s.trim())
+            .filter(Boolean)
+        : undefined;
+      items.push({
+        id: rawId || `s${Date.now()}_${items.length}`,
+        name,
+        icon: icon || undefined,
+        effect,
+        price: Number.isFinite(price) ? price : 0,
+        tags,
+      });
+    }
+    if (items.length === 0) {
+      try {
+        const parsed = JSON.parse(raw) as {
+          id?: string;
+          name?: string;
+          icon?: string;
+          effect?: string;
+          price?: number;
+          tags?: string[];
+        }[];
+        if (Array.isArray(parsed))
+          parsed.forEach((p2, i) =>
+            items.push({
+              id: p2.id || `s${Date.now()}_${i}`,
+              name: p2.name ?? '',
+              icon: p2.icon,
+              effect: p2.effect ?? '',
+              price: Number(p2.price) || 0,
+              tags: Array.isArray(p2.tags) ? p2.tags : undefined,
+            }),
+          );
+      } catch {
+        /* ignore */
       }
     }
+    return items;
   }
 
   function setSecondApiDegraded(reason: 'model_fetch' | 'timeout') {
@@ -3014,6 +3082,100 @@ ${worldInfo}
     console.info('[SecondAPI] Cleared degraded status');
   }
 
+  // ====== Second API Context Builder ======
+  // ordered_prompts 里的 PlaceholderPrompt 字符串（如 'world_info_after'、'char_personality'）
+  // 会被 generateRaw 原样发给 AI，不会自动解析。
+  // 因此需要手动获取实际内容，构建真实的 RolePrompt 数组。
+
+  /**
+   * 获取角色卡的角色设定文本
+   */
+  async function getCharPersonalityText(): Promise<string> {
+    try {
+      const char = await getCharacter('current');
+      return char?.description ?? '';
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * 获取聊天历史文本（格式：[角色名] 消息内容）
+   */
+  function getChatHistoryText(maxMessages: number = 20): string {
+    try {
+      const lastId = getLastMessageId();
+      const messages = getChatMessages(`0-${lastId}`, { hide_state: 'unhidden' });
+      const recent = messages.slice(-maxMessages);
+      return recent.map(m => `[${m.name}] ${m.message}`).join('\n');
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * 构建第二 API 调用所需的上下文 RolePrompt 数组。
+   * 手动获取世界书（仅 targetApi='second' 或 'both' 的条目）、角色设定、聊天历史，
+   * 避免依赖 generateRaw 无法解析的 PlaceholderPrompt 字符串。
+   *
+   * @param options.worldbookFilter - 过滤世界书条目的函数，默认仅包含 targetApi 为 'second' 或 'both' 的条目
+   * @param options.maxChatHistory - 聊天历史最大条数，默认 20
+   * @param options.includeWorldbook - 是否包含世界书，默认 true
+   * @param options.includeChatHistory - 是否包含聊天历史，默认 true
+   */
+  async function buildSecondApiContext(
+    options: {
+      worldbookFilter?: (entry: WorldbookEntryEnhanced) => boolean;
+      maxChatHistory?: number;
+      includeWorldbook?: boolean;
+      includeChatHistory?: boolean;
+    } = {},
+  ): Promise<{ role: 'system'; content: string }[]> {
+    const { maxChatHistory = 20, includeWorldbook = true, includeChatHistory = true } = options;
+
+    const prompts: { role: 'system'; content: string }[] = [];
+
+    // 世界书
+    if (includeWorldbook) {
+      try {
+        const entries = await getEnhancedWorldbook();
+        const filter =
+          options.worldbookFilter ??
+          (e => {
+            const target = e.targetApi ?? 'main';
+            return target === 'second' || target === 'both';
+          });
+        const filtered = entries.filter(filter).filter(e => e.enabled);
+        if (filtered.length > 0) {
+          const worldbookText = filtered.map(e => `【${e.name}】\n${e.content}`).join('\n\n');
+          prompts.push({ role: 'system', content: worldbookText });
+        }
+      } catch (e) {
+        console.warn('[SecondAPI] 获取世界书失败:', e);
+      }
+    }
+
+    // 角色设定
+    try {
+      const charText = await getCharPersonalityText();
+      if (charText) {
+        prompts.push({ role: 'system', content: charText });
+      }
+    } catch (e) {
+      console.warn('[SecondAPI] 获取角色设定失败:', e);
+    }
+
+    // 聊天历史
+    if (includeChatHistory) {
+      const chatText = getChatHistoryText(maxChatHistory);
+      if (chatText) {
+        prompts.push({ role: 'system', content: chatText });
+      }
+    }
+
+    return prompts;
+  }
+
   /** Called from index.ts on GENERATION_ENDED; runs danmaku request and queues push with 200ms–3s spacing */
   async function triggerDanmakuForMessage(message_id: number) {
     if (!settings.value.danmakuEnabled) return;
@@ -3022,7 +3184,10 @@ ${worldInfo}
     const contentText = extractContentTag(raw);
     if (!contentText) return;
     try {
-      const lines = (await callSecondApi('danmaku', { contentText })) as string[];
+      const lines = (await callSecondApi({
+        task: 'danmaku',
+        contentText,
+      })) as string[];
       if (lines.length === 0) return;
 
       // 清空旧弹幕并初始化轨道
@@ -3158,112 +3323,6 @@ ${worldInfo}
     }
   }
 
-  // ====== Worldbook API Filtering for Second API ======
-
-  type WorldbookEntryState = {
-    worldbookName: string;
-    uid: number;
-    originalEnabled: boolean;
-  };
-
-  /**
-   * 过滤世界书条目，仅保留 targetApi 为 'second' 或 'both' 的条目
-   * 用于在调用第二 API 前临时调整世界书
-   *
-   * @returns 记录所有被修改的条目状态，用于调用后恢复
-   */
-  async function filterAndApplyWorldbookForSecondApi(): Promise<WorldbookEntryState[]> {
-    const names = getAllCurrentWorldbookNames();
-    const modifiedStates: WorldbookEntryState[] = [];
-
-    for (const name of names) {
-      try {
-        const entries = await getWorldbook(name);
-        const needsUpdate = entries.filter(e => {
-          const targetApi = (e.extra?.targetApi as 'main' | 'second' | 'both') ?? 'main';
-          // 如果条目应该只发送给主 API，则临时禁用它
-          if (targetApi === 'main' && e.enabled) {
-            return true;
-          }
-          return false;
-        });
-
-        if (needsUpdate.length > 0) {
-          // 记录原始状态
-          for (const entry of needsUpdate) {
-            modifiedStates.push({
-              worldbookName: name,
-              uid: entry.uid,
-              originalEnabled: entry.enabled,
-            });
-          }
-
-          // 临时禁用这些条目
-          await updateWorldbookWith(
-            name,
-            wb =>
-              wb.map(e => {
-                const targetApi = (e.extra?.targetApi as 'main' | 'second' | 'both') ?? 'main';
-                if (targetApi === 'main' && e.enabled) {
-                  return { ...e, enabled: false };
-                }
-                return e;
-              }),
-            { render: 'immediate' },
-          );
-          console.info(`[Worldbook] 已临时禁用 ${needsUpdate.length} 个主 API 专用条目（世界书: ${name}）`);
-        }
-      } catch (e) {
-        console.warn(`[Worldbook] 过滤世界书 "${name}" 失败:`, e);
-      }
-    }
-
-    return modifiedStates;
-  }
-
-  /**
-   * 恢复世界书条目的原始状态
-   */
-  async function restoreWorldbookStates(states: WorldbookEntryState[]): Promise<void> {
-    // 按世界书分组
-    const grouped = new Map<string, WorldbookEntryState[]>();
-    for (const state of states) {
-      const list = grouped.get(state.worldbookName) ?? [];
-      list.push(state);
-      grouped.set(state.worldbookName, list);
-    }
-
-    // 逐个世界书恢复
-    for (const [worldbookName, stateList] of grouped) {
-      try {
-        await updateWorldbookWith(
-          worldbookName,
-          wb =>
-            wb.map(e => {
-              const state = stateList.find(s => s.uid === e.uid);
-              if (state) {
-                return { ...e, enabled: state.originalEnabled };
-              }
-              return e;
-            }),
-          { render: 'immediate' },
-        );
-        console.info(`[Worldbook] 已恢复 ${stateList.length} 个条目状态（世界书: ${worldbookName}）`);
-      } catch (e) {
-        console.warn(`[Worldbook] 恢复世界书 "${worldbookName}" 状态失败:`, e);
-      }
-    }
-  }
-
-  // Watch feature toggles and update worldbook auto-control
-  watch(
-    () => [settings.value.danmakuEnabled, settings.value.imageGenEnabled],
-    async () => {
-      await updateWorldbookAutoControl();
-    },
-  );
-
-  // --- Persisted UI state (localStorage) ---
   function loadUserCharacterFromStorage(): UserCharacter {
     try {
       const raw = localStorage.getItem('vn_galgame_user_character');
@@ -3731,17 +3790,12 @@ ${worldInfo}
     const chatLogText = hist.map(m => (m.role === 'ai' ? `对方：${m.text}` : `你：${m.text}`)).join('\n');
     const latestHint = hist.length > 0 ? hist[hist.length - 1]!.text : '';
 
-        const systemPromptContent = buildRiddlePrompt(
-          personalityPrompt,
-          chatLogText,
-          latestHint,
-        );
-
-    const ordered_prompts: { role: 'system' | 'assistant' | 'user'; content: string }[] = [
-      { role: 'system', content: systemPromptContent },
-      { role: 'user', content: '请回复你的猜测。' },
-    ];
-    const raw = (await callSecondApi('riddle', { ordered_prompts })) as string;
+    const raw = (await callSecondApi({
+      task: 'riddle',
+      personalityPrompt,
+      chatLogText,
+      latestHint,
+    })) as string;
     const reply = raw?.trim() || '让我再想想…';
     const result = addRiddleAiReply(reply);
     return { ...result, reply };
@@ -3786,7 +3840,7 @@ ${worldInfo}
     shopGenerationId.value++;
     const genId = shopGenerationId.value;
     try {
-      const result = await callSecondApi('shop', { ordered_prompts: [] });
+      const result = await callSecondApi({ task: 'shop' });
       if (genId !== shopGenerationId.value) return;
       shopItems.value = result as ShopItem[];
       if (shopItems.value.length === 0) {
@@ -3835,12 +3889,15 @@ ${worldInfo}
     }
 
     try {
-      const raw = (await callSecondApi('boardGameEvent', {
-        contentText: `当前场景：${sceneText}`,
-        systemPrompt: PROMPT_BOARD_GAME_EVENT_POOL,
+      const raw = (await callSecondApi({
+        task: 'boardGameEvent',
+        sceneText,
       })) as string;
 
-      const lines = raw.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+      const lines = raw
+        .split('\n')
+        .map(l => l.trim())
+        .filter(l => l.length > 0);
       const events: GameEvent[] = [];
 
       for (let i = 0; i < lines.length; i++) {
@@ -4269,7 +4326,6 @@ ${worldInfo}
     // 普通末世通讯流程
     hist.push({ role: 'user', text: userText });
     const personality = SYSTEM_PERSONALITIES.find(p => p.id === personalityId);
-    const systemPrompt = personality?.systemPrompt ?? '你是一个助手。';
 
     const historyPrompts = hist.slice(0, -1).reduce<{ role: 'assistant' | 'user'; content: string }[]>((acc, m) => {
       if (m.role === 'user') acc.push({ role: 'user', content: m.text });
@@ -4277,25 +4333,18 @@ ${worldInfo}
       return acc;
     }, []);
 
-    // 构建 ordered_prompts，如果有剧情参考则插入到用户输入之前
-    const ordered_prompts: { role: 'system' | 'assistant' | 'user'; content: string }[] = [
-      { role: 'system', content: systemPrompt },
+    lastSystemPrompts.value = [
+      { role: 'system', content: personality?.systemPrompt ?? '你是一个助手。' },
       ...historyPrompts,
     ];
-
-    // 剧情参考注入：插入到用户输入之前
-    if (options?.context) {
-      ordered_prompts.push(
-        { role: 'user', content: `[剧情参考]\n${options.context}` },
-        { role: 'assistant', content: '好的，我已了解相关剧情内容。' },
-      );
-    }
-
-    ordered_prompts.push({ role: 'user', content: userText });
-
-    lastSystemPrompts.value = ordered_prompts;
     try {
-      const reply = (await callSecondApi('system', { ordered_prompts })) as string;
+      const reply = (await callSecondApi({
+        task: 'system',
+        personalityId,
+        manualHistory: historyPrompts,
+        userInput: userText,
+        context: options?.context,
+      })) as string;
       if (!reply) {
         const model = settings.value.secondApiModel?.trim();
         if (!model) {
@@ -4503,6 +4552,7 @@ ${worldInfo}
     setSecondApiDegraded,
     clearSecondApiDegraded,
     callSecondApi,
+    buildSecondApiContext,
     triggerDanmakuForMessage,
     imageApiStatus,
     stageBackgroundImage,
@@ -4686,10 +4736,7 @@ ${worldInfo}
     getEnhancedWorldbook,
     updateWorldbookEntry,
     updateWorldbookAutoControl,
-    filterAndApplyWorldbookForSecondApi,
-    restoreWorldbookStates,
     // Character system
-    roleDbMap,
     roleMaxId,
     roles,
     skillsInventory,
@@ -4713,6 +4760,7 @@ ${worldInfo}
     deleteSkill,
     appendDispatchRun,
     getAvailableRoles,
+    syncRolesFromScanner,
     // Dispatch system
     dispatchActive,
     dispatchMapConfig,
