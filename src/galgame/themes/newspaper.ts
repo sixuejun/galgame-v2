@@ -155,6 +155,13 @@ export const newspaperTheme: ThemeDefinition = {
     '--theme-choice-send-btn-hover-color': 'rgba(139, 69, 19, 1)',
     '--theme-choice-send-btn-disabled-color': 'rgba(139, 125, 107, 0.35)',
 
+    // 弹幕
+    // 顶部偏移需大于 0.75em(顶距) + 3×2.5em(3 个按钮) + 2×0.5em(2 个 gap) ≈ 9rem
+    // 留一点 buffer，避免字体放大时穿入按钮区
+    '--theme-danmaku-top-offset': '10rem',
+    '--theme-danmaku-bottom-offset': '8rem',
+    '--theme-danmaku-horizontal-padding': '1rem',
+
     // 输入面板
     '--theme-input-backdrop': 'rgba(42, 36, 32, 0.3)',
     '--theme-input-title-color': 'rgba(212, 197, 160, 0.85)',

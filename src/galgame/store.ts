@@ -23,7 +23,6 @@ import {
   parseMessageBlocks,
 } from './utils/messageParser';
 import { createVNLogger } from './utils/vnLogger';
-import { clearResourceCache } from './utils/worldbookLoader';
 
 // ====== Types ======
 
@@ -215,6 +214,8 @@ const VNSettings = z
     danmakuEnabled: z.boolean().default(false),
     danmakuSpeed: z.number().min(1).max(10).default(5),
     danmakuLoop: z.boolean().default(false),
+    // 循环时长（秒）：一轮弹幕从开始到全部消失的间隔
+    danmakuLoopDuration: z.number().min(2).max(60).default(10),
     danmakuDisplay: z.enum(['full', 'half', 'third']).default('third'),
     danmakuColor: z.string().default('#ffffff'),
     danmakuFontSize: z.number().min(0.8).max(2.5).default(1.2),
@@ -235,6 +236,7 @@ const VNSettings = z
     cgGenEnabled: z.boolean().default(false),
     imageCardWheelEnabled: z.boolean().default(true), // 卡片轮盘开关（默认开启）
     imageGenPriority: z.enum(['cg', 'background']).default('cg'),
+    autoStageGeneratedImage: z.boolean().default(false), // 生图完成后自动将第一张图片绑定到当前场景并显示到舞台
     // API task config
     apiTaskDanmaku: z.enum(['main', 'second', 'disabled']).default('second'),
     apiTaskImageTag: z.enum(['main', 'second', 'disabled']).default('second'),
@@ -1421,7 +1423,40 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
   // ============================================================
 
   /**
-   * 历史面板当前预览的楼层索引（dialogues 中的物理索引）。
+   * 可见楼层的物理索引列表（跳过 user 和隐藏楼层）。
+   * 历史面板的显示序号、跳转逻辑都基于这个列表的索引（display index）。
+   */
+  const visibleFloorIndices = computed<number[]>(() =>
+    dialogues.value
+      .map((unit, i) => ({ unit, i }))
+      .filter(({ unit }) => unit.role !== 'user' && !unit.isHidden)
+      .map(({ i }) => i),
+  );
+
+  /** 把「物理索引」转换成「显示序号」（在可见楼层列表中的索引）。找不到返回 -1。 */
+  function physicalToDisplayIndex(physicalIndex: number): number {
+    return visibleFloorIndices.value.indexOf(physicalIndex);
+  }
+
+  /** 把「显示序号」转换成「物理索引」。超出范围时返回第一个/最后一个可见楼层。 */
+  function displayToPhysicalIndex(displayIndex: number): number {
+    const visible = visibleFloorIndices.value;
+    if (visible.length === 0) return 0;
+    if (displayIndex < 0) return visible[0]!;
+    if (displayIndex >= visible.length) return visible[visible.length - 1]!;
+    return visible[displayIndex]!;
+  }
+
+  /**
+   * 当前正在观看的楼层对应的「显示序号」（-1 表示尚未定位）。
+   * 用于打开历史面板时把光标定位到玩家当前所在的楼层。
+   */
+  const currentDisplayFloorIndex = computed<number>(() =>
+    physicalToDisplayIndex(currentFloorIndex.value),
+  );
+
+  /**
+   * 历史面板当前预览的「显示序号」（在可见楼层列表中的索引）。
    * 独立于主界面的 currentBlockFlatIndex，翻页不会触发主界面跳转。
    */
   const historyPreviewFloorIndex = ref(0);
@@ -1432,10 +1467,15 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
   const historyPreviewBlockIndex = ref(0);
 
   /**
-   * 进入历史浏览模式：初始化翻页位置为最新可见楼层。
+   * 进入历史浏览模式：把光标定位到指定「显示序号」。
+   * 默认使用「玩家当前正在观看的楼层」，让面板打开时不打断上下文。
    */
-  function enterHistoryBrowse(latestFloorIndex: number) {
-    historyPreviewFloorIndex.value = Math.max(0, latestFloorIndex);
+  function enterHistoryBrowse(displayFloorIndex: number = currentDisplayFloorIndex.value) {
+    const visible = visibleFloorIndices.value;
+    const clampedFloor = visible.length === 0
+      ? 0
+      : Math.max(0, Math.min(displayFloorIndex, visible.length - 1));
+    historyPreviewFloorIndex.value = clampedFloor;
     historyPreviewBlockIndex.value = 0;
   }
 
@@ -1451,7 +1491,8 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
    * 若跳转距离过远（>5 层），先触发预渲染并延迟。
    */
   function navigateToHistoryPreview() {
-    const target = historyPreviewFloorIndex.value;
+    const targetDisplay = historyPreviewFloorIndex.value;
+    const target = displayToPhysicalIndex(targetDisplay);
     const current = currentFloorIndex.value;
     const distance = Math.abs(target - current);
 
@@ -1472,9 +1513,16 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
   // 当前显示的块
   const currentBlock = computed(() => allBlocksFlat.value[currentBlockFlatIndex.value]?.block ?? null);
 
+  // 初始化阶段：把光标的目标楼层锁定为“最新可见楼层的第一块”。
+  // 该状态会在首次 pre-render 完成后清除。
+  let _initTargetFloorIndex: number | null = null;
+
   // Load all dialogue units from chat history
   async function loadAllDialogues() {
     try {
+      // 进入初始化阶段：把光标的目标楼层锁定为“最新可见楼层的第一块”。
+      // 该状态会在首次 pre-render 完成后（或用户主动导航时）清除。
+      _initTargetFloorIndex = null;
       const lastId = getLastMessageId();
       // 注意：酒馆助手 getChatMessages 在 hide_state: 'unhidden' 时可能有 bug，
       // 某些 is_hidden: undefined 的消息也会被过滤，所以改用 hide_state: 'all' 再手动过滤
@@ -1506,12 +1554,17 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
         if (u.blocks.length > 0) {
           // 找到最后一个有块的可见楼层后，currentBlockFlatIndex 会通过 watcher 更新
           previewDialogueIndex.value = i;
+          _initTargetFloorIndex = i;
           break;
         }
       }
 
-      // 初始化完成后：预渲染当前楼层附近的多层
-      preRenderFloors(previewDialogueIndex.value);
+      // 初始化完成后：预渲染当前楼层附近的多层。
+      // preRenderFloors 是异步的：等它结束后再清除“初始化目标”，
+      // 避免在 pre-render 把较老楼层加进 allBlocksFlat 时，光标被错误地拉到 floor 0。
+      preRenderFloors(previewDialogueIndex.value).finally(() => {
+        _initTargetFloorIndex = null;
+      });
 
       // 初始化时：如果最新楼层已经包含图像标签，则立刻触发生图
       try {
@@ -1523,7 +1576,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
         console.warn('[ImageGen] 初始化触发生图失败:', e);
       }
 
-      // currentBlockFlatIndex 已经在 watcher 中被设置到最后一个可见块
+      // currentBlockFlatIndex 已经在 watcher 中被设置到“最新楼层的第一个块”
       console.info('[Dialogues] 加载完成，共', dialogues.value.length, '个楼层');
     } catch (err) {
       console.error('[Dialogues] loadAllDialogues 失败:', err);
@@ -1531,21 +1584,28 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
   }
 
   // When allBlocksFlat changes, adjust currentBlockFlatIndex.
-  let _flatLenOnInit = 0;
+  // 初始化阶段：始终把光标定位到“最新楼层（previewDialogueIndex）的第一个块”。
+  // 注意：preRenderFloors 会先把“比最新楼层更早”的楼层解析出来，allBlocksFlat 长度会随
+  // 这些较早楼层的加入而增长，因此初始化期间光标需要在每次变化时重新定位，否则会停在 floor 0。
   watch(allBlocksFlat, newBlocks => {
     if (newBlocks.length === 0) {
       currentBlockFlatIndex.value = 0;
-      _flatLenOnInit = 0;
+      _initTargetFloorIndex = null;
       return;
     }
-    if (_flatLenOnInit === 0) {
-      // 初始化时：跳到最后一个块（最新楼层的第一块）
-      // 目标体验：进入界面时先显示最新消息的第一块，而不是直接跳到最后（常常是 choice）。
-      currentBlockFlatIndex.value = 0;
+
+    if (_initTargetFloorIndex !== null) {
+      // 仍在初始化阶段：把光标定位到“目标楼层（最新楼层）的第一个块”。
+      // 若该楼层还未被解析（pre-render 还没轮到），退回到当前扁平数组的第一个块。
+      const firstIdxOfTarget = newBlocks.findIndex(x => x.floorIndex === _initTargetFloorIndex);
+      if (firstIdxOfTarget >= 0) {
+        currentBlockFlatIndex.value = firstIdxOfTarget;
+      } else {
+        currentBlockFlatIndex.value = 0;
+      }
     } else if (currentBlockFlatIndex.value >= newBlocks.length) {
       currentBlockFlatIndex.value = newBlocks.length - 1;
     }
-    _flatLenOnInit = newBlocks.length;
   });
 
   // 切换楼层时：清空弹幕，然后从新楼层读取并显示对应弹幕
@@ -1595,10 +1655,9 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
         }
       }
 
-      const plainText = extractPlainTextFromContent(unit.message);
-      if (plainText) {
-        insertOrAssignVariables({ 剧情文本: plainText }, { type: 'chat' });
-      }
+      // 注意：{{剧情文本}} 的写入在 index.ts 的 triggerDanmakuAndImageGen 中完成，
+      // 由 GENERATION_ENDED 事件触发，写到当前楼层的 MVU 变量（stat_data.剧情文本）。
+      // parseCurrentFloor 只负责解析结构化数据，不写变量。
 
       console.info('[Dialogues] 楼层', index, '解析完成，共', blocks.length, '个块');
     } catch (err) {
@@ -1612,8 +1671,20 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
   // Append a new message to dialogues
   async function appendNewMessage(messageId: number) {
     try {
-      // 避免重复追加
-      if (dialogues.value.some(d => d.messageId === messageId)) return;
+      // 防御性去重: 在极端情况下(例如酒馆 regenerate 走"删旧+建新"路径但 MESSAGE_DELETED
+      // 因竞争未到达,或该 message_id 已经被用作占位单元),同一 messageId 多次 push 会造成
+      // 界面上出现两个相同楼层号的"鬼影"。这里在 push 前再做一次检查:
+      // - 如果已存在同 messageId 的单元,优先复用并刷新内容,避免堆叠;
+      // - 这样既不影响正常 swipe(同 messageId 内容更新),也能保证 regenerate 后界面正确。
+      const existingIdx = dialogues.value.findIndex(d => d.messageId === messageId);
+      if (existingIdx >= 0) {
+        // 已有该 messageId 的单元: 用最新酒馆内容刷新它。
+        // updateDialogueUnit 内部会自动把光标跳到该楼层的第一个块(参见函数内注释)。
+        // 因此这里无需再额外调整 currentBlockFlatIndex,
+        // 也不需要 follow-up 检查越界 — 都由 updateDialogueUnit 兜底。
+        await updateDialogueUnit(messageId);
+        return;
+      }
 
       // 尝试从酒馆获取消息内容、role、isHidden
       let message = '';
@@ -1621,14 +1692,26 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
       let isHidden = false;
       try {
         const messages = getChatMessages(messageId);
-        if (messages && messages.length > 0) {
+        // 关键校验: 酒馆助手的 getChatMessages 在传入越界 messageId 时会返回"最新楼层"的占位内容
+        // (例如 messageId=3 不存在时, 它会返回 [{message_id: 3, message: <最新楼层内容>}]),
+        // 直接 push 会创建出一个内容复制、messageId 跟聊天文件对不上的"鬼打墙"楼层。
+        // 这里要求返回结果的 message_id 必须严格等于传入的 messageId 才接受,否则拒绝 push。
+        if (messages && messages.length > 0 && messages[0]?.message_id === messageId) {
           const msg = messages[0];
           if (msg.message !== undefined) message = msg.message;
           if (msg.role) role = msg.role as typeof role;
           if (msg.is_hidden !== undefined) isHidden = msg.is_hidden;
+        } else {
+          console.warn(
+            '[Dialogues] appendNewMessage: getChatMessages 返回的 message_id 与入参不一致,跳过 push,',
+            'input=', messageId, 'returned=', messages?.[0]?.message_id,
+          );
+          return;
         }
-      } catch {
-        // API 失败时，使用空字符串（watch 会实时更新内容）
+      } catch (err) {
+        // API 失败时, 不 push (避免空单元污染 store), 等下一次事件/MESSAGE_UPDATED 再补回来
+        console.warn('[Dialogues] appendNewMessage: getChatMessages 调用失败,跳过 push', messageId, err);
+        return;
       }
 
       // 记录追加前的扁平块信息，用于判断“是否在看最新”
@@ -1678,6 +1761,85 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
     }
   }
 
+  // Remove a dialogue unit by messageId (e.g. when the user deletes that chat message).
+  // Adjusts currentBlockFlatIndex so the cursor does not point past the new end of the flat array,
+  // and clamps previewDialogueIndex if it referenced the removed floor.
+  function removeDialogueUnit(messageId: number) {
+    const idx = dialogues.value.findIndex(d => d.messageId === messageId);
+    if (idx < 0) return;
+
+    const flat = allBlocksFlat.value;
+    // Map current flat index -> (floorIndex, blockIndex)
+    const cur = flat[currentBlockFlatIndex.value];
+    const curFloorBefore = cur?.floorIndex ?? -1;
+
+    dialogues.value.splice(idx, 1);
+
+    // After removal, all floors with index > idx shift down by 1.
+    // The blocks that belonged to the removed floor are gone; blocks after idx keep their
+    // floorIndex value but the array entry's floorIndex now points to a different message.
+    // For correctness, recompute currentBlockFlatIndex by anchoring on the floor we were on.
+    const flatAfter = allBlocksFlat.value;
+    if (flatAfter.length === 0) {
+      currentBlockFlatIndex.value = 0;
+      previewDialogueIndex.value = 0;
+      return;
+    }
+
+    let targetFloor: number;
+    if (curFloorBefore === idx) {
+      // The cursor was on the removed floor -> jump to the new last visible block.
+      targetFloor = flatAfter[flatAfter.length - 1].floorIndex;
+      currentBlockFlatIndex.value = flatAfter.length - 1;
+    } else if (curFloorBefore > idx) {
+      // The cursor was on a floor that shifted down by 1; keep the same inner position.
+      targetFloor = curFloorBefore - 1;
+      const sameBlockIdx = cur?.blockIndex ?? 0;
+      const flatIdx = flatAfter.findIndex(b => b.floorIndex === targetFloor && b.blockIndex === sameBlockIdx);
+      currentBlockFlatIndex.value = flatIdx >= 0 ? flatIdx : Math.max(0, flatAfter.length - 1);
+    } else {
+      // Cursor was on an earlier floor: nothing to move.
+      targetFloor = curFloorBefore;
+      // But our old flat index may now point past the new array due to removed blocks.
+      if (currentBlockFlatIndex.value >= flatAfter.length) {
+        currentBlockFlatIndex.value = flatAfter.length - 1;
+      }
+    }
+
+    if (previewDialogueIndex.value === idx) {
+      previewDialogueIndex.value = targetFloor >= 0 ? targetFloor : 0;
+    } else if (previewDialogueIndex.value > idx) {
+      previewDialogueIndex.value = Math.max(0, previewDialogueIndex.value - 1);
+    }
+  }
+
+  // When a chat message is deleted (manually, or as part of "retry from here" / "regenerate" that
+  // removes then re-creates the floor), drop the corresponding unit so we don't keep a stale
+  // "ghost floor" in dialogues.
+  eventOn(tavern_events.MESSAGE_DELETED, (messageId: number) => {
+    try {
+      const idx = dialogues.value.findIndex(d => d.messageId === messageId);
+      if (idx < 0) return;
+      console.info('[Dialogues] 楼层被删除, 移除 dialogues 中对应单元:', messageId);
+      removeDialogueUnit(messageId);
+    } catch (err) {
+      console.warn('[Dialogues] 处理 MESSAGE_DELETED 失败:', err);
+    }
+  });
+
+  // When a message is swiped to a new variant (or its swipe index changes), make sure the unit
+  // we hold is refreshed - same messageId, possibly new content. updateDialogueUnit already
+  // handles content refresh; this is a defensive hook in case the swipe mechanism only fires
+  // MESSAGE_SWIPED without MESSAGE_UPDATED.
+  eventOn(tavern_events.MESSAGE_SWIPED, (messageId: number) => {
+    try {
+      // Only refresh content; don't create new units.
+      updateDialogueUnit(messageId);
+    } catch (err) {
+      console.warn('[Dialogues] 处理 MESSAGE_SWIPED 失败:', err);
+    }
+  });
+
   // Update an existing dialogue unit when its message is modified externally
   async function updateDialogueUnit(messageId: number) {
     try {
@@ -1687,7 +1849,8 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
       // 尝试从酒馆获取最新消息内容和 role
       try {
         const messages = getChatMessages(messageId);
-        if (messages && messages.length > 0) {
+        // 同样要求 message_id 严格匹配, 避免越界查询时把"最新楼层"内容覆盖到错误单元上。
+        if (messages && messages.length > 0 && messages[0]?.message_id === messageId) {
           const msg = messages[0];
           if (msg.message !== undefined) unit.message = msg.message;
           if (msg.role) unit.role = msg.role as typeof unit.role;
@@ -1705,6 +1868,36 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
       unit.danmaku = extractDanmakuBlock(unit.message);
       unit.imageTags = extractImageTagBlocks(unit.message);
       unit.parsed = true;
+
+      // 重新定位光标: swipe / 重新生成 / 编辑后,
+      // 跳到被修改楼层的第一个块(blocks 数变化、顺序变了,继续停在原 inner 块意义不大)。
+      // - 如果被修改的楼层在 flat 中仍有 blocks,跳到该楼层的第一个块。
+      // - 如果被修改的楼层内容被清空(无 blocks),退到该楼层之前的最后一个块(原 anchorFloor 仍是有效参考)。
+      const flatAfter = allBlocksFlat.value;
+      const modifiedFloorIdx = dialogues.value.findIndex(d => d.messageId === messageId);
+      if (flatAfter.length === 0) {
+        currentBlockFlatIndex.value = 0;
+      } else if (modifiedFloorIdx >= 0) {
+        const firstInModified = flatAfter.findIndex(b => b.floorIndex === modifiedFloorIdx);
+        if (firstInModified >= 0) {
+          currentBlockFlatIndex.value = firstInModified;
+        } else {
+          // 该楼层解析后无可见 blocks(user / hidden / 解析为空等),
+          // 退回 anchorFloor 之前的最后一个有效块。
+          let target = -1;
+          for (let i = flatAfter.length - 1; i >= 0; i--) {
+            if (flatAfter[i].floorIndex < modifiedFloorIdx) {
+              target = i;
+              break;
+            }
+          }
+          currentBlockFlatIndex.value = target >= 0 ? target : flatAfter.length - 1;
+        }
+      } else {
+        currentBlockFlatIndex.value = flatAfter.length - 1;
+      }
+      // 同步把预览楼层标记成被修改的楼层,这样 panel 跟实际显示一致。
+      previewDialogueIndex.value = modifiedFloorIdx >= 0 ? modifiedFloorIdx : previewDialogueIndex.value;
 
       // 楼层被编辑/重试/回滚后：如包含图像标签，触发生图（避免只更新 UI 不生图）
       if (unit.imageTags.length > 0) {
@@ -1864,15 +2057,29 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
     return unit?.imageTags ?? [];
   });
 
-  // Clear worldbook cache when chat changes
-  eventOn(tavern_events.CHAT_CHANGED, async () => {
-    clearResourceCache();
-    currentScene.value = '';
-    dialogues.value = [];
-    currentBlockFlatIndex.value = 0;
-    previewDialogueIndex.value = 0;
-    console.info('[Dialogues] 聊天切换，已重置状态');
-    await loadAllDialogues();
+  // 聊天文件变化时：以聊天文件为唯一权威，整页刷新一次。
+  // 这样能彻底避免任何 store 内部 ref / 角色系统缓存 / imageGen 监听器 / 组件实例跨聊天残留,
+  // 与 util/script.ts 中 reloadOnChatChange 的推荐做法一致。
+  // 注意: 不需要在此手动重置 dialogues/scene/previewDialogueIndex 等局部状态,
+  // 因为 reload 会让整个 iframe 重新执行 index.ts，重新调用 loadAllDialogues 从酒馆数据重建。
+  let _lastChatId: string | null = null;
+  try {
+    _lastChatId = (window as any)?.SillyTavern?.getCurrentChatId?.() ?? null;
+  } catch {
+    _lastChatId = null;
+  }
+  eventOn(tavern_events.CHAT_CHANGED, (new_chat_id: string) => {
+    try {
+      if (_lastChatId !== null && _lastChatId !== new_chat_id) {
+        console.info('[Dialogues] 聊天切换（', _lastChatId, '->', new_chat_id, '), 整页刷新以保证与聊天文件一致');
+        window.location.reload();
+      } else if (_lastChatId === null) {
+        // 第一次进入前可能拿不到 chatId，记录即可（不主动刷新避免循环）
+        _lastChatId = new_chat_id;
+      }
+    } catch (err) {
+      console.warn('[Dialogues] CHAT_CHANGED 处理失败:', err);
+    }
   });
 
   // --- Worldbook Scan Debugging ---
@@ -2156,15 +2363,41 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
    * @param imageData 完整 base64
    * @param type 图片类型
    */
+  /**
+   * 设置场景绑定图。仅当该 title 还未绑定时写入；已有绑定则不覆盖。
+   * 这是自动流程（如生图完成、刷新恢复）使用的安全版本，避免破坏已有图。
+   * 替换现有绑定请使用 replaceSceneImageBinding（仅供用户手动切换调用）。
+   */
   function bindSceneImage(sceneTitle: string, imageData: string, type: 'background' | 'cg') {
-    if (!sceneTitle.trim()) return;
-    sceneImageBindings.value[sceneTitle.trim()] = {
+    const key = sceneTitle.trim();
+    if (!key) return;
+    if (sceneImageBindings.value[key]) {
+      console.info('[Bindings] bindSceneImage 跳过（已有绑定）:', key);
+      return;
+    }
+    sceneImageBindings.value[key] = {
       imageData,
       type,
       timestamp: Date.now(),
     };
     _saveBindings();
-    console.info('[Bindings] 绑定场景:', sceneTitle.trim(), 'type=', type);
+    console.info('[Bindings] 绑定场景:', key, 'type=', type);
+  }
+
+  /**
+   * 替换场景绑定图。强制覆盖现有绑定。
+   * 仅供用户手动切换（如点击卡牌）使用，自动流程不应调用此函数。
+   */
+  function replaceSceneImageBinding(sceneTitle: string, imageData: string, type: 'background' | 'cg') {
+    const key = sceneTitle.trim();
+    if (!key) return;
+    sceneImageBindings.value[key] = {
+      imageData,
+      type,
+      timestamp: Date.now(),
+    };
+    _saveBindings();
+    console.info('[Bindings] 替换绑定场景:', key, 'type=', type);
   }
 
   /**
@@ -2232,6 +2465,8 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
   const MAX_IMAGE_CARDS = 10;
   // 记录正在生成的请求
   const activeImageRequests = new Map<string, { type: 'background' | 'cg'; prompt?: string; title?: string }>();
+  // 记录每个请求已收到多少张图（用于区分第一张 vs 第二张）
+  const imageResponseCounts = new Map<string, number>();
   // 是否有图片生成任务进行中（用于舞台加载态）
   const imageGenerating = ref(false);
 
@@ -2569,8 +2804,10 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
 
   /**
    * 处理图像标签块：
-   * - 场景名匹配时，优先从绑定存储取图（插入队列并展示）
-   * - 否则走原有生图流程
+   * - 只决定要不要发生图请求，不再触碰舞台。
+   * - 场景匹配且有绑定：跳过生图，绑定图恢复由场景 watcher 完成。
+   * - 队列已有同 prompt 的图：跳过生图（不展示）。
+   * - 其余：发请求。是否上舞台由 handleImageResponse 决定。
    * @param blocks 解析出的图像标签块数组
    */
   async function processImageTagBlocks(blocks: ImageTagBlock[]): Promise<void> {
@@ -2586,55 +2823,39 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
       const canDirectDisplay =
         !!normalizedTitle && !!currentTitleAnchor && fuzzyMatchTitle(currentTitleAnchor, normalizedTitle);
 
-      // 记录当前 title 和 type
+      // 记录当前 title 和 type（保留旧行为，给其他 watcher 用）
       currentImageTitle.value = block.title;
       currentImageType.value = block.type;
 
-      // 1. 场景匹配时，优先查绑定图
+      // 1. 场景匹配时优先查绑定图：已有绑定 → 跳过生图
       if (canDirectDisplay) {
-        const binding = sceneImageBindings.value[normalizedTitle];
-        if (binding) {
-          // 绑定图：优先从队列找，找不到则插入队列再展示
-          let boundCard = findBoundCardInQueue(normalizedTitle);
+        let matchedBindingKey: string | null = null;
+        for (const [bindingKey, binding] of Object.entries(sceneImageBindings.value)) {
+          if (binding.type !== block.type) continue;
+          if (fuzzyMatchTitle(currentTitleAnchor, bindingKey)) {
+            matchedBindingKey = bindingKey;
+            break;
+          }
+        }
+        if (matchedBindingKey) {
+          // 确保绑定图在队列中（不在就插入），便于用户手动切换
+          let boundCard = findBoundCardInQueue(matchedBindingKey);
           if (!boundCard) {
-            // 不在队列，插入队列（即使已在队列中也要取到卡牌引用）
-            const inserted = insertBindingToQueue(normalizedTitle);
-            boundCard = inserted
-              ? imageCardQueue.value[imageCardQueue.value.length - 1]
-              : findBoundCardInQueue(normalizedTitle);
+            insertBindingToQueue(matchedBindingKey);
           }
-          if (boundCard) {
-            console.info('[ImageGen] 绑定图从队列展示:', normalizedTitle);
-            if (block.type === 'background') stageBackgroundImage.value = boundCard.imageData;
-            else stageCgImage.value = boundCard.imageData;
-          }
-          continue; // 跳过生图
+          console.info('[ImageGen] 命中已有绑定，跳过生图:', matchedBindingKey);
+          continue;
         }
       }
 
-      // 2. 检查卡牌队列是否已有相同 prompt 的图片
-      //    场景匹配时：仅当当前场景没有任何绑定时才使用队列图（防止未绑定卡覆盖绑定图）
-      //    场景不匹配时：允许使用队列图
+      // 2. 队列已有同 prompt 的图：跳过生图，不展示
       const existing = imageCardQueue.value.find(c => c.prompt === block.prompt);
       if (existing) {
-        if (canDirectDisplay) {
-          const sceneHasBindingForType = Object.entries(sceneImageBindings.value).some(
-            ([key, binding]) => fuzzyMatchTitle(currentTitleAnchor, key) && binding.type === block.type,
-          );
-          if (!sceneHasBindingForType) {
-            console.info('[ImageGen] 使用队列已有图片:', block.title, 'prompt=', block.prompt.substring(0, 40));
-            if (block.type === 'background') stageBackgroundImage.value = existing.imageData;
-            else stageCgImage.value = existing.imageData;
-            continue;
-          } else {
-            console.info('[ImageGen] 跳过队列图（当前场景已有绑定）:', block.title);
-          }
-        }
-        // 非场景匹配时，仅入队不展示（不覆盖舞台）
+        console.info('[ImageGen] 队列中已有同 prompt，跳过生图:', block.title);
         continue;
       }
 
-      // 3. 发送生图请求（不再区分 directDisplay，统一只入队列，由场景切换决定是否展示）
+      // 3. 发请求。是否上舞台由 handleImageResponse 决定。
       const requestTitle = `${normalizedTitle}`;
       if (block.type === 'background') {
         requestBackgroundImage(block.prompt, requestTitle);
@@ -2668,35 +2889,89 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
 
     const pending = activeImageRequests.get(responseData.id);
     if (!pending) return;
-    activeImageRequests.delete(responseData.id);
 
     if (responseData.success && responseData.imageData) {
-      // 生图的 title 统一是原始值（无前缀），用于卡牌显示，不做绑定
+      // 生图的 title 统一是原始值（无前缀），用于卡牌显示
       const title = pending.title || '';
 
-      // 添加到卡牌队列
+      // 构造卡牌（用计数区分同一请求的多张图，避免 id 重复）
       const card: ImageCard = {
-        id: responseData.id,
+        id: responseData.id + '-img-' + imageResponseCounts.get(responseData.id),
         imageData: responseData.imageData,
         type: pending.type,
         timestamp: Date.now(),
-        prompt: pending.prompt, // 保存提示词用于重试
-        title, // 保存标题用于显示（无绑定，不会自动展示）
+        prompt: pending.prompt,
+        title,
       };
-      imageCardQueue.value.push(card);
-      if (imageCardQueue.value.length > MAX_IMAGE_CARDS) {
-        imageCardQueue.value.shift();
-      }
 
-      // 生图完成后显示通知
-      const typeLabel = pending.type === 'background' ? '背景' : 'CG';
-      showToast(`${typeLabel}生成完成：${title || '新图片'}`);
+      const isFirstImage = (imageResponseCounts.get(responseData.id) ?? 0) === 0;
+
+      // 检查当前舞台该类型是否已被别的图占据（避免被新生成图顶掉）
+      const stageOccupied =
+        card.type === 'background' ? !!stageBackgroundImage.value : !!stageCgImage.value;
+
+      // 第一张图且开启了自动上舞台：绑定到当前场景并显示到舞台
+      // 条件：场景非空 + 当前舞台该类型为空（已被占则不动）
+      if (isFirstImage && settings.value.autoStageGeneratedImage && !stageOccupied) {
+        const scene = (currentBlock.value?.scene || '').trim();
+        if (scene) {
+          // 写入绑定存储（bindSceneImage 在已有绑定时不会覆盖，符合"无则写"语义）
+          bindSceneImage(scene, card.imageData, card.type);
+          // 让队列中这张卡的 title 与绑定场景一致（便于 UI 显示"已绑定"）
+          card.title = scene;
+          // 更新舞台显示
+          if (card.type === 'background') stageBackgroundImage.value = card.imageData;
+          else stageCgImage.value = card.imageData;
+          // 同时加入队列（备选）
+          imageCardQueue.value.push(card);
+          if (imageCardQueue.value.length > MAX_IMAGE_CARDS) {
+            imageCardQueue.value.shift();
+          }
+          console.info('[ImageGen] 自动绑定第一张图到场景:', scene);
+          showToast(`${card.type === 'background' ? '背景' : 'CG'}已自动进入舞台：${scene}`);
+        } else {
+          // 无场景锚点时只入队列
+          imageCardQueue.value.push(card);
+          if (imageCardQueue.value.length > MAX_IMAGE_CARDS) {
+            imageCardQueue.value.shift();
+          }
+          showToast(`${card.type === 'background' ? '背景' : 'CG'}生成完成：${title || '新图片'}`);
+        }
+      } else if (isFirstImage && settings.value.autoStageGeneratedImage && stageOccupied) {
+        // 开关开启但舞台已被占：只入队列不覆盖
+        imageCardQueue.value.push(card);
+        if (imageCardQueue.value.length > MAX_IMAGE_CARDS) {
+          imageCardQueue.value.shift();
+        }
+        console.info('[ImageGen] 自动上舞台跳过（舞台已被占据）:', title);
+      } else {
+        // 第二张及以后，或未开启开关：只入队列，绝不动绑定
+        imageCardQueue.value.push(card);
+        if (imageCardQueue.value.length > MAX_IMAGE_CARDS) {
+          imageCardQueue.value.shift();
+        }
+        const typeLabel = pending.type === 'background' ? '背景' : 'CG';
+        showToast(`${typeLabel}生成完成：${title || '新图片'}`);
+      }
     } else if (responseData.error) {
       // 生图失败时也显示通知
       showToast(`生图失败：${responseData.error}`);
     }
 
-    imageGenerating.value = activeImageRequests.size > 0;
+    // 计数 +1，统一在这里处理
+    const newCount = (imageResponseCounts.get(responseData.id) ?? 0) + 1;
+    imageResponseCounts.set(responseData.id, newCount);
+
+    // 收到两张或出错时清理该请求记录
+    if (newCount >= 2 || responseData.error) {
+      activeImageRequests.delete(responseData.id);
+      imageResponseCounts.delete(responseData.id);
+    }
+
+    // 检查是否所有请求都已完成
+    if (activeImageRequests.size === 0) {
+      imageGenerating.value = false;
+    }
   }
 
   function setupImageGenListener() {
@@ -2723,6 +2998,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
     if (type === 'cg' && !settings.value.cgGenEnabled) return;
     const requestId = 'vn-' + Date.now() + '-' + Math.random().toString(36).slice(2, 11);
     activeImageRequests.set(requestId, { type, prompt, title });
+    imageResponseCounts.set(requestId, 0);
     imageGenerating.value = true;
     const requestData: ImageGenRequestData = {
       id: requestId,
@@ -2760,7 +3036,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
     requestImage(prompt, 'cg', title);
   }
 
-  // 将卡牌绑定到当前场景并展示到舞台
+  // 将卡牌绑定到当前场景并展示到舞台（用户手动切换专用，会强制替换已有绑定）
   function switchToImageCard(cardId: string) {
     const card = getImageCardById(cardId);
     if (!card) return;
@@ -2780,14 +3056,14 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
     // 更新卡牌的 title
     card.title = scene;
 
-    // 写入绑定存储
-    bindSceneImage(scene, card.imageData, card.type);
+    // 强制替换绑定存储（用户手动切换允许覆盖）
+    replaceSceneImageBinding(scene, card.imageData, card.type);
 
     // 更新舞台显示
     if (card.type === 'background') stageBackgroundImage.value = card.imageData;
     else stageCgImage.value = card.imageData;
 
-    console.info('[ImageGen] 绑定场景:', scene, 'cardId=', cardId);
+    console.info('[ImageGen] 手动绑定场景:', scene, 'cardId=', cardId);
   }
 
   /**
@@ -3402,6 +3678,38 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
     if (amount >= GOLD_WINDFALL_THRESHOLD) triggerProactive('gold_windfall');
   }
 
+  /**
+   * 写入指定楼层 MVU 变量中的某个 key。
+   * 与项目内"角色走向选择"参考脚本一致，使用 getVariables + replaceVariables。
+   * key 不存在则新增；存在则覆盖；stat_data 不存在则创建。
+   *
+   * @param messageId 目标楼层（数值 message_id 或 'latest'）
+   * @param key 字段名（如 "剧情文本"），会写到 stat_data[key]
+   * @param value 字段值
+   */
+  function writeMvuMessageField(
+    messageId: number | 'latest',
+    key: string,
+    value: unknown,
+  ): void {
+    try {
+      const vars = getVariables({ type: 'message', message_id: messageId }) || {};
+      const nextVars: Record<string, any> =
+        vars && typeof vars === 'object' && !Array.isArray(vars) ? { ...vars } : {};
+      if (
+        !nextVars.stat_data ||
+        typeof nextVars.stat_data !== 'object' ||
+        Array.isArray(nextVars.stat_data)
+      ) {
+        nextVars.stat_data = {};
+      }
+      nextVars.stat_data[key] = value;
+      replaceVariables(nextVars, { type: 'message', message_id: messageId });
+    } catch (err) {
+      console.warn('[MVU] 写入楼层变量失败:', { messageId, key, err });
+    }
+  }
+
   function clearTransactionLog() {
     gameData.value.transactionLog = [];
   }
@@ -3950,7 +4258,9 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
   const DANMAKU_SPEED_BASE = 0.15; // 基础速度：px/ms
   const DANMAKU_MIN_GAP = 50; // 轨道间最小间距(px)
   const DANMAKU_MAX_GAP = 200; // 轨道间最大间距(px)
-  const DANMAKU_BASE_DURATION = 102222; // 速度5时的基准动画时长(ms)，整体降速至原20%（两次45%）
+  // 弹幕视口参考宽度：用于估算"飞过屏幕"的时长
+  // 实际容器宽度可能不同，但作为时长基准是合理的近似
+  const DANMAKU_VIEWPORT_WIDTH = 1280; // px
 
   // 轨道状态：每条轨道记录下一条弹幕可进入的时间
   const trackNextAvailableTime = ref<number[]>([]);
@@ -4049,13 +4359,15 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
 
   /**
    * 获取弹幕动画时长（ms）
-   * 动画需要让弹幕从右侧外进入，完全穿过视口到左侧外消失
-   * 速度1时约680秒，速度5时约228秒，速度10时约109秒（整体降速至原20%）
+   * 参考 rc-bullets：duration 基于"飞过视口的总路程"计算，
+   * 与文本宽度无关，确保所有弹幕的飞行时间一致
+   * 速度1时约15秒，速度5时约5秒，速度10时约2.5秒
    */
   function getDanmakuDuration(_textWidth: number): number {
     const speedMultiplier = getDanmakuSpeedMultiplier();
-    // 时长与速度倍率成反比
-    return DANMAKU_BASE_DURATION / speedMultiplier;
+    // 单条弹幕需要飞过的总路程 = 自身宽度 + 视口宽度（从右外进入，到左外消失）
+    const totalDistance = _textWidth + DANMAKU_VIEWPORT_WIDTH;
+    return totalDistance / (DANMAKU_SPEED_BASE * speedMultiplier);
   }
 
   /**
@@ -4200,29 +4512,53 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
 
   /**
    * 调度循环播放
-   * 重叠播放：新弹幕在旧弹幕消失前就开始生成
-   * 随机化：每轮循环重新选择间隔和轨道
+   * 使用用户设置的 danmakuLoopDuration（秒）作为循环间隔
+   * 当间隔到达时，检查是否还有弹幕在飞：
+   *  - 如果有，等待最晚的一条飞完再清空（避免裁断）
+   *  - 如果没有，立即清空开始新一轮
    */
   function scheduleDanmakuLoop(texts: string[], trackCount: number) {
     if (!settings.value.danmakuLoop || !settings.value.danmakuEnabled) return;
     if (danmakuLoopTimer) return;
 
-    // 计算循环延迟：提前开始下一轮，让新旧弹幕重叠播放
-    const duration = getDanmakuDuration(200);
-    // 从 10%~20% 时间点之间随机选择开始下一轮
-    const loopDelay = duration * (0.1 + Math.random() * 0.4);
+    // 优先使用用户设置的循环时长（秒 -> 毫秒）
+    const baseDelayMs = (settings.value.danmakuLoopDuration || 10) * 1000;
+    const jitter = 0.85 + Math.random() * 0.3;
+    const loopDelay = baseDelayMs * jitter;
 
     danmakuLoopTimer = setTimeout(() => {
       danmakuLoopTimer = null;
       if (!settings.value.danmakuLoop || !settings.value.danmakuEnabled) return;
 
-      // 重置轨道状态，让每条轨道重新可用
-      initTracks();
+      // 计算"等待剩余弹幕飞完"的时间
+      // 每条弹幕有一个 duration（ms），记录它创建时间
+      // 但我们没有存 spawnTime，所以用 duration 的最大值近似估算剩余时间
+      let maxRemaining = 0;
+      const now = Date.now();
+      for (const item of danmakuItems.value) {
+        // 粗略估算：剩余时间 ≈ duration × 0.7（已经飞过约 30%）
+        // 没有更精确的方式但足够避免粗暴裁断
+        const remaining = Math.max(0, (item.duration || 0) * 0.7);
+        if (remaining > maxRemaining) maxRemaining = remaining;
+      }
 
-      // 打乱顺序，开始新一轮
-      const shuffledTexts = shuffleArray(texts);
-      scheduleDanmakuBatch(shuffledTexts, trackCount);
-      scheduleDanmakuLoop(shuffledTexts, trackCount);
+      // 用户设置的循环时长即新一轮开始的"最早"时间；
+      // 如果有弹幕在飞，则延后到所有弹幕飞完
+      const startNewRound = () => {
+        danmakuItems.value = [];
+        initTracks();
+        const shuffledTexts = shuffleArray(texts);
+        scheduleDanmakuBatch(shuffledTexts, trackCount);
+        scheduleDanmakuLoop(shuffledTexts, trackCount);
+      };
+
+      if (maxRemaining > 1000) {
+        // 还有弹幕在飞：延后到飞完再清空
+        setTimeout(startNewRound, maxRemaining);
+      } else {
+        // 没有弹幕在飞（或剩余 < 1 秒）：立即开始新一轮
+        startNewRound();
+      }
     }, loopDelay);
   }
 
@@ -4431,13 +4767,16 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
     rightMenuExpanded.value = false;
 
     if (panel === 'history' && !wasHistory) {
-      // 打开历史面板：找到最新可见楼层的物理索引
-      const visible = dialogues.value
-        .map((unit, i) => ({ unit, i }))
-        .filter(({ unit }) => unit.role !== 'user' && !unit.isHidden)
-        .map(({ i }) => i);
-      const latestIdx = visible.length > 0 ? visible[visible.length - 1]! : 0;
-      enterHistoryBrowse(latestIdx);
+      // 打开历史面板：
+      // 1) 优先把光标定位到「玩家当前正在观看的楼层」；找不到（如还没初始化）则用最新的可见楼层。
+      // 2) 预解析当前楼层附近的 ±2 层，避免面板打开时出现「暂无对话记录」的空白闪烁。
+      const fallbackDisplayIdx = Math.max(0, visibleFloorIndices.value.length - 1);
+      const startDisplayIdx =
+        currentDisplayFloorIndex.value >= 0 ? currentDisplayFloorIndex.value : fallbackDisplayIdx;
+      enterHistoryBrowse(startDisplayIdx);
+
+      const previewPhysical = displayToPhysicalIndex(startDisplayIdx);
+      preRenderFloors(previewPhysical);
     } else if (wasHistory && panel !== 'history') {
       exitHistoryBrowse();
     }
@@ -4475,6 +4814,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
     const danmakuSettings = [
       'danmakuSpeed',
       'danmakuLoop',
+      'danmakuLoopDuration',
       'danmakuDisplay',
       'danmakuColor',
       'danmakuFontSize',
@@ -4598,6 +4938,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
     getBindingAlbum,
     insertBindingToQueue,
     bindSceneImage,
+    replaceSceneImageBinding,
     unbindSceneImage,
     getSceneBindings,
     getModuleLockReason,
@@ -4616,6 +4957,10 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
     navigateToHistoryPreview,
     historyPreviewFloorIndex,
     historyPreviewBlockIndex,
+    visibleFloorIndices,
+    currentDisplayFloorIndex,
+    physicalToDisplayIndex,
+    displayToPhysicalIndex,
     preRenderFloors,
     currentFloorIndex,
     currentBlockInnerIndex,
@@ -4625,6 +4970,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
     loadAllDialogues,
     appendNewMessage,
     updateDialogueUnit,
+    removeDialogueUnit,
     parseCurrentFloor,
     currentDanmaku,
     currentImageTags,
@@ -4781,5 +5127,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
     purchaseSkill,
     addWorkshopLog,
     getWorkshopStats,
+    // MVU 楼层变量写入
+    writeMvuMessageField,
   };
 });

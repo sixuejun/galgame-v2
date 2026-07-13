@@ -149,6 +149,7 @@
                   :value="store.settings.danmakuLoopDuration"
                   :min="2"
                   :max="60"
+                  suffix="秒"
                   @update="v => store.updateSettings({ danmakuLoopDuration: v })"
                 />
               </template>
@@ -214,19 +215,8 @@
                 suffix=""
                 @update="v => store.updateSettings({ danmakuOpacity: v })"
               />
-              <div class="flex items-center justify-center pt-2">
-                <button
-                  class="cursor-pointer border px-4 py-1.5 text-xs font-medium transition-all hover:brightness-110"
-                  style="
-                    background: var(--theme-accent, var(--rust));
-                    border-color: var(--theme-accent, var(--rust));
-                    border-radius: 2px;
-                    color: #fff;
-                  "
-                  @click="store.resetAndReapplyDanmaku()"
-                >
-                  保存
-                </button>
+              <div class="flex items-center justify-center pt-2 text-xs opacity-60" style="color: var(--theme-text-soft, rgba(212,197,160,0.7))">
+                设置已实时生效，无需手动保存
               </div>
             </template>
           </div>
@@ -465,6 +455,13 @@
                     @update="v => store.updateSettings({ cgGenEnabled: v })"
                   />
                 </div>
+                <div class="flex items-center justify-between py-2">
+                  <span class="text-xs" style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.7))">自动上舞台</span>
+                  <ToggleSwitch
+                    :checked="store.settings.autoStageGeneratedImage"
+                    @update="v => store.updateSettings({ autoStageGeneratedImage: v })"
+                  />
+                </div>
                 <p
                   style="
                     font-size: 9px;
@@ -473,7 +470,8 @@
                     margin-bottom: 8px;
                   "
                 >
-                  打开后自动启用对应世界书条目。同时打开背景与 CG 时，将根据消息内容判断生成类型，并显示扇形卡牌队列。
+                  打开后自动启用对应世界书条目。同时打开背景与 CG 时，将根据消息内容判断生成类型，并显示扇形卡牌队列。<br />
+                  <span style="color: var(--theme-accent, var(--rust))">自动上舞台</span>：开启后，生成的第一张图片会自动绑定到当前场景并显示到舞台，第二张入队列待选。
                 </p>
                 <div v-if="store.settings.backgroundGenEnabled && store.settings.cgGenEnabled" class="py-2">
                   <span class="mb-2 block text-xs" style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.7))">

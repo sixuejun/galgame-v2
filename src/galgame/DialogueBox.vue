@@ -154,7 +154,28 @@ const isFirstBlock = computed(() => store.currentBlockFlatIndex === 0);
 
 const isLastBlock = computed(() => {
   const flat = store.allBlocksFlat;
-  return store.currentBlockFlatIndex >= (flat?.length ?? 1) - 1;
+  const curIdx = store.currentBlockFlatIndex;
+  const flatLen = flat.length;
+  if (!Array.isArray(flat) || flatLen === 0) return true;
+  // 还在扁平数组中段：明显不是末尾
+  if (curIdx < flatLen - 1) return false;
+  // 已在扁平数组末尾：但还需要检查 dialogues 中是否还有未解析的可见楼层
+  // （这些楼层将来会进入 flat，所以 next 不该被禁用）
+  const dialogues = store.dialogues;
+  if (!Array.isArray(dialogues)) return true;
+  const currentBlockRef = flat[curIdx];
+  const currentFloor = currentBlockRef?.floorIndex ?? -1;
+  for (let i = currentFloor + 1; i < dialogues.length; i++) {
+    const u = dialogues[i];
+    if (!u) continue;
+    if (u.role === 'user' || u.isHidden) continue;
+    // 找到后续还有的可见楼层，如果未解析或解析了但还没在 flat 中显现（理论上不应该），
+    // 都视为"还有内容"，next 不应被禁用
+    if (!u.parsed) return false;
+    // 已解析但该楼层还没出现在 flat 中（不太可能，但保险起见检查）
+    if (!flat.some(b => b.floorIndex === i)) return false;
+  }
+  return true;
 });
 
 const hasChoices = computed(() => props.choices.length > 0);

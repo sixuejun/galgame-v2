@@ -47,8 +47,8 @@
     <!-- Layer 5: 弹幕层 -->
     <div
       v-if="store.settings.danmakuEnabled"
-      class="pointer-events-none absolute inset-x-0 top-0 overflow-hidden"
-      :style="{ height: danmakuHeight, zIndex: 5 }"
+      class="pointer-events-none absolute overflow-hidden"
+      :style="danmakuContainerStyle"
     >
       <div class="danmaku-container">
         <div
@@ -78,9 +78,17 @@ const stageFrameSkin = computed(() => store.getComponentSkinForCurrent('stageFra
 
 const noiseDataUri = `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulance type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`;
 
-const danmakuHeight = computed(() => {
+const danmakuContainerStyle = computed(() => {
   const m = store.settings.danmakuDisplay;
-  return m === 'full' ? '100%' : m === 'half' ? '50%' : '33%';
+  // 显示范围仅控制垂直方向：顶部/底部偏移，避开 UI 元素
+  // 用户可通过 CSS 变量 --theme-danmaku-top-offset / --theme-danmaku-bottom-offset 调整
+  return {
+    top: 'var(--theme-danmaku-top-offset, 4.5rem)',
+    bottom: 'var(--theme-danmaku-bottom-offset, 6rem)',
+    left: 'var(--theme-danmaku-horizontal-padding, 0.5rem)',
+    right: 'var(--theme-danmaku-horizontal-padding, 0.5rem)',
+    zIndex: 'var(--theme-danmaku-z-index, 5)',
+  };
 });
 
 const danmakuTrackCount = computed(() => {
@@ -99,13 +107,18 @@ const danmakuTrackCount = computed(() => {
 
 function getDanmakuStyle(item: DanmakuItem) {
   const trackHeight = 100 / danmakuTrackCount.value;
-  const top = item.track * trackHeight;
-  const speedMultiplier = 0.02025 + store.settings.danmakuSpeed * 0.0405;
-  const duration = item.width / (0.15 * speedMultiplier) / 1000;
+  // 让弹幕在轨道内垂直居中：先定位到轨道中心，再 translate(-50%)
+  // 这样无论字号多大都不会被容器截断
+  const trackCenter = item.track * trackHeight + trackHeight / 2;
+  // 优先用 store 算好的 duration（保持单一来源真理），
+  // 否则 fallback 到本地估算
+  const durationSec = item.duration
+    ? item.duration / 1000
+    : item.width / (0.15 * (0.02025 + store.settings.danmakuSpeed * 0.0405)) / 1000;
   return {
-    top: `${top}%`,
+    top: `${trackCenter}%`,
     height: `${trackHeight}%`,
-    animationDuration: `${duration}s`,
+    animationDuration: `${durationSec}s`,
     fontSize: `${store.settings.danmakuFontSize}em`,
     color: store.settings.danmakuColor,
     opacity: store.settings.danmakuOpacity,
@@ -145,13 +158,14 @@ const showPlayerSpriteOverlay = computed(() => {
   opacity: 0;
 }
 
-/* 弹幕滚动动画 */
+/* 弹幕滚动动画 - 注意：transform 必须包含 translateY(-50%)
+   否则弹幕会在垂直方向跳动（因为 .danmaku-item 用了 transform 居中） */
 @keyframes danmaku-scroll {
   from {
-    transform: translateX(100vw);
+    transform: translateY(-50%) translateX(100vw);
   }
   to {
-    transform: translateX(calc(-100vw - 100%));
+    transform: translateY(-50%) translateX(calc(-100vw - 100%));
   }
 }
 
@@ -165,8 +179,15 @@ const showPlayerSpriteOverlay = computed(() => {
 .danmaku-item {
   position: absolute;
   left: 0;
+  width: max-content;
+  /* 垂直居中：top 已定位到轨道中心，再用 translateY(-50%) */
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
   white-space: nowrap;
   padding: 0 1em;
+  /* 留点上下空间防字号过大时被裁切 */
+  margin: 0.25em 0;
   text-shadow:
     1px 1px 2px rgba(0, 0, 0, 0.8),
     -1px -1px 2px rgba(0, 0, 0, 0.8),

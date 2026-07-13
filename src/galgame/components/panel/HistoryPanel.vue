@@ -242,22 +242,12 @@ const scrollRef = ref<HTMLDivElement | null>(null);
 
 const historyPanelSkin = computed(() => store.getComponentSkinForCurrent('historyPanel'));
 
-// 可见楼层索引（跳过 user 和隐藏楼层）
-const visibleFloorIndices = computed(() => {
-  return store.dialogues
-    .map((unit, i) => ({ unit, i }))
-    .filter(({ unit }) => unit.role !== 'user' && !unit.isHidden)
-    .map(({ i }) => i);
-});
+const totalFloors = computed(() => store.visibleFloorIndices.length);
 
-const totalFloors = computed(() => visibleFloorIndices.value.length);
-
-// 当前预览楼层在 dialogues 中的实际物理索引
-const previewFloorPhysicalIndex = computed(() => {
-  const visible = visibleFloorIndices.value;
-  const displayIdx = store.historyPreviewFloorIndex;
-  return visible[displayIdx] ?? 0;
-});
+// 当前预览楼层的物理索引（store 内部已经做了「显示序号 → 物理索引」的转换）
+const previewFloorPhysicalIndex = computed(() =>
+  store.displayToPhysicalIndex(store.historyPreviewFloorIndex),
+);
 
 const previewFloor = computed(() => store.dialogues[previewFloorPhysicalIndex.value] ?? null);
 
@@ -278,13 +268,32 @@ const historyLines = computed<{ speaker?: string; text: string }[]>(() => {
   });
 });
 
-// Ensure preview floor is parsed
+// 解析预览楼层：store 已经会预渲染 ±2 层，这里只是兜底
 watch(
   previewFloor,
   async floor => {
     if (floor && !floor.parsed) {
       await store.parseCurrentFloor(previewFloorPhysicalIndex.value);
     }
+  },
+  { immediate: true },
+);
+
+// 解析完成后（或切换楼层/块后），把当前激活的行滚动到可视区域内
+watch(
+  [previewFloorBlocks, () => store.historyPreviewBlockIndex],
+  async () => {
+    if (previewFloorBlocks.value.length === 0) return;
+    // 夹紧块索引，避免越界
+    const max = previewFloorBlocks.value.length - 1;
+    if (store.historyPreviewBlockIndex > max) {
+      store.historyPreviewBlockIndex = max;
+      return;
+    }
+    await nextTick();
+    const blockIdx = store.historyPreviewBlockIndex;
+    const el = scrollRef.value?.querySelector<HTMLElement>(`[data-line="${blockIdx}"]`);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   },
   { immediate: true },
 );

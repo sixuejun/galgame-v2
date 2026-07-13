@@ -225,14 +225,14 @@ function saveCheckpoint(params: { roles: Record<string, 角色>; roleMaxId: numb
     max_id: params.roleMaxId,
     roles: klona(params.roles),
   };
-  replaceVariables(klona({ role_checkpoint: checkpoint }), { type: 'chat' });
+  insertOrAssignVariables(klona({ role_checkpoint: checkpoint }), { type: 'chat' });
 }
 
 /**
  * 清除检查点（删楼等破坏性操作后调用）
  */
 export function clearCheckpoint(): void {
-  replaceVariables(klona({ role_checkpoint: null }), { type: 'chat' });
+  insertOrAssignVariables(klona({ role_checkpoint: null }), { type: 'chat' });
 }
 
 /**

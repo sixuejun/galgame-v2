@@ -275,6 +275,8 @@ watch(
     unit.message = newMessage;
 
     // 流式过程中：实时提取并显示弹幕/生图标签（边生成边预览）
+    // 注意：{{剧情文本}} 的同步由 index.ts 的 GENERATION_ENDED 触发，
+    // 此处流式期间不写入酒馆变量，避免被 MvuVariableManager 等其他路径覆盖导致丢字段。
     const danmaku = extractDanmakuBlock(newMessage);
     if (danmaku.length > 0) {
       store.displayDanmakuFromMessage(newMessage);

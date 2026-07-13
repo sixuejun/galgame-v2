@@ -55,7 +55,7 @@ export function nextRoleId(): string {
     const currentMax = (vars?.role_max_id as number) || 0;
     const newId = currentMax + 1;
 
-    replaceVariables(klona({ role_max_id: newId }), { type: 'chat' });
+    insertOrAssignVariables({ role_max_id: newId }, { type: 'chat' });
 
     return formatRoleId(newId);
   } finally {
@@ -84,7 +84,7 @@ export function nextRoleIds(count: number): string[] {
     const currentMax = (vars?.role_max_id as number) || 0;
     const newMax = currentMax + count;
 
-    replaceVariables(klona({ role_max_id: newMax }), { type: 'chat' });
+    insertOrAssignVariables({ role_max_id: newMax }, { type: 'chat' });
 
     const ids: string[] = [];
     for (let i = 1; i <= count; i++) {
@@ -123,7 +123,7 @@ export function resetRoleId(newId: number): void {
   roleIdLock = true;
 
   try {
-    replaceVariables(klona({ role_max_id: newId }), { type: 'chat' });
+    insertOrAssignVariables({ role_max_id: newId }, { type: 'chat' });
   } finally {
     roleIdLock = false;
   }
@@ -150,7 +150,7 @@ export function nextSkillId(): string {
     const currentMax = (vars?.skill_max_id as number) || 0;
     const newId = currentMax + 1;
 
-    replaceVariables(klona({ skill_max_id: newId }), { type: 'chat' });
+    insertOrAssignVariables({ skill_max_id: newId }, { type: 'chat' });
 
     return formatSkillId(newId);
   } finally {
@@ -179,7 +179,7 @@ export function nextSkillIds(count: number): string[] {
     const currentMax = (vars?.skill_max_id as number) || 0;
     const newMax = currentMax + count;
 
-    replaceVariables(klona({ skill_max_id: newMax }), { type: 'chat' });
+    insertOrAssignVariables({ skill_max_id: newMax }, { type: 'chat' });
 
     const ids: string[] = [];
     for (let i = 1; i <= count; i++) {
@@ -218,7 +218,7 @@ export function resetSkillId(newId: number): void {
   skillIdLock = true;
 
   try {
-    replaceVariables(klona({ skill_max_id: newId }), { type: 'chat' });
+    insertOrAssignVariables({ skill_max_id: newId }, { type: 'chat' });
   } finally {
     skillIdLock = false;
   }

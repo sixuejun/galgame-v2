@@ -138,9 +138,12 @@ export async function loadWorldbookResources(): Promise<WorldbookResources> {
         if (!entry.enabled) continue;
         if (!entry.content) continue;
 
+        console.info(`[WorldbookLoader] 尝试解析条目: "${entry.name}", content 前50字符: "${entry.content.substring(0, 50)}"`);
+
         try {
           // 尝试解析 JSON 内容（支持从混合文本中提取第一个 JSON 对象）
           const data = parseEntryJson(entry.content) as any;
+          console.info(`[WorldbookLoader] 条目 "${entry.name}" 解析成功, type: ${data?.type}`);
 
           // 背景资源
           if (data.type === 'background' && Array.isArray(data.backgrounds)) {
@@ -173,8 +176,12 @@ export async function loadWorldbookResources(): Promise<WorldbookResources> {
             console.info(`[WorldbookLoader] "${worldbookName}" 加载了 Live2D 模型: ${data.modelName} (${entry.name})`);
             continue;
           }
-        } catch {
-          // 不是JSON格式，跳过
+
+          // 不是资源类型，跳过
+          console.info(`[WorldbookLoader] 条目 "${entry.name}" type="${data.type}" 不是资源类型，跳过`);
+        } catch (e) {
+          // 输出解析失败的详细信息
+          console.warn(`[WorldbookLoader] 条目 "${entry.name}" JSON 解析失败:`, e);
           continue;
         }
       }

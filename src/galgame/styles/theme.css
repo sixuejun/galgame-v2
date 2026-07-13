@@ -55,6 +55,18 @@
   --vn-panel-bg: rgba(51, 44, 38, 0.96);
   --vn-success: #5a7a4a;
   --vn-danger: #8b2500;
+
+  /* === Danmaku safe area === */
+  /* 用户可通过自定义 CSS 修改这些变量来调整弹幕显示范围 */
+  /* 顶部偏移：避免被左上/右上菜单遮挡 */
+  /* 右上齿轮按钮展开 3 项（设置/全屏/历史）后最低约 150px */
+  --theme-danmaku-top-offset: 10rem;
+  /* 底部偏移：避开对话面板 */
+  --theme-danmaku-bottom-offset: 7rem;
+  /* 左右内边距：避免贴边 */
+  --theme-danmaku-horizontal-padding: 0.5rem;
+  /* 弹幕层 z-index */
+  --theme-danmaku-z-index: 5;
 }
 
 html,

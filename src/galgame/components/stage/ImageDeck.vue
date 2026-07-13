@@ -67,7 +67,7 @@
                     :key="card.id"
                     class="deck-card"
                     :class="{
-                      'deck-card-active': isCardOnStage(card.id),
+                      'deck-card-active': isCardBound(card.id),
                       'deck-card-hovered': hoveredCardId === card.id,
                       'deck-card-empty': card.id.startsWith('placeholder-'),
                     }"
@@ -83,9 +83,8 @@
                         <span class="card-label">{{ card.type === 'background' ? 'BG' : 'CG' }}</span>
                       </div>
                       <div class="card-shine" />
-                      <div v-if="isCardOnStage(card.id)" class="card-override-indicator">显示中</div>
                       <div
-                        v-else-if="isCardBound(card.id)"
+                        v-if="isCardBound(card.id)"
                         class="card-binding-indicator"
                       >
                         {{ getBoundSceneTitle(card.id) }}
@@ -113,7 +112,6 @@ const isHovered = ref(false);
 const hoveredCardId = ref<string | null>(null);
 const isCollapsed = ref(false);
 const isTransitioning = ref(false);
-const currentScene = computed(() => store.currentBlock?.scene?.trim() ?? '');
 
 // 绑定图判定：卡的 title 在 sceneImageBindings 中即为绑定
 function isCardBound(cardId: string): boolean {
@@ -122,16 +120,6 @@ function isCardBound(cardId: string): boolean {
 
 function getBoundSceneTitle(cardId: string): string {
   return store.getBoundSceneTitle(cardId);
-}
-
-/**
- * 判断卡牌是否正在舞台上显示（base64 完全一致）
- */
-function isCardOnStage(cardId: string): boolean {
-  const card = store.imageCardQueue.find(c => c.id === cardId);
-  if (!card) return false;
-  if (card.type === 'background') return store.stageBackgroundImage === card.imageData;
-  return store.stageCgImage === card.imageData;
 }
 
 // 展开时：卡牌防抖（过渡期间禁止选卡）
@@ -593,22 +581,6 @@ function handleRetryLatest() {
     );
 }
 
-.card-override-indicator {
-  position: absolute;
-  top: 5px;
-  left: 5px;
-  padding: 2px 7px;
-  background: rgba(139, 69, 19, 0.92);
-  color: var(--paper-light);
-  border-radius: 3px;
-  font-size: 8px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  z-index: 10;
-  border: 1px solid rgba(196, 162, 101, 0.45);
-}
-
 .card-binding-indicator {
   position: absolute;
   top: 5px;
@@ -737,7 +709,7 @@ function handleRetryLatest() {
   }
 }
 
-/* 横屏模式 / 小窗口：整体缩小（优先横屏判断，小窗口也适用） */
+/* 横屏模式 / 小窗口：整体缩小（优先横屏判断，小窗口也适用） 中*/
 @media (orientation: landscape) {
   .deck-wrapper {
     transform: translateY(-50%) translateX(-20px) scale(0.7);

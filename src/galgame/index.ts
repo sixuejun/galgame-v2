@@ -151,13 +151,47 @@ $(() => {
     const messages = getChatMessages(message_id);
     const raw = messages[0]?.message ?? '';
     const contentText = extractContentTag(raw);
+    vnLog.info('parser', '剧情文本 调试', {
+      message_id,
+      messagesLen: messages.length,
+      rawLen: raw.length,
+      contentTextLen: contentText.length,
+      hasContentTag: /<content>/i.test(raw),
+      rawStart: raw.slice(0, 100),
+    });
     if (!contentText) return;
 
-    // 同步剧情文本到酒馆变量，供 {{getvar::剧情文本}} 使用
+    // 同步剧情文本到当前楼层的 MVU 变量（stat_data.剧情文本），
+    // 供 {{getvar::stat_data.剧情文本}} 或世界书引用；按楼层隔离，符合 MVU 风格。
+    //
+    // 实现路径：与项目内的"角色走向选择"参考脚本一致，
+    // 使用 getVariables + replaceVariables（整表替换 message 楼层变量表）。
+    // 注意：getVariables/replaceVariables 是酒馆助手在脚本 iframe 内注入的全局函数，
+    // 主页面顶层 window 上没有；这里运行在脚本 iframe 内，所以可以直接调用。
     const plainText = extractPlainTextFromContent(raw);
+    vnLog.info('parser', '剧情文本 plainText 调试', {
+      message_id,
+      plainTextLen: plainText.length,
+      plainTextSample: plainText.slice(0, 80),
+    });
     if (plainText) {
-      insertOrAssignVariables({ 剧情文本: plainText }, { type: 'chat' });
-      vnLog.info('parser', '剧情文本 variable updated', { length: plainText.length });
+      try {
+        const vars = getVariables({ type: 'message', message_id }) || {};
+        const nextVars: Record<string, any> =
+          vars && typeof vars === 'object' && !Array.isArray(vars) ? { ...vars } : {};
+        if (
+          !nextVars.stat_data ||
+          typeof nextVars.stat_data !== 'object' ||
+          Array.isArray(nextVars.stat_data)
+        ) {
+          nextVars.stat_data = {};
+        }
+        nextVars.stat_data['剧情文本'] = plainText;
+        replaceVariables(nextVars, { type: 'message', message_id });
+        vnLog.info('parser', '剧情文本 MVU variable updated', { message_id, length: plainText.length });
+      } catch (err) {
+        vnLog.warn('parser', '剧情文本 MVU variable update failed', { message_id, err });
+      }
     }
 
     // ========== 弹幕处理 ==========

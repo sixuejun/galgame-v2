@@ -35,6 +35,17 @@ export const useLatestMvuStore = defineStore('latest-mvu', () => {
     lastUpdatedAt.value = Date.now();
   }
 
+  /**
+   * 写入单个 key 值。等价于 patch(d => d[key] = value)，但更轻量、语义更清晰。
+   * 用于"某个具体变量的值需要更新"场景（例如 {{剧情文本}} 同步）。
+   * key 不存在时直接新增；存在则覆盖。
+   */
+  function setKey(key: string, value: any) {
+    patch(stat => {
+      _.set(stat, key, value);
+    });
+  }
+
   async function startAutoSync() {
     if (ready.value) return;
     ready.value = true;
@@ -56,6 +67,7 @@ export const useLatestMvuStore = defineStore('latest-mvu', () => {
     lastUpdatedAt,
     refresh,
     patch,
+    setKey,
     startAutoSync,
   };
 });
