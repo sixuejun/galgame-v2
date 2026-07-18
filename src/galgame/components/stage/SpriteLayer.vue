@@ -97,20 +97,28 @@ const currentSpriteImage = computed(() => {
   return store.currentBlock?.spriteImageUrl;
 });
 
-/** 立绘样式 */
-const spriteStyle = computed(() => {
-  const scale = (store.settings.portraitScale ?? 100) / 100;
-  const x = store.settings.portraitX ?? 0;
-  const y = store.settings.portraitY ?? 0;
-  return {
-    height: `${scale * 100}%`,
-    width: 'auto',
-    objectFit: 'contain' as const,
-    left: `calc(50% + ${x}%)`,
-    bottom: `${y}%`,
-    transform: 'translateX(-50%)',
-  };
-});
+/** 立绘样式：竖屏/横屏各自独立的 scale / x / y，避免互相污染。
+ *  使用 transform: scale() 做"真正的"缩放（不改变元素 box 高度，因此不会因为高度变化
+ *  导致 overflow:hidden 切到不同部分而被误认为"只是移动了"）。
+ *  - 元素 box 固定为容器高度；width:auto 让宽度按图片原生长宽比算出。
+ *  - transform-origin: center bottom 让缩放围绕"脚底中心"，scale>1 时头部向上延伸，
+ *    scale<1 时向中心收缩，立绘的"脚"始终锚在 bottom: y% 处不会"飞起来"。
+ *  - translateX(-50%) 配合 left: calc(50% + x%) 实现水平居中。 */
+  const spriteStyle = computed(() => {
+    const isPortrait = !!store.settings.portraitMode;
+    const scale = store.getPortraitScale(isPortrait) / 100;
+    const x = store.getPortraitX(isPortrait);
+    const y = store.getPortraitY(isPortrait);
+    return {
+      height: '100%',
+      width: 'auto',
+      objectFit: 'contain' as const,
+      left: `calc(50% + ${x}%)`,
+      bottom: `${y}%`,
+      transform: `translateX(-50%) scale(${scale})`,
+      transformOrigin: 'center bottom',
+    };
+  });
 
 /** Live2D 相关状态 */
 const live2dError = ref(false);
@@ -249,9 +257,13 @@ defineExpose({
 .sprite-image {
   user-select: none;
   -webkit-user-drag: none;
+  /* scale / x / y 通过 transform/position 实时改变，加 transition 让用户拖动滑块时
+   * 立绘大小变化更"丝滑"，避免被瞬间切换误认为"只是移动了" */
+  transition: transform 0.15s ease-out;
 }
 
 .live2d-canvas {
   user-select: none;
+  transition: transform 0.15s ease-out;
 }
 </style>

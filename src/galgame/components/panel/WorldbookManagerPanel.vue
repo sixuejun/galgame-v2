@@ -69,7 +69,11 @@
       >
         <div class="text-xs" style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.8))">
           <i class="fa-solid fa-circle-info mr-2" style="color: var(--theme-accent, var(--rust))" />
-          管理世界书条目的启用状态、API 分配和自动控制。自动控制的条目会根据功能开关自动启用/禁用。
+          管理世界书条目的启用状态、关联功能和 API 分配。
+          <strong style="color: var(--theme-text-main, rgba(212,197,160,0.9))">任务关联条目</strong>
+          （弹幕/生图）会按「API 任务配置」自动路由，受对应功能开关控制；
+          <strong style="color: var(--theme-text-main, rgba(212,197,160,0.9))">通用条目</strong>
+          按"发送给"决定。
         </div>
       </div>
 
@@ -111,7 +115,7 @@
                 opacity: entry.enabled ? 1 : 0.6,
               }"
             >
-              <!-- Entry Header -->
+                <!-- Entry Header -->
               <div class="flex items-start justify-between mb-3">
                 <div class="flex-1 min-w-0 mr-3">
                   <div class="flex items-center gap-2 mb-1">
@@ -134,25 +138,84 @@
                     {{ entry.content.slice(0, 80) }}{{ entry.content.length > 80 ? '…' : '' }}
                   </p>
                 </div>
-                <button
-                  class="shrink-0 px-3 py-1.5 text-xs border transition-all"
-                  :disabled="entry.updating"
-                  :style="{
-                    borderColor: entry.enabled ? 'var(--theme-accent, var(--rust))' : 'rgba(90,79,64,0.4)',
-                    color: entry.enabled ? 'var(--theme-accent, var(--rust))' : 'var(--theme-text-muted, var(--vn-muted))',
-                    fontWeight: entry.enabled ? 'bold' : 'normal',
-                    opacity: entry.updating ? 0.5 : 1,
-                  }"
-                  @click="toggleEntry(entry, group.worldbookName)"
-                >
-                  {{ entry.updating ? '…' : entry.enabled ? '已启用' : '已禁用' }}
-                </button>
+                <div class="flex items-center gap-2">
+                  <button
+                    class="shrink-0 px-3 py-1.5 text-xs border transition-all"
+                    :disabled="entry.updating"
+                    :style="{
+                      borderColor: entry.enabled ? 'var(--theme-accent, var(--rust))' : 'rgba(90,79,64,0.4)',
+                      color: entry.enabled ? 'var(--theme-accent, var(--rust))' : 'var(--theme-text-muted, var(--vn-muted))',
+                      fontWeight: entry.enabled ? 'bold' : 'normal',
+                      opacity: entry.updating ? 0.5 : 1,
+                    }"
+                    :title="isTaskEntry(entry)
+                      ? '此条目由 API 任务配置自动管理，设置变更后会自动更新路由'
+                      : '手动开关'"
+                    @click="toggleEntry(entry, group.worldbookName)"
+                  >
+                    {{ entry.updating ? '…' : entry.enabled ? '已启用' : '已禁用' }}
+                  </button>
+                </div>
               </div>
 
               <!-- Entry Controls -->
               <div class="grid grid-cols-2 gap-3">
-                <!-- Target API -->
+                <!-- 实际发送目标（任务关联条目：实时计算；通用条目：回显 targetApi） -->
                 <div>
+                  <label class="block text-xs mb-1.5" style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.7))">
+                    实际发送
+                    <span
+                      v-if="isTaskEntry(entry)"
+                      class="ml-1"
+                      style="color: var(--theme-text-faint, rgba(139, 125, 107, 0.5))"
+                      title="由 API 任务配置自动决定，不受手动 targetApi 控制"
+                    >(自动)</span>
+                  </label>
+                  <div
+                    class="w-full px-2 py-1.5 text-xs border flex items-center"
+                    :style="{
+                      background: 'rgba(42,36,32,0.3)',
+                      borderColor: 'rgba(90,79,64,0.3)',
+                      color: 'var(--theme-text-main, rgba(212,197,160,0.9))',
+                    }"
+                  >
+                    <span
+                      class="inline-block w-2 h-2 mr-2"
+                      :style="{ background: getActualTargetColor(resolveActualTarget(entry)) }"
+                    />
+                    {{ getActualTargetLabel(resolveActualTarget(entry)) }}
+                  </div>
+                </div>
+
+                <!-- Linked Feature -->
+                <div>
+                  <label class="block text-xs mb-1.5" style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.7))">关联功能</label>
+                  <select
+                    :value="entry.linkedFeature || ''"
+                    class="w-full px-2 py-1.5 text-xs border cursor-pointer"
+                    :style="{
+                      background: 'rgba(42,36,32,0.5)',
+                      borderColor: 'rgba(90,79,64,0.4)',
+                      color: 'var(--theme-text-main, rgba(212,197,160,0.9))',
+                    }"
+                    @change="
+                      updateEntry(entry, group.worldbookName, {
+                        linkedFeature: ($event.target as HTMLSelectElement).value || undefined,
+                      })
+                    "
+                  >
+                    <option value="">无</option>
+                    <option value="universal">通用</option>
+                    <option value="danmaku">弹幕</option>
+                    <option value="imageGen">生图</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- 通用条目：手动 targetApi；任务关联条目：targetApi 被弱化 -->
+              <div class="mt-3 pt-3 space-y-3" :style="{ borderTop: '1px solid rgba(90,79,64,0.15)' }">
+                <!-- 通用条目的 targetApi 选择器（任务关联条目不显示：被弱化） -->
+                <div v-if="!isTaskEntry(entry)">
                   <label class="block text-xs mb-1.5" style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.7))">发送给</label>
                   <select
                     :value="entry.targetApi"
@@ -174,47 +237,20 @@
                   </select>
                 </div>
 
-                <!-- Linked Feature -->
-                <div>
-                  <label class="block text-xs mb-1.5" style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.7))">关联功能</label>
-                  <select
-                    :value="entry.linkedFeature || ''"
-                    class="w-full px-2 py-1.5 text-xs border cursor-pointer"
-                    :style="{
-                      background: 'rgba(42,36,32,0.5)',
-                      borderColor: 'rgba(90,79,64,0.4)',
-                      color: 'var(--theme-text-main, rgba(212,197,160,0.9))',
-                    }"
-                    @change="
-                      updateEntry(entry, group.worldbookName, {
-                        linkedFeature: ($event.target as HTMLSelectElement).value || undefined,
-                      })
-                    "
-                  >
-                    <option value="">无</option>
-                    <option value="danmaku">弹幕</option>
-                    <option value="imageGen">生图</option>
-                  </select>
-                </div>
-              </div>
-
-              <!-- Auto Control -->
-              <div class="mt-3 pt-3" :style="{ borderTop: '1px solid rgba(90,79,64,0.15)' }">
-                <label class="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    :checked="entry.autoControl"
-                    class="cursor-pointer"
-                    @change="
-                      updateEntry(entry, group.worldbookName, {
-                        autoControl: ($event.target as HTMLInputElement).checked,
-                      })
-                    "
-                  />
-                  <span class="text-xs" style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.8))">
-                    自动控制（根据关联功能的开关自动启用/禁用此条目）
+                <!-- 任务关联条目显示说明 -->
+                <div
+                  v-if="isTaskEntry(entry)"
+                  class="flex items-center gap-2 text-xs"
+                  style="color: var(--theme-text-muted, var(--vn-muted))"
+                >
+                  <i class="fa-solid fa-circle-info" style="color: var(--theme-accent, var(--rust))" />
+                  <span>
+                    此条目关联到
+                    <strong>{{ getFeatureLabel(entry.linkedFeature!) }}</strong>
+                    任务，会根据「API 任务配置」自动路由到对应 API。
+                    即使关掉对应功能开关，此条目也不会被发送。
                   </span>
-                </label>
+                </div>
               </div>
             </div>
           </template>
@@ -228,6 +264,8 @@
 </template>
 
 <script setup lang="ts">
+import { useVNStore } from '../../store';
+
 defineEmits<{
   close: [];
 }>();
@@ -238,7 +276,6 @@ interface EnhancedEntry {
   enabled: boolean;
   content: string;
   targetApi: 'main' | 'second' | 'both';
-  autoControl: boolean;
   linkedFeature?: string;
   updating?: boolean;
 }
@@ -248,11 +285,72 @@ interface EntryGroup {
   entries: EnhancedEntry[];
 }
 
+type ResolvedTarget = 'main' | 'second' | 'none' | 'both';
+
 const loading = ref(false);
 const entryGroups = ref<EntryGroup[]>([]);
 const importInputRef = ref<HTMLInputElement>();
+const store = useVNStore();
 
 const entries = computed(() => entryGroups.value.flatMap(g => g.entries));
+
+/**
+ * 计算条目在当前设置下**实际**会被发往哪个 API。
+ * 与 store.resolveApiTarget 同源（仅作为 UI 提示使用），规则：
+ *
+ * - 任务关联条目（linkedFeature=弹幕/生图）：由 (功能总开关 + 任务路由) 决定。
+ *   - 功能总开关关 / 任务禁用 → 'none'
+ *   - 任务路由到主 API → 'main'
+ *   - 任务路由到第二 API → 'second'
+ *   **targetApi 字段被忽略（弱化）**。
+ * - 通用条目（universal / 未设置）：按 targetApi 决定 → 'main' | 'second' | 'both'。
+ */
+function resolveActualTarget(entry: EnhancedEntry): ResolvedTarget {
+  const feature = entry.linkedFeature;
+  if (feature === 'danmaku') {
+    if (!store.settings.danmakuEnabled) return 'none';
+    if (store.settings.apiTaskDanmaku === 'main') return 'main';
+    if (store.settings.apiTaskDanmaku === 'second') return 'second';
+    return 'none';
+  }
+  if (feature === 'imageGen') {
+    if (!store.settings.imageGenEnabled) return 'none';
+    if (store.settings.apiTaskImageTag === 'main') return 'main';
+    if (store.settings.apiTaskImageTag === 'second') return 'second';
+    return 'none';
+  }
+  return entry.targetApi; // 'main' | 'second' | 'both'
+}
+
+function getActualTargetLabel(target: ResolvedTarget): string {
+  switch (target) {
+    case 'main':
+      return '主 API';
+    case 'second':
+      return '第二 API';
+    case 'both':
+      return '两者都发';
+    case 'none':
+      return '不发送';
+  }
+}
+
+function getActualTargetColor(target: ResolvedTarget): string {
+  switch (target) {
+    case 'main':
+      return 'rgba(120,140,160,0.6)';
+    case 'second':
+      return 'rgba(139,69,19,0.6)';
+    case 'both':
+      return 'rgba(212,197,160,0.7)';
+    case 'none':
+      return 'rgba(90,79,64,0.5)';
+  }
+}
+
+function isTaskEntry(entry: EnhancedEntry): boolean {
+  return entry.linkedFeature === 'danmaku' || entry.linkedFeature === 'imageGen';
+}
 
 function getAllCurrentWorldbookNames(): string[] {
   const names: string[] = [];
@@ -289,7 +387,6 @@ async function loadEntries() {
             enabled: entry.enabled,
             content: entry.content ?? '',
             targetApi: (entry.extra?.targetApi as 'main' | 'second' | 'both') ?? 'main',
-            autoControl: entry.extra?.autoControl ?? false,
             linkedFeature: entry.extra?.linkedFeature,
           })),
         });
@@ -321,7 +418,7 @@ async function toggleEntry(entry: EnhancedEntry, worldbookName: string) {
 }
 
 async function updateEntry(entry: EnhancedEntry, worldbookName: string, updates: Partial<EnhancedEntry>) {
-  const { targetApi, autoControl, linkedFeature, enabled } = updates;
+  const { targetApi, linkedFeature, enabled } = updates;
   try {
     await updateWorldbookWith(
       worldbookName,
@@ -330,7 +427,6 @@ async function updateEntry(entry: EnhancedEntry, worldbookName: string, updates:
           if (e.uid !== entry.uid) return e;
           const extra = { ...e.extra };
           if (targetApi !== undefined) extra.targetApi = targetApi;
-          if (autoControl !== undefined) extra.autoControl = autoControl;
           if (linkedFeature !== undefined) extra.linkedFeature = linkedFeature;
           const result: any = { ...e, extra };
           if (enabled !== undefined) result.enabled = enabled;
@@ -345,7 +441,7 @@ async function updateEntry(entry: EnhancedEntry, worldbookName: string, updates:
 }
 
 function getFeatureLabel(feature: string): string {
-  const labels: Record<string, string> = { danmaku: '弹幕', imageGen: '生图' };
+  const labels: Record<string, string> = { danmaku: '弹幕', imageGen: '生图', universal: '通用' };
   return labels[feature] || feature;
 }
 
@@ -353,6 +449,7 @@ function getFeatureColor(feature: string): string {
   const colors: Record<string, string> = {
     danmaku: 'var(--theme-accent-soft, rgba(139,69,19,0.6))',
     imageGen: 'rgba(212,197,160,0.6)',
+    universal: 'rgba(120,140,160,0.5)',
   };
   return colors[feature] || 'rgba(90,79,64,0.6)';
 }
@@ -363,22 +460,20 @@ interface ExportedEntry {
   uid: number;
   name: string;
   targetApi: 'main' | 'second' | 'both';
-  autoControl: boolean;
   linkedFeature?: string;
 }
 interface ExportedConfig {
-  version: 1;
+  version: 2;
   worldbooks: Record<string, ExportedEntry[]>;
 }
 
 function exportConfig() {
-  const config: ExportedConfig = { version: 1, worldbooks: {} };
+  const config: ExportedConfig = { version: 2, worldbooks: {} };
   for (const group of entryGroups.value) {
     config.worldbooks[group.worldbookName] = group.entries.map(e => ({
       uid: e.uid,
       name: e.name,
       targetApi: e.targetApi,
-      autoControl: e.autoControl,
       linkedFeature: e.linkedFeature,
     }));
   }
@@ -424,7 +519,6 @@ async function onImportFile(evt: Event) {
         if (!ex) continue;
         const updates: Partial<EnhancedEntry> = {};
         if (ex.targetApi !== entry.targetApi) updates.targetApi = ex.targetApi;
-        if (ex.autoControl !== entry.autoControl) updates.autoControl = ex.autoControl;
         if (ex.linkedFeature !== entry.linkedFeature) updates.linkedFeature = ex.linkedFeature;
         if (Object.keys(updates).length > 0) {
           await updateEntry(entry, wbName, updates);

@@ -2,13 +2,11 @@
   <div
     v-if="showPortrait"
     class="dialogue-portrait-shell absolute"
+    :class="{ 'is-portrait': isPortraitMode }"
     :style="portraitShellStyle"
   >
     <SkinShell :skin="portraitSkin">
-      <div
-        class="dialogue-portrait-content h-full w-full overflow-hidden"
-        :style="portraitContentStyle"
-      >
+      <div class="dialogue-portrait-content h-full w-full overflow-hidden" :style="portraitContentStyle">
         <img
           v-if="avatarUrl"
           :src="avatarUrl"
@@ -17,16 +15,11 @@
           :style="imageStyle"
         />
         <!-- 占位符或默认头像 -->
-        <div
-          v-else
-          class="dialogue-portrait-placeholder h-full w-full flex items-center justify-center"
-        >
-          <svg
-            class="w-1/2 h-1/2 opacity-30"
-            fill="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
+        <div v-else class="dialogue-portrait-placeholder h-full w-full flex items-center justify-center">
+          <svg class="w-1/2 h-1/2 opacity-30" fill="currentColor" viewBox="0 0 24 24">
+            <path
+              d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"
+            />
           </svg>
         </div>
       </div>
@@ -58,31 +51,23 @@ const props = withDefaults(
     avatarName: '',
     isPortraitMode: false,
     show: true,
-  }
+  },
 );
 
 /** 是否显示头像 */
 const showPortrait = computed(() => props.show && props.avatarUrl);
 
 /** 头像壳样式 */
-const portraitShellStyle = computed(() => {
-  if (props.isPortraitMode) {
-    return {
-      bottom: 'var(--theme-dialogue-portrait-bottom-portrait, calc(16vmin + 3vmin))',
-      left: 'var(--theme-dialogue-portrait-left-portrait, 1.5vmin)',
-      width: 'var(--theme-dialogue-portrait-width, 4em)',
-      height: 'var(--theme-dialogue-portrait-height, 4em)',
-      zIndex: 20,
-    };
-  }
-  return {
-    top: 'var(--theme-dialogue-portrait-top, 0.5em)',
-    left: 'var(--theme-dialogue-portrait-left, 0.5em)',
-    width: 'var(--theme-dialogue-portrait-width, 4em)',
-    height: 'var(--theme-dialogue-portrait-height, 4em)',
-    zIndex: 20,
-  };
-});
+const portraitShellStyle = computed(() => ({
+  // 统一设置所有定位属性，CSS 的 .portrait-mode 会自动切换 top/bottom
+  position: 'absolute',
+  bottom: 'var(--theme-dialogue-portrait-bottom, calc(16vmin + 3vmin))',
+  top: 'var(--theme-dialogue-portrait-top, 0.5rem)',
+  left: 'var(--theme-dialogue-portrait-left, 0.75rem)',
+  width: 'var(--theme-dialogue-portrait-width, 4rem)',
+  height: 'var(--theme-dialogue-portrait-height, 4rem)',
+  zIndex: 20,
+}));
 
 /** 头像内容区背景 */
 const portraitContentStyle = computed(() => ({
@@ -98,6 +83,14 @@ const imageStyle = computed(() => ({
 <style scoped>
 .dialogue-portrait-shell {
   display: var(--theme-dialogue-portrait-display, flex);
+}
+
+/* 竖屏时隐藏 top，使用 bottom；横屏时隐藏 bottom，使用 top */
+.dialogue-portrait-shell.is-portrait {
+  top: unset;
+}
+.dialogue-portrait-shell:not(.is-portrait) {
+  bottom: unset;
 }
 
 .dialogue-portrait-image {

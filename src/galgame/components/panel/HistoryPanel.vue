@@ -59,7 +59,10 @@
           <button
             class="flex h-6 w-6 cursor-pointer items-center justify-center transition-colors"
             :style="{
-              color: store.historyPreviewFloorIndex > 0 ? 'var(--theme-text-muted)' : 'var(--theme-text-faint, rgba(139,125,107,0.3))',
+              color:
+                store.historyPreviewFloorIndex > 0
+                  ? 'var(--theme-text-muted)'
+                  : 'var(--theme-text-faint, rgba(139,125,107,0.3))',
             }"
             :disabled="store.historyPreviewFloorIndex <= 0"
             @click="prevFloor"
@@ -147,7 +150,10 @@
             <button
               class="flex h-5 w-5 cursor-pointer items-center justify-center text-xs transition-colors"
               :style="{
-                color: store.historyPreviewBlockIndex < previewFloorBlocks.length - 1 ? 'var(--theme-text-muted)' : 'var(--theme-text-faint)',
+                color:
+                  store.historyPreviewBlockIndex < previewFloorBlocks.length - 1
+                    ? 'var(--theme-text-muted)'
+                    : 'var(--theme-text-faint)',
               }"
               :disabled="store.historyPreviewBlockIndex >= previewFloorBlocks.length - 1"
               @click="nextBlock"
@@ -167,7 +173,9 @@
             :style="{
               borderBottom: '1px solid var(--theme-history-row-border, rgba(90,79,64,0.1))',
               background:
-                index === store.historyPreviewBlockIndex ? 'var(--theme-history-active-bg, rgba(139,69,19,0.1))' : 'transparent',
+                index === store.historyPreviewBlockIndex
+                  ? 'var(--theme-history-active-bg, rgba(139,69,19,0.1))'
+                  : 'transparent',
             }"
             @click="goToLine(index)"
           >
@@ -233,9 +241,9 @@
 </template>
 
 <script setup lang="ts">
-import SkinShell from '../common/SkinShell.vue';
 import { useVNStore } from '../../store';
 import type { MessageBlock } from '../../types/message';
+import SkinShell from '../common/SkinShell.vue';
 
 const store = useVNStore();
 const scrollRef = ref<HTMLDivElement | null>(null);
@@ -245,9 +253,7 @@ const historyPanelSkin = computed(() => store.getComponentSkinForCurrent('histor
 const totalFloors = computed(() => store.visibleFloorIndices.length);
 
 // 当前预览楼层的物理索引（store 内部已经做了「显示序号 → 物理索引」的转换）
-const previewFloorPhysicalIndex = computed(() =>
-  store.displayToPhysicalIndex(store.historyPreviewFloorIndex),
-);
+const previewFloorPhysicalIndex = computed(() => store.displayToPhysicalIndex(store.historyPreviewFloorIndex));
 
 const previewFloor = computed(() => store.dialogues[previewFloorPhysicalIndex.value] ?? null);
 

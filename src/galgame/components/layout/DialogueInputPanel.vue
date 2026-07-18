@@ -177,7 +177,8 @@ const textareaStyle = computed(() => ({
   outline: 'none',
   resize: 'none' as const,
   fontFamily: 'var(--theme-font-body, serif)',
-  fontSize: 'var(--theme-input-textarea-font-size, 1em)',
+  // 关键：fallback 用 rem 而非 em，避免被祖先 font-size 联动缩小甚至消失
+  fontSize: 'var(--theme-input-textarea-font-size, 1rem)',
   lineHeight: 'var(--theme-input-textarea-line-height, 1.75)',
   color: 'var(--theme-input-textarea-color, rgba(212, 197, 160, 0.9))',
   letterSpacing: 'var(--theme-input-textarea-letter-spacing, 0.05em)',

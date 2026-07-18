@@ -125,20 +125,14 @@ const portraitSkin = computed(() => store.getComponentSkinForCurrent('dialoguePo
 const nameSkin = computed(() => store.getComponentSkinForCurrent('dialogueName'));
 
 const dialogueOuterStyle = computed(() => ({
-  marginLeft: props.isPortraitMode
-    ? 'var(--theme-dialogue-margin-x-portrait, 0.5vmin)'
-    : 'var(--theme-dialogue-margin-x, 0.75em)',
-  marginRight: props.isPortraitMode
-    ? 'var(--theme-dialogue-margin-x-portrait, 0.5vmin)'
-    : 'var(--theme-dialogue-margin-x, 0.75em)',
+  marginLeft: 'var(--theme-dialogue-margin-x, 0.75em)',
+  marginRight: 'var(--theme-dialogue-margin-x, 0.75em)',
   background: 'var(--theme-dialogue-bg, var(--vn-dialogue-bg))',
   border: '1px solid var(--theme-dialogue-border, var(--vn-border))',
   borderRadius: 'var(--theme-dialogue-radius, 0px)',
   boxShadow: 'var(--theme-dialogue-shadow)',
   width: 'var(--theme-dialogue-width, 100%)',
-  minHeight: props.isPortraitMode
-    ? 'var(--theme-dialogue-min-height-portrait, 16vmin)'
-    : 'var(--theme-dialogue-min-height, 12em)',
+  minHeight: 'var(--theme-dialogue-min-height, 12em)',
 }));
 
 const displayedText = ref('');

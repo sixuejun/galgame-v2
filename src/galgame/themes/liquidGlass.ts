@@ -11,6 +11,7 @@ export const liquidGlassTheme: ThemeDefinition = {
   id: 'liquid-glass',
   name: '液态玻璃',
   description: '毛玻璃质感的现代风格，透明与渐变的完美融合',
+  hidden: true,
   usesImageShell: false,
   cssVars: {
     // 基础色 - 渐变背景

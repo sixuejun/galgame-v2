@@ -46,6 +46,8 @@ export const useLatestMvuStore = defineStore('latest-mvu', () => {
     });
   }
 
+  let pollInterval: ReturnType<typeof setInterval> | null = null;
+
   async function startAutoSync() {
     if (ready.value) return;
     ready.value = true;
@@ -55,10 +57,22 @@ export const useLatestMvuStore = defineStore('latest-mvu', () => {
     // Mvu 是运行时全局变量，必须等待其初始化完毕才能订阅事件
     await waitGlobalInitialized('Mvu');
 
-    // 当新楼层变量更新完毕时刷新 latest
+    // 当新楼层变量更新完毕时刷新 latest（AI 输出解析触发）
     eventOn(Mvu.events.VARIABLE_UPDATE_ENDED, () => {
       refresh();
     });
+
+    // 轮询机制：定期检查最新楼层变量是否被外部修改（如直接在酒馆变量管理器中修改）
+    pollInterval = setInterval(() => {
+      refresh();
+    }, 1000);
+  }
+
+  function stopAutoSync() {
+    if (pollInterval) {
+      clearInterval(pollInterval);
+      pollInterval = null;
+    }
   }
 
   return {
@@ -69,5 +83,6 @@ export const useLatestMvuStore = defineStore('latest-mvu', () => {
     patch,
     setKey,
     startAutoSync,
+    stopAutoSync,
   };
 });

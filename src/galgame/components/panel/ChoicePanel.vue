@@ -88,10 +88,7 @@
 
       <!-- Single column layout -->
       <template v-else>
-        <div
-          class="choice-list"
-          :style="singleColumnStyle"
-        >
+        <div class="choice-list" :style="singleColumnStyle">
           <div
             v-for="(choice, index) in choices"
             :key="choice.choiceId"
@@ -263,7 +260,10 @@ onBeforeUnmount(() => {
 /* Non-PNG theme choice button: CSS fallback background/border/shadow */
 .choice-btn-shell {
   width: 100%;
-  min-height: var(--theme-choice-btn-min-height, 3rem);
+  min-height: var(--theme-choice-btn-shell-height, clamp(3.6rem, 8.4vw, 6.6rem));
+  height: var(--theme-choice-btn-shell-height, clamp(3.6rem, 8.4vw, 6.6rem));
+  display: flex;
+  flex-direction: column;
   background: var(--theme-choice-btn-bg, var(--vn-choice-bg, rgba(42, 36, 32, 0.65)));
   border: 1px solid var(--theme-choice-btn-border, var(--vn-border, transparent));
   box-shadow: var(--theme-choice-btn-shadow, none);

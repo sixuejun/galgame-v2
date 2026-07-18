@@ -396,6 +396,21 @@ export function extractContentTag(message: string): string {
 }
 
 /**
+ * 将正文包成 `<content>...</content>` 包裹的字符串
+ * 用于把"内部正文"喂给第二 API user 段，使其与提示词中"严格基于 <content> 标签内的正文"对齐。
+ *
+ * 防御：
+ * - 若已经包含 `<content>` 标签，原样返回（不重复包裹）
+ * - 若文本为空，返回 `<content>\n</content>`（避免 user 段为空）
+ */
+export function wrapContentTag(inner: string): string {
+  const trimmed = (inner ?? '').trim();
+  if (!trimmed) return '<content>\n</content>';
+  if (/<content>/i.test(trimmed)) return trimmed;
+  return `<content>\n${trimmed}\n</content>`;
+}
+
+/**
  * 将 \n 转义序列转换为真实换行，并按换行拆分文本
  */
 function splitByNewlineForPlainText(text: string): string[] {
@@ -405,6 +420,131 @@ function splitByNewlineForPlainText(text: string): string[] {
     .split(/\n+/)
     .map(s => s.trim())
     .filter(s => s.length > 0);
+}
+
+/**
+ * 从 character 块中提取角色名
+ * 优先查找 角色名：xxx，其次是 角色名：xxx，最后回退到第一个 "角色名" 键的 value，
+ * 否则回退到 "character"/"台词" 字段。
+ */
+function extractCharacterNameFromPairs(pairs: { key: string; value: string }[]): string {
+  const namePair = pairs.find(p => ['角色名', '角色', '人物', 'name', 'character'].includes(p.key));
+  if (namePair && namePair.value) return namePair.value.trim();
+
+  // 兼容：segment 第一段就是名称，没有"角色名"前缀的情况
+  const first = pairs[0]?.key;
+  if (first && !['台词', '旁白', '黑屏文字', '场景', 'scene', 'line'].includes(first)) {
+    return first.trim();
+  }
+  return '';
+}
+
+/**
+ * 判断台词是否已经有 "X：" 或 'X：' 等引号包裹的发言形式
+ * 如果有则保持原样；没有则补充为 角色名："台词" 格式
+ */
+function formatDialogueLine(characterName: string, line: string): string {
+  const trimmed = line.trim();
+  if (!trimmed) return '';
+  // 已经有引号包裹的发言：例如 殷姒："哈哈"、殷姒：'哈哈'、殷姒："哈哈"、殷姒：「哈哈」
+  // 也包括 角色名："台词" 这种已经格式化好的形式
+  if (/^[^：:]+[：:]["'“”‘’「」].*/.test(trimmed)) {
+    return trimmed;
+  }
+  // 已经是 角色名：台词 形式（中文/英文冒号 + 非引号开头），保持原样
+  if (/^[^：:]+[：:][^"'“”‘’「」]/.test(trimmed)) {
+    return trimmed;
+  }
+  // 否则补充为 角色名："台词"
+  const name = characterName.trim() || '未知';
+  return `${name}："${trimmed}"`;
+}
+
+/**
+ * 从消息中提取格式化的剧情文本：
+ * - character 块的台词：输出为 角色名："台词"（已有引号或冒号的保持原样）
+ * - narration 块的旁白：原样输出
+ * - blacktext 块的黑屏文字：原样输出
+ * - choice 选项：忽略（不进剧情文本）
+ *
+ * 支持换行分隔，每行视为一个独立段落
+ * 支持 \n 转义序列
+ */
+export function extractFormattedPlotText(message: string): string {
+  const content = extractContentTag(message);
+  if (!content) return '';
+
+  const lines: string[] = [];
+
+  const blockPositions: Array<{ start: number; end: number }> = [];
+  let searchPos = 0;
+  while (searchPos < content.length) {
+    const m = matchBlock(content, searchPos);
+    if (m) {
+      blockPositions.push({ start: searchPos, end: m.endIndex });
+      searchPos = m.endIndex;
+    } else {
+      searchPos++;
+    }
+  }
+
+  let currentPos = 0;
+  for (const pos of blockPositions) {
+    if (pos.start > currentPos) {
+      const between = content.slice(currentPos, pos.start).trim();
+      if (between) {
+        lines.push(...splitByNewlineForPlainText(between));
+      }
+    }
+
+    const blockAtPos = matchBlock(content, pos.start);
+    if (blockAtPos) {
+      const blockType = normalizeBlockType(blockAtPos.type);
+      const pairs = parsePairs(blockAtPos.content);
+
+      if (blockType === 'choice') {
+        // 选项不进入剧情文本
+      } else if (blockType === 'character') {
+        const characterName = extractCharacterNameFromPairs(pairs);
+        const linePair = pairs.find(p => ['台词', 'line'].includes(p.key));
+        if (linePair && linePair.value) {
+          const lineParts = splitByNewlineForPlainText(linePair.value);
+          for (const part of lineParts) {
+            const formatted = formatDialogueLine(characterName, part);
+            if (formatted) lines.push(formatted);
+          }
+        }
+      } else if (blockType === 'narration') {
+        const narrationPair = pairs.find(p => ['旁白', 'narration'].includes(p.key));
+        if (narrationPair && narrationPair.value) {
+          lines.push(...splitByNewlineForPlainText(narrationPair.value));
+        }
+      } else if (blockType === 'blacktext') {
+        const blackPair = pairs.find(p => ['黑屏文字', '黑屏'].includes(p.key));
+        if (blackPair && blackPair.value) {
+          lines.push(...splitByNewlineForPlainText(blackPair.value));
+        }
+      } else {
+        // 其他类型：原样收集 台词/旁白/黑屏文字 字段
+        for (const pair of pairs) {
+          if (['台词', '旁白', '黑屏文字'].includes(pair.key) && pair.value) {
+            lines.push(...splitByNewlineForPlainText(pair.value));
+          }
+        }
+      }
+    }
+
+    currentPos = pos.end;
+  }
+
+  if (currentPos < content.length) {
+    const remaining = content.slice(currentPos).trim();
+    if (remaining) {
+      lines.push(...splitByNewlineForPlainText(remaining));
+    }
+  }
+
+  return lines.join('\n');
 }
 
 /**
@@ -538,15 +678,15 @@ export async function parseMessageBlocks(
   console.info('[MessageParser] 匹配到', matchedBlocks.length, '个块');
 
   if (matchedBlocks.length === 0) {
-    // 没有找到格式化块，返回纯文本作为旁白
-    // user 消息即使是纯文本也保持 user 类型
-    console.info('[MessageParser] <content> 内未找到格式化块，返回纯文本');
-    return [
-      {
-        type: role === 'user' ? 'user' : 'narration',
-        message: contentText.trim(),
-      },
-    ];
+    // 没有找到格式化块：只对 user 消息保留纯文本显示（让玩家看到自己输入的内容），
+    // assistant 消息的纯文本一律不显示，避免 LLM 输出的注释/草稿/计划文本污染舞台
+    if (role === 'user') {
+      console.info('[MessageParser] user 消息 <content> 内未找到格式化块，返回纯文本作为 user 类型');
+      const trimmed = contentText.trim();
+      return trimmed ? [{ type: 'user', message: trimmed, character: '你' }] : [];
+    }
+    console.info('[MessageParser] assistant 消息 <content> 内未找到格式化块，舞台不显示任何内容');
+    return [];
   }
 
   // 解析每个块（parseBlock 可能返回多个块）
@@ -562,6 +702,31 @@ export async function parseMessageBlocks(
     }
     for (const block of parsedBlocks) {
       try {
+        // 过滤无法识别的块类型（非 character/narration/blacktext/choice/user），
+        // 避免 LLM 输出的任意 [[xxx||...]] 杂项被当成可显示块送进舞台
+        if (
+          block.type !== 'character' &&
+          block.type !== 'narration' &&
+          block.type !== 'blacktext' &&
+          block.type !== 'choice' &&
+          block.type !== 'user'
+        ) {
+          console.info(
+            `[MessageParser] 跳过无法识别的块类型: type="${block.type}"`,
+            JSON.stringify(block).substring(0, 100),
+          );
+          continue;
+        }
+
+        // 过滤内容为空的块（避免空台词/空旁白/空黑屏文字进入舞台）；
+        // choice 类型必须有至少 1 个选项才保留
+        const textContent = (block.text || block.message || '').trim();
+        const hasOptions = block.type === 'choice' && Array.isArray(block.options) && block.options.length > 0;
+        if (!hasOptions && !textContent) {
+          console.info('[MessageParser] 跳过空内容块:', JSON.stringify(block).substring(0, 80));
+          continue;
+        }
+
         // 场景继承机制
         if (block.scene) {
           currentScene = block.scene;
@@ -723,6 +888,59 @@ export function extractDanmakuBlock(message: string): string[] {
 
   console.info(`[MessageParser] 解析弹幕: ${lines.length} 条`);
   return lines;
+}
+
+/**
+ * 清洗第二 API 返回的原始字符串，仅保留我们需要的内部标签块：
+ *   - <dm>...</dm>
+ *   - <background>...</background>
+ *   - <image>...</image>
+ *   - <cg>...</cg>
+ *
+ * LLM 容易"惯性输出"以下内容，必须被剥离：
+ *   1. <content>...</content> 整段（剧情正文）—— 不应被追加到楼层末尾
+ *   2. 任何不在标签内的自由文本（人话解释、Markdown、"以上是弹幕" 等）
+ *   3. 残缺的 Unicode 替换字符 U+FFFD（生成截断的产物）
+ *   4. 多余的空行
+ *
+ * 标签的合法性弱校验：
+ *   - <dm>：原样保留块内全部内容，不做 split；下游 extractDanmakuBlock 会按 | 切
+ *   - <background>/<image>/<cg>：必须包含 image###...### 字段才保留
+ *     （参见 extractImageTagBlocks 的判断）
+ *
+ * @returns 清洗后的字符串，可安全追加到楼层末尾
+ */
+export function sanitizeSecondApiOutput(raw: string): string {
+  if (!raw || typeof raw !== 'string') return '';
+
+  // 0. 移除残缺 Unicode 替换字符 (U+FFFD)，它们是模型生成截断的产物
+  //    单独处理：用户给的样本里"他紧张了�"就是这种
+  let cleaned = raw.replace(/\uFFFD/g, '');
+
+  // 1. 完整提取我们要保留的标签
+  const blocks: string[] = [];
+
+  // 1a. <dm>...</dm> —— 完整保留块内原文（不做 split、不 trim 内容）。
+  //     下游 extractDanmakuBlock 会按 | 切，且 UI 层有它自己的弹幕处理流程；
+  //     我们这里只在写入楼层前剥掉 raw 外的自由文本 / <content> / U+FFFD。
+  const dmRegex = /<dm>[\s\S]*?<\/dm\s*>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = dmRegex.exec(cleaned)) !== null) {
+    blocks.push(m[0]);
+  }
+
+  // 1b. <background>...</background>、<image>...</image>、<cg>...</cg>
+  //     必须包含 image###...### 字段才算合法；缺则丢弃
+  const imgTagRegex = /<(background|image|cg)>([\s\S]*?)<\/\1\s*>/gi;
+  while ((m = imgTagRegex.exec(cleaned)) !== null) {
+    const tag = m[1].toLowerCase();
+    const content = m[2];
+    if (!/image###[\s\S]*?###/i.test(content)) continue;
+    blocks.push(`<${tag}>${content.trim()}</${tag}>`);
+  }
+
+  // 2. 用单个换行连接所有保留块
+  return blocks.join('\n').trim();
 }
 
 /**

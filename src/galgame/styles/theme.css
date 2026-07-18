@@ -1,72 +1,134 @@
-/* === THEME LAYER CSS VARIABLES === */
-/* These variables establish the theme-layer and component-layer naming convention */
-/* Themes should set --theme-* variables, which cascade down to component variables */
+/* === THEME SYSTEM CSS VARIABLES === */
+/*
+ * 变量层级结构：
+ * 1. 基础色变量 (raw color): 定义主题的核心颜色（如 --rust）
+ * 2. 主题变量 (theme-*): 由主题定义，引用基础色
+ * 3. 兼容变量 (vn-*): 旧代码兼容层，引用主题变量
+ *
+ * 使用原则：
+ * - 新代码应使用 --theme-* 系列变量
+ * - 所有变量必须有 fallback 值以保证主题未定义时的可用性
+ */
 
+/* === 基础色变量 (Raw Colors) === */
+/* 报纸主题的基础色定义 */
 :root {
-  /* Theme Layer Variables - Base colors and typography */
-  /* (Themes set these in their cssVars) */
+  /* 核心强调色 */
+  --rust: #8b4513; /* 锈红棕色 - 主强调色 */
+  --rust-light: #a0522d; /* 浅锈色 */
+  --rust-faded: #6b3410; /* 褪色锈色 */
 
-  /* Component Layer Variables - Derived from theme variables */
-  /* These provide backward compatibility and default fallbacks */
+  /* 纸张色系 */
+  --paper-yellow: #d4c5a0; /* 泛黄纸张主色 */
+  --paper-light: #e0d5b8; /* 浅纸张色 */
+  --paper-dark: #b8a880; /* 深纸张色 */
 
-  /* --theme-* prefixed compatibility layer for old --vn-* variables */
-  --theme-bg: var(--vn-bg);
-  --theme-fg: var(--vn-fg);
-  --theme-muted: var(--vn-muted);
+  /* 墨水色系 */
+  --ink-black: #2a2420; /* 墨黑 */
+  --ink-faded: #4a4035; /* 褪色墨 */
+  --ink-light: #6b5f50; /* 浅墨色 */
+
+  /* 装饰色 */
+  --stain: #c4a265; /* 污渍/金色装饰 */
+  --crease: #bfb08a; /* 折痕色 */
+
+  /* 功能色 */
+  --vn-success: #5a7a4a; /* 成功/正向反馈 */
+  --vn-danger: #8b2500; /* 危险/错误提示 */
+
+  /* 主题变量：引用基础色作为默认值 */
+  /* 背景与文字 */
+  --theme-bg: #2a2420;
+  --theme-fg: #d4c5a0;
+  --theme-muted: #8b7d6b;
+
+  /* 强调色 */
   --theme-accent: var(--rust);
   --theme-accent-soft: var(--rust-light);
 
-  /* Backward compatibility: map old --vn-* to --theme-* */
+  /* 线条与边框 */
+  --theme-line-color: rgba(90, 79, 64, 0.4);
+  --theme-surface-border: rgba(90, 79, 64, 0.55);
+  --theme-surface-soft: rgba(212, 197, 160, 0.05);
+
+  /* 文本颜色 */
+  --theme-text-main: rgba(212, 197, 160, 0.92);
+  --theme-text-soft: rgba(212, 197, 160, 0.7);
+  --theme-text-muted: rgba(139, 125, 107, 0.8);
+  --theme-text-faint: rgba(139, 125, 107, 0.5);
+  --theme-text-inverse: rgba(42, 36, 32, 0.9);
+  --theme-user-text: #5c8a9c;
+  --theme-dialogue-name-color: var(--rust);
+
+  /* 字体 */
+  --theme-font-body: 'Noto Serif SC', 'Noto Serif', Georgia, serif;
+  --theme-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* 兼容变量：旧代码兼容层 */
+  /* 注意：这些变量引用 theme-* 系列，确保双向同步 */
   --vn-bg: var(--theme-bg);
   --vn-fg: var(--theme-fg);
   --vn-muted: var(--theme-muted);
   --vn-border: rgba(90, 79, 64, 0.55);
-  --vn-panel-bg: var(--theme-panel-bg);
-  --vn-dialogue-bg: var(--theme-dialogue-bg);
-  --vn-choice-bg: var(--theme-choice-bg);
-  --vn-choice-hover: var(--theme-choice-hover);
-  --vn-choice-selected: var(--theme-choice-selected);
-}
-
-/* === NEWSPAPER VINTAGE THEME === */
-:root {
-  --paper-yellow: #d4c5a0;
-  --paper-light: #e0d5b8;
-  --paper-dark: #b8a880;
-  --ink-black: #2a2420;
-  --ink-faded: #4a4035;
-  --ink-light: #6b5f50;
-  --rust: #8b4513;
-  --rust-light: #a0522d;
-  --rust-faded: #6b3410;
-  --stain: #c4a265;
-  --crease: #bfb08a;
-
-  --vn-bg: #2a2420;
-  --vn-fg: #d4c5a0;
-  --vn-muted: #8b7d6b;
-  --vn-border: #5a4f40;
+  --vn-panel-bg: rgba(51, 44, 38, 0.96);
   --vn-dialogue-bg: rgba(42, 36, 32, 0.92);
   --vn-choice-bg: rgba(58, 51, 44, 0.95);
   --vn-choice-hover: rgba(139, 69, 19, 0.3);
   --vn-choice-selected: rgba(139, 69, 19, 0.5);
   --vn-toast-bg: #d4c5a0;
   --vn-toast-text: #2a2420;
-  --vn-panel-bg: rgba(51, 44, 38, 0.96);
-  --vn-success: #5a7a4a;
-  --vn-danger: #8b2500;
 
-  /* === Danmaku safe area === */
-  /* 用户可通过自定义 CSS 修改这些变量来调整弹幕显示范围 */
-  /* 顶部偏移：避免被左上/右上菜单遮挡 */
-  /* 右上齿轮按钮展开 3 项（设置/全屏/历史）后最低约 150px */
+  /* === 组件层变量 === */
+
+  /* 对话框 */
+  --theme-dialogue-bg: var(--vn-dialogue-bg);
+  --theme-dialogue-border: var(--vn-border);
+  --theme-dialogue-radius: 0px;
+  --theme-dialogue-shadow: inset 0 0 0.5rem rgba(42, 36, 32, 0.3), 0 0.25rem 0.75rem rgba(0, 0, 0, 0.4);
+  --theme-dialogue-text-color: var(--theme-text-main);
+
+  /* 对话框文本字号（关键变量：用 clamp 防"过小消失"，用户可直接重写为绝对值） */
+  --theme-dialogue-text-font-size: clamp(0.9rem, 1.6vw, 1.1rem);
+  --theme-dialogue-text-line-height: 1.75;
+  --theme-dialogue-text-letter-spacing: 0.02em;
+
+  /* 对话框文本 padding（用 rem 避免依赖字号缩放） */
+  --theme-dialogue-text-padding-top: 1.5rem;
+  --theme-dialogue-text-padding-right: 2.5rem;
+  --theme-dialogue-text-padding-bottom: 0.8rem;
+  --theme-dialogue-text-padding-left: 2.5rem;
+  --theme-dialogue-text-max-height: 6rem;
+
+  /* 名字框字号（关键变量：用户常想调整） */
+  --theme-dialogue-name-font-size: clamp(0.95rem, 1.4vw, 1.15rem);
+
+  /* 选项字号 */
+  --theme-choice-text-font-size: clamp(0.9rem, 1.4vw, 1.05rem);
+  --theme-choice-letter-font-size: clamp(0.85rem, 1.2vw, 1rem);
+
+  /* 面板 */
+  --theme-panel-bg: var(--vn-panel-bg);
+  --theme-panel-border: var(--vn-border);
+  --theme-panel-radius: 0px;
+
+  /* 按钮：padding 用 rem 不依赖字号 */
+  --theme-button-bg: rgba(42, 36, 32, 0.85);
+  --theme-button-border: rgba(139, 69, 19, 0.5);
+  --theme-button-radius: 0.1rem;
+  --theme-button-padding-y: 0.4rem;
+  --theme-button-padding-x: 0.75rem;
+
+  /* 弹幕：字号变量需带单位（之前裸数字是隐患） */
   --theme-danmaku-top-offset: 10rem;
-  /* 底部偏移：避开对话面板 */
   --theme-danmaku-bottom-offset: 7rem;
-  /* 左右内边距：避免贴边 */
   --theme-danmaku-horizontal-padding: 0.5rem;
-  /* 弹幕层 z-index */
   --theme-danmaku-z-index: 5;
+  --theme-danmaku-font-size: 1.2rem;
+  --theme-danmaku-color: #ffffff;
+  --theme-danmaku-opacity: 0.9;
+
+  /* 舞台比例：横屏默认 16:9 */
+  --theme-aspect-ratio: 16 / 9;
 }
 
 html,
@@ -215,27 +277,6 @@ body {
   100% {
     opacity: 0;
   }
-}
-
-/* === Danmaku === */
-@keyframes danmaku-scroll {
-  from {
-    transform: translateX(0);
-  }
-  to {
-    transform: translateX(calc(-100% - 100vw));
-  }
-}
-.danmaku-track {
-  position: absolute;
-  left: 100%;
-  white-space: nowrap;
-  font-size: 0.8rem;
-  color: rgba(212, 197, 160, 0.45);
-  font-family: 'Noto Serif SC', serif;
-  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.4);
-  pointer-events: none;
-  animation: danmaku-scroll linear forwards;
 }
 
 /* === 2048 Grid === */
@@ -398,4 +439,65 @@ select option {
   font-family: monospace;
   font-size: 0.8rem;
   color: var(--stain);
+}
+
+/* === 竖屏模式变量覆盖 === */
+/*
+ * 当 .portrait-mode class 存在于 <html> 元素时，
+ * 所有带 -portrait 后缀的变量会自动覆盖对应的默认变量。
+ *
+ * 使用方式：
+ * 1. 主题中定义 --theme-xxx 和 --theme-xxx-portrait 两套值
+ * 2. 组件中直接使用 var(--theme-xxx)，无需三元判断
+ * 3. CSS 会自动根据 .portrait-mode class 选择正确的变量
+ *
+ * 通用覆盖规则：
+ */
+:root.portrait-mode {
+  /* 舞台比例：竖屏用 3:4 */
+  --theme-aspect-ratio: 3 / 4;
+
+  /* 对话框底部距离：竖屏用 -portrait 版本 */
+  --theme-dialogue-bottom: var(--theme-dialogue-bottom-portrait, 8rem);
+
+  /* 对话框左右外边距：竖屏用 -portrait 版本 */
+  --theme-dialogue-margin-x: var(--theme-dialogue-margin-x-portrait, 0.5vmin);
+
+  /* 翻页按钮位置：竖屏用 -portrait 版本 */
+  --theme-dialogue-nav-prev-left: var(--theme-dialogue-nav-prev-left-portrait, 0.5rem);
+  --theme-dialogue-nav-next-right: var(--theme-dialogue-nav-next-right-portrait, 0.5rem);
+
+  /* 选项面板底部距离：竖屏用 -portrait 版本 */
+  --theme-choice-bottom: var(--theme-choice-bottom-portrait, 8rem);
+
+  /* 头像壳位置：竖屏用 -portrait 版本 */
+  --theme-dialogue-portrait-left: var(--theme-dialogue-portrait-left-portrait, var(--theme-dialogue-portrait-left, 0.75rem));
+  --theme-dialogue-portrait-bottom: var(--theme-dialogue-portrait-bottom-portrait, calc(16vmin + 3vmin));
+
+  /* 对话框最小高度：竖屏用 -portrait 版本 */
+  --theme-dialogue-min-height: var(--theme-dialogue-min-height-portrait, 16vmin);
+
+  /* 顶部快捷菜单：竖屏下缩小尺寸与间距，避免在窄宽度下挤压顶角 */
+  --theme-quick-menu-top: var(--theme-quick-menu-top-portrait, 0.5rem);
+  --theme-quick-menu-left-top: var(--theme-quick-menu-left-top-portrait, 0.5rem);
+  --theme-quick-menu-right-top: var(--theme-quick-menu-right-top-portrait, 0.5rem);
+  --theme-quick-menu-left: var(--theme-quick-menu-left-portrait, 0.4rem);
+  --theme-quick-menu-right: var(--theme-quick-menu-right-portrait, 0.4rem);
+  --theme-quick-menu-gap: var(--theme-quick-menu-gap-portrait, 0.35rem);
+  --theme-quick-menu-collapsed-button-size: var(--theme-quick-menu-collapsed-button-size-portrait, 1.75rem);
+  --theme-quick-menu-collapsed-icon-translate-x: var(--theme-quick-menu-collapsed-icon-translate-x-portrait, 0px);
+  --theme-quick-menu-collapsed-icon-translate-y: var(--theme-quick-menu-collapsed-icon-translate-y-portrait, 0px);
+  --theme-quick-menu-icon-size: var(--theme-quick-menu-icon-size-portrait, 0.75rem);
+  --theme-quick-menu-left-collapsed-size: var(--theme-quick-menu-left-collapsed-size-portrait, 2.1rem);
+  --theme-quick-menu-right-collapsed-size: var(--theme-quick-menu-right-collapsed-size-portrait, 2.1rem);
+  --theme-quick-menu-left-collapsed-icon-size: var(--theme-quick-menu-left-collapsed-icon-size-portrait, 0.7rem);
+  --theme-quick-menu-right-collapsed-icon-size: var(--theme-quick-menu-right-collapsed-icon-size-portrait, 0.7rem);
+  --theme-quick-menu-left-expanded-width: var(--theme-quick-menu-left-expanded-width-portrait, 5.5rem);
+  --theme-quick-menu-right-expanded-width: var(--theme-quick-menu-right-expanded-width-portrait, 5.5rem);
+  --theme-quick-menu-left-expanded-height: var(--theme-quick-menu-left-expanded-height-portrait, 2rem);
+  --theme-quick-menu-right-expanded-height: var(--theme-quick-menu-right-expanded-height-portrait, 2rem);
+  --theme-quick-menu-left-expanded-icon-size: var(--theme-quick-menu-left-expanded-icon-size-portrait, 0.75rem);
+  --theme-quick-menu-right-expanded-icon-size: var(--theme-quick-menu-right-expanded-icon-size-portrait, 0.75rem);
+  --theme-quick-menu-left-expanded-text-size: var(--theme-quick-menu-left-expanded-text-size-portrait, 0.85rem);
+  --theme-quick-menu-right-expanded-text-size: var(--theme-quick-menu-right-expanded-text-size-portrait, 0.85rem);
 }

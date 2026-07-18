@@ -1,0 +1,661 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>角色走向选择</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 10px;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        color: currentColor;
+        background: transparent;
+        font-size: 14px;
+      }
+
+      .panel {
+        padding: 12px;
+        max-width: 640px;
+        margin: 0 auto;
+        position: relative;
+      }
+
+      .top-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 15px;
+      }
+
+      .header {
+        font-size: 9px;
+        opacity: 0.5;
+        letter-spacing: 1px;
+        font-weight: 800;
+        border-left: 3px solid currentColor;
+        padding-left: 8px;
+        margin: 0;
+      }
+
+      .clear-btn {
+        font-size: 10px;
+        opacity: 0.45;
+        letter-spacing: 1px;
+        background: none;
+        border: 1px solid currentColor;
+        border-radius: 4px;
+        padding: 3px 8px;
+        cursor: pointer;
+        color: inherit;
+        transition: opacity 0.15s;
+        font-family: inherit;
+      }
+      .clear-btn:hover {
+        opacity: 1;
+      }
+
+      .section-list {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      /* 角色名行：标题 + +按钮 并排 */
+      .char-name-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 0 0 8px 0;
+      }
+
+      .char-name {
+        font-size: 10px;
+        opacity: 0.6;
+        letter-spacing: 1px;
+        font-weight: 800;
+        border-left: 3px solid currentColor;
+        padding-left: 8px;
+        margin: 0;
+        flex: 1;
+      }
+
+      .add-opt-btn {
+        font-size: 12px;
+        opacity: 0.35;
+        background: none;
+        border: 1px dashed currentColor;
+        border-radius: 50%;
+        width: 22px;
+        height: 22px;
+        cursor: pointer;
+        color: inherit;
+        transition: opacity 0.15s, background 0.15s;
+        font-family: inherit;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        line-height: 1;
+      }
+      .add-opt-btn:hover {
+        opacity: 0.8;
+        background: rgba(128, 128, 128, 0.08);
+      }
+
+      .option-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .option-item {
+        padding: 10px 14px;
+        cursor: pointer;
+        border: 1px solid currentColor;
+        border-radius: 6px;
+        background: rgba(128, 128, 128, 0.02);
+        transition:
+          transform 0.2s,
+          background 0.2s;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .option-item::after {
+        content: '●';
+        position: absolute;
+        right: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        font-size: 10px;
+        opacity: 0.2;
+        transition: 0.3s;
+      }
+
+      .option-item:hover {
+        transform: translateY(-2px);
+        background: rgba(128, 128, 128, 0.08);
+        box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
+      }
+
+      .option-item.selected {
+        background: rgba(128, 128, 128, 0.15);
+        border: 1px solid currentColor;
+        border-left: 6px solid currentColor;
+        transform: translateY(0);
+        font-weight: bold;
+      }
+      .option-item.selected::after {
+        opacity: 1;
+        content: '✔';
+        font-size: 14px;
+      }
+
+      /* 含输入框的临时编辑项，不裁剪 */
+      .option-item.with-input {
+        overflow: visible;
+        cursor: default;
+        display: flex;
+        align-items: center;
+      }
+
+      /* 自定义选项：虚线边框 */
+      .option-item.custom-opt {
+        border-style: dashed;
+        border-color: rgba(128, 128, 128, 0.35);
+      }
+
+      .display {
+        margin-top: 20px;
+        text-align: center;
+        font-size: 10px;
+        opacity: 0.4;
+        letter-spacing: 2px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="panel">
+      <div class="top-bar">
+        <div class="header">STORYLINE SELECTION</div>
+        <button class="clear-btn" id="clearBtn">[ 清空 ]</button>
+      </div>
+
+      <div class="section-list" id="sectionList"></div>
+      <script type="text/plain" id="raw-data">
+        $1
+      </script>
+
+      <div class="display" id="display">Select options to proceed</div>
+    </div>
+
+    <script>
+      (function () {
+        'use strict';
+
+        console.info('[角色走向美化] 脚本开始加载');
+        try {
+
+        /* ================================================================
+         * 一、DecisionEngine — MVU 驱动决策引擎
+         * ================================================================ */
+        var DecisionEngine = (function () {
+          var 取向强度 = {
+            '温情取向': function (v) { return v.亲情 * v.爱欲; },
+            '守护取向': function (v) { return v.亲情 * (v.厌恶 + 1); },
+            '占有取向': function (v) { return v.爱欲 * v.自我; },
+            '推拒取向': function (v) { return v.爱欲 * v.厌恶; },
+            '叛逆取向': function (v) { return v.自我 * (100 - v.亲情); },
+            '逃离取向': function (v) { return v.厌恶 * v.自我; },
+            '背德取向': function (v) { return v.爱欲 * Math.max(0, 60 - v.亲情); },
+            '证明取向': function (v) { return v.自我 * v.厌恶; },
+          };
+
+          function softmax(scores, temperature) {
+            var maxScore = Math.max.apply(null, scores);
+            var weights = scores.map(function (s) {
+              return Math.exp((s - maxScore) / temperature);
+            });
+            var sum = weights.reduce(function (a, b) { return a + b; }, 0);
+            return weights.map(function (w) { return w / sum; });
+          }
+
+          function pick(items, weights) {
+            var r = Math.random();
+            var cum = 0;
+            for (var i = 0; i < items.length; i++) {
+              cum += weights[i];
+              if (r <= cum) return items[i];
+            }
+            return items[items.length - 1];
+          }
+
+          // 候选: [{ 原始文本, 取向类型 }]
+          // 变量: { 亲情, 自我, 厌恶, 爱欲 }
+          // temperature: 默认 0.7
+          function decide(候选列表, 变量, temperature) {
+            if (!候选列表 || 候选列表.length === 0) return null;
+            temperature = temperature || 0.7;
+
+            var 可参与 = 候选列表.filter(function (c) {
+              return !!取向强度[c.取向类型];
+            });
+            if (可参与.length === 0) 可参与 = 候选列表;
+
+            var strengths = 可参与.map(function (c) {
+              var fn = 取向强度[c.取向类型];
+              return fn ? fn(变量) : 0;
+            });
+
+            var maxStr = Math.max.apply(null, strengths);
+            var threshold = maxStr * 0.05;
+            var filtered = [], filteredStr = [];
+            for (var i = 0; i < 可参与.length; i++) {
+              if (strengths[i] >= threshold) {
+                filtered.push(可参与[i]);
+                filteredStr.push(strengths[i]);
+              }
+            }
+            if (filtered.length === 0) { filtered = 可参与; filteredStr = strengths; }
+
+            var weights = softmax(filteredStr, temperature);
+            return pick(filtered, weights);
+          }
+
+          return { decide: decide };
+        })();
+
+        /* ================================================================
+         * 二、MVU Store — 角色选项唯一数据源
+         * 数据格式: { [角色名]: 选项文本 }
+         * 存储目标: 当前楼层的 MVU 变量（按 message_id 隔离）
+         * ================================================================ */
+        var roleOptionsMVU = (function () {
+          var _data = {};        // 内存状态 { [charName]: text }
+          var _msgId = -1;       // 当前楼层 ID
+          var _subscribers = [];  // 视图更新回调
+
+          function _clone(obj) {
+            var out = {};
+            for (var k in obj) out[k] = obj[k];
+            return out;
+          }
+
+          // 读取 MVU 变量
+          function _loadFromMvu() {
+            try {
+              var vars = getVariables({ type: 'message', message_id: 'latest' }) || {};
+              var statData = (vars['stat_data'] && typeof vars['stat_data'] === 'object')
+                ? vars['stat_data']
+                : vars;
+              return statData['角色选项'] || {};
+            } catch (e) { return {}; }
+          }
+
+          // 写入 MVU 变量
+          function _saveToMvu(data) {
+            try {
+              var vars = getVariables({ type: 'message', message_id: 'latest' }) || {};
+              if (!vars['stat_data'] || typeof vars['stat_data'] !== 'object') {
+                vars['stat_data'] = {};
+              }
+              vars['stat_data']['角色选项'] = data;
+              vars['角色选项'] = data;
+              replaceVariables(vars, { type: 'message', message_id: 'latest' });
+            } catch (e) { /* ignore */ }
+          }
+
+          // 通知所有视图更新
+          function _notify() {
+            _subscribers.forEach(function (cb) { cb(_clone(_data)); });
+          }
+
+          // 初始化：读取当前楼层的 MVU 变量
+          function init() {
+            try {
+              _msgId = 'latest';
+              _data = _loadFromMvu();
+            } catch (e) { _data = {}; }
+          }
+
+          // 等待 MVU 继承完成后刷新数据（用于新楼层场景）
+          function initAfterMvuInheritance() {
+            try {
+              if (typeof Mvu !== 'undefined' && Mvu.events) {
+                Mvu.events.VARIABLE_UPDATE_ENDED(function () {
+                  _data = _loadFromMvu();
+                  _notify();
+                  setTimeout(function () { applyEngineDefaultsFn(); }, 0);
+                });
+              }
+            } catch (e) { /* ignore */ }
+          }
+
+          // 暴露给外部调用，用于新楼层 MVU 继承完成后的重新初始化
+
+          return {
+            init: init,
+
+            // 订阅视图更新
+            subscribe: function (cb) { _subscribers.push(cb); },
+
+            // 获取当前数据快照
+            getSnapshot: function () { return _clone(_data); },
+
+            // 选中 / 取消选中（传 null 表示取消选中）
+            setSelection: function (charName, text) {
+              try {
+                if (text === null || text === undefined) {
+                  if (_data[charName] === undefined) return;
+                  delete _data[charName];
+                } else {
+                  if (_data[charName] === text) return;
+                  _data[charName] = text;
+                }
+                _notify();
+                _saveToMvu(_clone(_data));
+              } catch(e) { console.error('[角色走向美化] setSelection错误:', e); }
+            },
+
+            // 清空所有选中
+            clear: function () {
+              if (Object.keys(_data).length === 0) return;
+              _data = {};
+              _notify();
+              _saveToMvu(_clone(_data));
+            },
+          };
+        })();
+
+        /* ================================================================
+         * 三、解析辅助
+         * ================================================================ */
+        var LB = String.fromCharCode(123, 123);
+        var RB = String.fromCharCode(125, 125);
+        var D1 = '$' + '1';
+        var 取向Re = /^(.+?)取向[｜|]/;
+
+        function getTemperature() {
+          try {
+            var 变量 = getVariables({ type: 'chat' });
+            var val = 变量 && 变量['走向温度'];
+            return (typeof val === 'number' && val > 0) ? val : 0.7;
+          } catch (e) { return 0.7; }
+        }
+
+        function getCharacterVariables() {
+          try {
+            if (typeof Mvu === 'undefined' || typeof getCurrentMessageId !== 'function') {
+              return { 亲情: 50, 自我: 50, 厌恶: 50, 爱欲: 50 };
+            }
+            var data = Mvu.getMvuData({ type: 'message', message_id: getCurrentMessageId() });
+            var cheng = (typeof _ !== 'undefined') ? _.get(data, 'stat_data.程北极') : (data && data.stat_data && data.stat_data['程北极']) || {};
+            return {
+              亲情: Number(cheng.亲情) || 50,
+              自我: Number(cheng.自我) || 50,
+              厌恶: Number(cheng.厌恶) || 50,
+              爱欲: Number(cheng.爱欲) || 50,
+            };
+          } catch (e) { return { 亲情: 50, 自我: 50, 厌恶: 50, 爱欲: 50 }; }
+        }
+
+        /* ================================================================
+         * 三、主逻辑
+         * ================================================================ */
+        var rawEl = document.getElementById('raw-data');
+        if (!rawEl) return;
+
+        var rawSections = rawEl.textContent || '';
+
+        if (!rawSections.trim()) {
+          document.getElementById('sectionList').innerHTML =
+            '<p style="color:#e07070;font-size:12px;padding:8px 0">未找到任何角色走向数据</p>';
+          return;
+        }
+
+        /* ---- 解析每个【角色名】分段 ---- */
+        var sections = [];
+        var parts = rawSections.split(/【([^】]*)】/);
+        for (var i = 1; i < parts.length; i += 2) {
+          var rawName = (parts[i] || '').trim();
+          var nameRe = new RegExp('^' + LB + '(.*)' + RB + '$');
+          var charName = rawName.replace(nameRe, D1).trim();
+          var content = (parts[i + 1] || '').trim();
+          if (charName) {
+            sections.push({ charName: charName, content: content, options: [], customOptions: [] });
+          }
+        }
+
+        if (!sections.length) {
+          document.getElementById('sectionList').innerHTML =
+            '<p style="color:#e07070;font-size:12px;padding:8px 0">未解析到任何角色章节，请检查格式</p>';
+          return;
+        }
+
+        /* ---- 解析每个分段内的选项 ---- */
+        var lineRe = new RegExp(
+          '^\\s*(?:(\\d+)[.、)\\s]\\s*)?((?:【.*?】|[^【】]*)*)\\s*$'
+        );
+        var autoNum = 0;
+        sections.forEach(function (sec) {
+          autoNum = 0;
+          sec.content.split('\n').forEach(function (line) {
+            var trimmed = line.trim();
+            if (!trimmed) return;
+            var m = line.match(lineRe);
+            if (!m) {
+              console.info('[DEBUG lineRe] 未匹配行: "' + trimmed + '"');
+              return;
+            }
+            var text = (m[2] || '').trim();
+            if (!text) { console.info('[DEBUG text] 捕获组为空，fallback: "' + trimmed + '"'); text = trimmed; }
+            var num = (m[1] || '').trim() || String(++autoNum);
+            if (text) {
+              var 取向类型 = 取向Re.test(text) ? text.match(取向Re)[0].replace(/[｜|]/, '') : null;
+              sec.options.push({ num: num, text: text, selected: false, custom: false, orientation: 取向类型 });
+            }
+          });
+        });
+
+        console.info('[角色走向美化] 解析结果: 角色数=' + sections.length);
+        sections.forEach(function (s) {
+          console.info('  角色=' + s.charName + ' | 选项数=' + s.options.length + ' | 自定义=' + s.customOptions.length);
+        });
+
+        var applyEngineDefaultsFn = function () {
+          var snap = roleOptionsMVU.getSnapshot();
+
+          sections.forEach(function (sec) {
+            var allOpts = sec.options.concat(sec.customOptions);
+            var inheritedSel = snap[sec.charName];
+
+            // 检查继承来的选中项是否在当前文本选项中存在
+            var validOpt = null;
+            if (inheritedSel) {
+              for (var i = 0; i < allOpts.length; i++) {
+                if (allOpts[i].text === inheritedSel) { validOpt = inheritedSel; break; }
+              }
+            }
+
+            if (validOpt) {
+              // 选项有效，保持选中（仅同步 UI）
+            } else {
+              // 选项无效，清除并用引擎重新计算
+              if (inheritedSel) { roleOptionsMVU.setSelection(sec.charName, null); }
+              var 变量 = getCharacterVariables();
+              var temperature = getTemperature();
+              var 候选列表 = sec.options.map(function (o) {
+                return { 原始文本: o.text, 取向类型: o.orientation };
+              });
+              var 结果 = DecisionEngine.decide(候选列表, 变量, temperature);
+              if (结果) { roleOptionsMVU.setSelection(sec.charName, 结果.原始文本); }
+            }
+          });
+        };
+
+        roleOptionsMVU.init();
+
+        try { applyEngineDefaultsFn(); } catch(e) { console.error('[角色走向美化] applyEngineDefaults错误:', e); }
+
+        try { roleOptionsMVU.initAfterMvuInheritance(); } catch(e) { /* ignore */ }
+
+        /* ---- 显示状态（实时读 MVU） ---- */
+        function updateDisplay() {
+          var snap = roleOptionsMVU.getSnapshot();
+          var chosen = [];
+          for (var charName in snap) { if (snap[charName]) chosen.push(charName); }
+          var display = document.getElementById('display');
+          display.innerText = chosen.length === 0 ? 'Select options to proceed' : 'SELECTED: ' + chosen.join(' · ');
+        }
+
+        /* ---- 渲染单个选项 ---- */
+        function makeOptionLi(opt, ul, sec) {
+          var li = document.createElement('li');
+          li.className = 'option-item' + (opt.custom ? ' custom-opt' : '');
+          li.textContent = (opt.num ? opt.num + '. ' : '') + opt.text;
+          if (roleOptionsMVU.getSnapshot()[sec.charName] === opt.text) li.classList.add('selected');
+
+          li.addEventListener('click', function () {
+            var snap = roleOptionsMVU.getSnapshot();
+            var curText = snap[sec.charName] || null;
+            var newText = (curText === opt.text) ? null : opt.text;
+            roleOptionsMVU.setSelection(sec.charName, newText);
+          });
+
+          return li;
+        }
+
+        /* ---- 添加自定义选项 ---- */
+        function addCustomOption(sec, ul) {
+          var newText = '点击输入自定义走向...';
+          var opt = { num: '', text: newText, selected: false, custom: true, orientation: null, isPlaceholder: true };
+          sec.customOptions.push(opt);
+
+          var li = document.createElement('li');
+          li.className = 'option-item custom-opt with-input';
+          li.style.cursor = 'default';
+
+          var input = document.createElement('input');
+          input.type = 'text';
+          input.value = '';
+          input.placeholder = '输入自定义走向，回车确认';
+          input.style.cssText = 'flex:1;background:transparent;border:none;outline:none;color:inherit;font-family:inherit;font-size:14px;min-width:60px;';
+          li.appendChild(input);
+          ul.appendChild(li);
+
+          function commit() {
+            var val = input.value.trim();
+            if (!val) {
+              ul.removeChild(li);
+              var idx = sec.customOptions.indexOf(opt);
+              if (idx > -1) sec.customOptions.splice(idx, 1);
+              return;
+            }
+            opt.text = val;
+            opt.isPlaceholder = false;
+            li.style.cursor = 'pointer';
+            li.textContent = val;
+            li.addEventListener('click', function () {
+              var snap = roleOptionsMVU.getSnapshot();
+              var curText = snap[sec.charName] || null;
+              var newText = (curText === opt.text) ? null : opt.text;
+              roleOptionsMVU.setSelection(sec.charName, newText);
+            });
+            updateDisplay();
+          }
+
+          input.addEventListener('blur', commit);
+          input.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+          });
+
+          input.focus();
+        }
+
+        /* ---- 清空按钮 ---- */
+        document.getElementById('clearBtn').addEventListener('click', function () {
+          roleOptionsMVU.clear();
+        });
+
+        var listEl = document.getElementById('sectionList');
+        var sectionUlPairs = [];
+        var liGlobalIdx = 0;
+        console.info('[DEBUG DOM] sectionList children count: ' + listEl.children.length);
+        sections.forEach(function (sec) {
+          if (!sec.options.length && !sec.customOptions.length) return;
+
+          var secEl = document.createElement('div');
+
+          /* 角色名行：标题 + + 按钮 */
+          var nameRow = document.createElement('div');
+          nameRow.className = 'char-name-row';
+
+          var nameEl = document.createElement('h3');
+          nameEl.className = 'char-name';
+          nameEl.textContent = '【' + sec.charName + '】';
+          nameRow.appendChild(nameEl);
+
+          var addBtn = document.createElement('button');
+          addBtn.className = 'add-opt-btn';
+          addBtn.title = '添加自定义走向';
+          addBtn.textContent = '+';
+          addBtn.addEventListener('click', function () {
+            var ul = secEl.querySelector('.option-list');
+            addCustomOption(sec, ul);
+          });
+          nameRow.appendChild(addBtn);
+
+          secEl.appendChild(nameRow);
+
+          /* 选项列表 */
+          var ul = document.createElement('ul');
+          ul.className = 'option-list';
+
+          sec.options.forEach(function (opt) {
+            ul.appendChild(makeOptionLi(opt, ul, sec));
+          });
+          sec.customOptions.forEach(function (opt) {
+            ul.appendChild(makeOptionLi(opt, ul, sec));
+          });
+
+          sec.options.forEach(function () { liGlobalIdx++; });
+          sec.customOptions.forEach(function () { liGlobalIdx++; });
+          sectionUlPairs.push({ liStartIdx: liGlobalIdx - sec.options.length - sec.customOptions.length });
+
+          secEl.appendChild(ul);
+          listEl.appendChild(secEl);
+        });
+
+        console.info('[DEBUG DOM] sectionList children count after render: ' + listEl.children.length);
+        console.info('[DEBUG DOM] sectionList innerHTML length: ' + listEl.innerHTML.length);
+
+        // MVU subscriber：数据变化时同步 DOM 的 .selected 状态
+        var allLis = listEl.querySelectorAll('.option-item');
+        roleOptionsMVU.subscribe(function (snap) {
+          allLis.forEach(function (li) { li.classList.remove('selected'); });
+          for (var i = 0; i < sections.length; i++) {
+            var sec = sections[i];
+            var selText = snap[sec.charName];
+            if (!selText) continue;
+            var allOpts = sec.options.concat(sec.customOptions);
+            for (var j = 0; j < allOpts.length; j++) {
+              if (allOpts[j].text === selText) {
+                var li = allLis[sectionUlPairs[i].liStartIdx + j];
+                if (li) li.classList.add('selected');
+                break;
+              }
+            }
+          }
+          updateDisplay();
+        });
+
+        updateDisplay();
+        } catch(e) { console.error('[角色走向美化] 全局错误:', e); }
+      })();
+    </script>
+  </body>
+</html>

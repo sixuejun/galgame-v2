@@ -38,6 +38,8 @@ export interface ThemeDefinition {
   name: string;
   description: string;
   usesImageShell: boolean;
+  /** 为 true 时在主题列表中隐藏，但仍然可以通过 themeId 直接切换使用 */
+  hidden?: boolean;
   cssVars: Record<string, string>;
   components: Partial<Record<ComponentKey, ComponentSkin>>;
 }

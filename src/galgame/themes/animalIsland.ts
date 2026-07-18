@@ -11,6 +11,7 @@ export const animalIslandTheme: ThemeDefinition = {
   id: 'animal-island',
   name: '动物之森',
   description: '柔和可爱的森系风格，圆润的视觉元素和温暖的色调',
+  hidden: true,
   usesImageShell: false,
   cssVars: {
     // 基础色 - 柔和渐变

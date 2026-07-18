@@ -161,14 +161,16 @@
         </div>
 
         <!-- Tab navigation -->
-        <div class="flex border-b px-6" style="border-color: rgba(90,79,64,0.3)">
+        <div class="flex border-b px-6" style="border-color: rgba(90, 79, 64, 0.3)">
           <button
             class="px-4 py-2.5 text-sm font-medium transition-colors"
             :style="{
-              borderBottom: activeTab === 'character' ? '2px solid var(--theme-accent, var(--rust))' : '2px solid transparent',
-              color: activeTab === 'character'
-                ? 'var(--theme-text-main, rgba(212,197,160,0.92))'
-                : 'var(--theme-text-muted, var(--vn-muted))',
+              borderBottom:
+                activeTab === 'character' ? '2px solid var(--theme-accent, var(--rust))' : '2px solid transparent',
+              color:
+                activeTab === 'character'
+                  ? 'var(--theme-text-main, rgba(212,197,160,0.92))'
+                  : 'var(--theme-text-muted, var(--vn-muted))',
             }"
             @click="activeTab = 'character'"
           >
@@ -180,232 +182,233 @@
         <!-- Content -->
         <div class="no-scrollbar min-h-0 flex-1 overflow-y-auto px-6 py-5">
           <!-- User character section -->
-            <div class="mb-8">
-              <div class="mb-4 flex items-center gap-2">
-                <i class="fa-solid fa-user" style="color: var(--theme-accent, var(--rust)); font-size: 0.875rem" />
-                <h3
-                  class="text-sm font-bold tracking-widest"
-                  style="color: var(--theme-text-main, rgba(212, 197, 160, 0.9))"
-                >
-                  我的角色
-                </h3>
+          <div class="mb-8">
+            <div class="mb-4 flex items-center gap-2">
+              <i class="fa-solid fa-user" style="color: var(--theme-accent, var(--rust)); font-size: 0.875rem" />
+              <h3
+                class="text-sm font-bold tracking-widest"
+                style="color: var(--theme-text-main, rgba(212, 197, 160, 0.9))"
+              >
+                我的角色
+              </h3>
+              <div
+                class="flex-1"
+                :style="{ height: '1px', background: 'linear-gradient(to right, rgba(90,79,64,0.6), transparent)' }"
+              />
+            </div>
+
+            <!-- 竖屏: flex-col 让头像和信息纵向排列；桌面: flex-row 横向排列 -->
+            <div class="flex flex-col gap-4 sm:flex-row sm:gap-5">
+              <!-- Avatar -->
+              <div class="flex flex-col items-center gap-2 sm:self-start">
                 <div
-                  class="flex-1"
-                  :style="{ height: '1px', background: 'linear-gradient(to right, rgba(90,79,64,0.6), transparent)' }"
-                />
-              </div>
-
-              <div class="flex gap-5">
-                <!-- Avatar -->
-                <div class="flex flex-col items-center gap-2">
-                  <div
-                    class="group relative h-24 w-24 cursor-pointer overflow-hidden border"
-                    :style="{ borderColor: 'rgba(90,79,64,0.5)', background: 'rgba(74,64,53,0.2)' }"
-                    @click="openAvatarModal"
-                  >
-                    <template v-if="store.userCharacter.avatarUrl">
-                      <img
-                        :src="store.userCharacter.avatarUrl"
-                        :alt="store.userCharacter.name"
-                        class="h-full w-full object-cover"
-                        style="filter: sepia(0.3) contrast(0.9)"
-                      />
-                      <div
-                        class="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100"
-                        style="background: rgba(42, 36, 32, 0.5)"
-                      >
-                        <i class="fa-solid fa-eye" style="color: var(--theme-text-main, var(--vn-fg))" />
-                      </div>
-                    </template>
-                    <div
-                      v-else
-                      class="flex h-full w-full flex-col items-center justify-center"
-                      style="color: var(--theme-text-muted, var(--vn-muted))"
-                    >
-                      <i class="fa-solid fa-upload mb-1" />
-                      <span style="font-size: 9px">上传头像</span>
-                    </div>
-                  </div>
-                  <button
-                    class="cursor-pointer transition-colors"
-                    style="font-size: 10px; color: var(--theme-text-muted, var(--vn-muted))"
-                    @click="openAvatarModal"
-                  >
-                    {{ store.userCharacter.avatarUrl ? '更换头像' : '选择图片' }}
-                  </button>
-                </div>
-
-                <!-- Info -->
-                <div class="flex-1">
-                  <div class="mb-3">
-                    <span class="mb-1 block" style="font-size: 10px; color: var(--theme-text-muted, var(--vn-muted))"
-                      >姓名</span
-                    >
-                    <input
-                      v-if="editingName"
-                      v-model="nameValue"
-                      type="text"
-                      class="w-full border px-2 py-1 text-sm outline-none"
-                      :style="{
-                        background: 'rgba(74,64,53,0.3)',
-                        borderColor: 'rgba(90,79,64,0.4)',
-                        color: 'var(--theme-text-main, var(--vn-fg))',
-                        borderRadius: '2px',
-                      }"
-                      autofocus
-                      @blur="handleNameSave"
-                      @keydown.enter="handleNameSave"
+                  class="group relative h-24 w-24 cursor-pointer overflow-hidden border"
+                  :style="{ borderColor: 'rgba(90,79,64,0.5)', background: 'rgba(74,64,53,0.2)' }"
+                  @click="openAvatarModal"
+                >
+                  <template v-if="store.userCharacter.avatarUrl">
+                    <img
+                      :src="store.userCharacter.avatarUrl"
+                      :alt="store.userCharacter.name"
+                      class="h-full w-full object-cover"
+                      style="filter: sepia(0.3) contrast(0.9)"
                     />
                     <div
-                      v-else
-                      class="cursor-pointer text-sm transition-colors"
-                      style="color: var(--theme-text-main, rgba(212, 197, 160, 0.9))"
-                      @click="editingName = true"
+                      class="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100"
+                      style="background: rgba(42, 36, 32, 0.5)"
                     >
-                      {{ store.userCharacter.name }}
-                      <span style="font-size: 9px; color: var(--theme-text-muted, var(--vn-muted)); margin-left: 8px"
-                        >(点击编辑)</span
-                      >
+                      <i class="fa-solid fa-eye" style="color: var(--theme-text-main, var(--vn-fg))" />
                     </div>
+                  </template>
+                  <div
+                    v-else
+                    class="flex h-full w-full flex-col items-center justify-center"
+                    style="color: var(--theme-text-muted, var(--vn-muted))"
+                  >
+                    <i class="fa-solid fa-upload mb-1" />
+                    <span style="font-size: 9px">上传头像</span>
                   </div>
+                </div>
+                <button
+                  class="cursor-pointer transition-colors"
+                  style="font-size: 10px; color: var(--theme-text-muted, var(--vn-muted))"
+                  @click="openAvatarModal"
+                >
+                  {{ store.userCharacter.avatarUrl ? '更换头像' : '选择图片' }}
+                </button>
+              </div>
 
-                  <div class="flex items-center justify-between py-2">
-                    <div class="flex items-center gap-2">
-                      <i
-                        :class="
-                          store.userCharacter.avatarDisplayMode !== 'off' ? 'fa-solid fa-eye' : 'fa-solid fa-eye-slash'
-                        "
-                        :style="{
-                          fontSize: '0.8rem',
-                          color:
-                            store.userCharacter.avatarDisplayMode !== 'off'
-                              ? 'var(--theme-accent, var(--rust))'
-                              : 'var(--theme-text-muted, var(--vn-muted))',
-                        }"
-                      />
-                      <span class="text-xs" style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.7))"
-                        >显示玩家头像</span
-                      >
-                    </div>
-                    <div
-                      class="flex items-center overflow-hidden rounded border"
-                      style="border-color: rgba(90, 79, 64, 0.45)"
+              <!-- Info -->
+              <div class="min-w-0 flex-1">
+                <div class="mb-3">
+                  <span class="mb-1 block" style="font-size: 10px; color: var(--theme-text-muted, var(--vn-muted))"
+                    >姓名</span
+                  >
+                  <input
+                    v-if="editingName"
+                    v-model="nameValue"
+                    type="text"
+                    class="w-full border px-2 py-1 text-sm outline-none"
+                    :style="{
+                      background: 'rgba(74,64,53,0.3)',
+                      borderColor: 'rgba(90,79,64,0.4)',
+                      color: 'var(--theme-text-main, var(--vn-fg))',
+                      borderRadius: '2px',
+                    }"
+                    autofocus
+                    @blur="handleNameSave"
+                    @keydown.enter="handleNameSave"
+                  />
+                  <div
+                    v-else
+                    class="cursor-pointer text-sm transition-colors"
+                    style="color: var(--theme-text-main, rgba(212, 197, 160, 0.9))"
+                    @click="editingName = true"
+                  >
+                    {{ store.userCharacter.name }}
+                    <span style="font-size: 9px; color: var(--theme-text-muted, var(--vn-muted)); margin-left: 8px"
+                      >(点击编辑)</span
                     >
-                      <button
-                        class="px-3 py-1 text-xs transition-colors"
-                        :style="modeButtonStyle(store.userCharacter.avatarDisplayMode === 'avatar')"
-                        @click="toggleAvatarDisplayMode('avatar')"
-                      >
-                        头像
-                      </button>
-                      <button
-                        class="px-3 py-1 text-xs transition-colors"
-                        :style="modeButtonStyle(store.userCharacter.avatarDisplayMode === 'sprite')"
-                        @click="toggleAvatarDisplayMode('sprite')"
-                      >
-                        立绘
-                      </button>
-                    </div>
+                  </div>
+                </div>
+
+                <div class="flex items-center justify-between py-2">
+                  <div class="flex items-center gap-2">
+                    <i
+                      :class="
+                        store.userCharacter.avatarDisplayMode !== 'off' ? 'fa-solid fa-eye' : 'fa-solid fa-eye-slash'
+                      "
+                      :style="{
+                        fontSize: '0.8rem',
+                        color:
+                          store.userCharacter.avatarDisplayMode !== 'off'
+                            ? 'var(--theme-accent, var(--rust))'
+                            : 'var(--theme-text-muted, var(--vn-muted))',
+                      }"
+                    />
+                    <span class="text-xs" style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.7))"
+                      >显示玩家头像</span
+                    >
+                  </div>
+                  <div
+                    class="flex items-center overflow-hidden rounded border"
+                    style="border-color: rgba(90, 79, 64, 0.45)"
+                  >
+                    <button
+                      class="px-3 py-1 text-xs transition-colors"
+                      :style="modeButtonStyle(store.userCharacter.avatarDisplayMode === 'avatar')"
+                      @click="toggleAvatarDisplayMode('avatar')"
+                    >
+                      头像
+                    </button>
+                    <button
+                      class="px-3 py-1 text-xs transition-colors"
+                      :style="modeButtonStyle(store.userCharacter.avatarDisplayMode === 'sprite')"
+                      @click="toggleAvatarDisplayMode('sprite')"
+                    >
+                      立绘
+                    </button>
+                  </div>
+                </div>
+                <p
+                  v-if="!store.userCharacter.avatarUrl"
+                  style="font-size: 9px; color: var(--theme-text-muted, rgba(139, 125, 107, 0.6)); margin-top: 4px"
+                >
+                  请先上传头像才能开启立绘显示
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Character roster divider -->
+          <div class="headline-rule mb-6">
+            <span
+              style="
+                font-size: 9px;
+                color: var(--theme-text-muted, var(--vn-muted));
+                font-family: monospace;
+                letter-spacing: 0.15em;
+                padding: 0 8px;
+                background: var(--vn-panel-bg);
+                position: relative;
+                z-index: 10;
+              "
+            >
+              --- 角色图鉴 ---
+            </span>
+          </div>
+
+          <!-- Character roster -->
+          <div class="flex flex-col gap-3">
+            <div
+              v-for="char in store.characterRoster"
+              :key="char.id"
+              class="border transition-all duration-200"
+              :style="{
+                borderColor: char.unlocked ? 'rgba(90,79,64,0.4)' : 'rgba(90,79,64,0.2)',
+                background: char.unlocked ? 'rgba(212,197,160,0.02)' : 'rgba(74,64,53,0.1)',
+                opacity: char.unlocked ? 1 : 0.5,
+                borderRadius: '2px',
+              }"
+            >
+              <div class="flex items-center gap-3 p-3">
+                <div
+                  class="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden border"
+                  :style="{ borderColor: 'rgba(90,79,64,0.3)', background: 'rgba(74,64,53,0.2)' }"
+                >
+                  <img
+                    v-if="char.avatarUrl"
+                    :src="char.avatarUrl"
+                    :alt="char.name"
+                    class="h-full w-full object-cover"
+                    style="filter: sepia(0.4)"
+                  />
+                  <i v-else class="fa-solid fa-user" style="color: var(--theme-text-faint, rgba(139, 125, 107, 0.3))" />
+                </div>
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-center gap-2">
+                    <span
+                      class="text-sm font-bold"
+                      :style="{
+                        color: char.unlocked
+                          ? 'var(--theme-text-main, rgba(212,197,160,0.9))'
+                          : 'var(--theme-text-muted, var(--vn-muted))',
+                      }"
+                    >
+                      {{ char.unlocked ? char.name : '???' }}
+                    </span>
+                    <span
+                      v-if="!char.unlocked"
+                      class="border px-1"
+                      style="
+                        font-size: 8px;
+                        color: var(--theme-text-muted, var(--vn-muted));
+                        border-color: rgba(90, 79, 64, 0.3);
+                      "
+                      >未解锁</span
+                    >
                   </div>
                   <p
-                    v-if="!store.userCharacter.avatarUrl"
-                    style="font-size: 9px; color: var(--theme-text-muted, rgba(139, 125, 107, 0.6)); margin-top: 4px"
+                    v-if="char.unlocked && char.description"
+                    class="truncate"
+                    style="font-size: 11px; color: var(--theme-text-muted, var(--vn-muted)); margin-top: 2px"
                   >
-                    请先上传头像才能开启立绘显示
+                    {{ char.description }}
                   </p>
                 </div>
-              </div>
-            </div>
-
-            <!-- Character roster divider -->
-            <div class="headline-rule mb-6">
-              <span
-                style="
-                  font-size: 9px;
-                  color: var(--theme-text-muted, var(--vn-muted));
-                  font-family: monospace;
-                  letter-spacing: 0.15em;
-                  padding: 0 8px;
-                  background: var(--vn-panel-bg);
-                  position: relative;
-                  z-index: 10;
-                "
-              >
-                --- 角色图鉴 ---
-              </span>
-            </div>
-
-            <!-- Character roster -->
-            <div class="flex flex-col gap-3">
-              <div
-                v-for="char in store.characterRoster"
-                :key="char.id"
-                class="border transition-all duration-200"
-                :style="{
-                  borderColor: char.unlocked ? 'rgba(90,79,64,0.4)' : 'rgba(90,79,64,0.2)',
-                  background: char.unlocked ? 'rgba(212,197,160,0.02)' : 'rgba(74,64,53,0.1)',
-                  opacity: char.unlocked ? 1 : 0.5,
-                  borderRadius: '2px',
-                }"
-              >
-                <div class="flex items-center gap-3 p-3">
-                  <div
-                    class="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden border"
-                    :style="{ borderColor: 'rgba(90,79,64,0.3)', background: 'rgba(74,64,53,0.2)' }"
-                  >
-                    <img
-                      v-if="char.avatarUrl"
-                      :src="char.avatarUrl"
-                      :alt="char.name"
-                      class="h-full w-full object-cover"
-                      style="filter: sepia(0.4)"
-                    />
-                    <i v-else class="fa-solid fa-user" style="color: var(--theme-text-faint, rgba(139, 125, 107, 0.3))" />
-                  </div>
-                  <div class="min-w-0 flex-1">
-                    <div class="flex items-center gap-2">
-                      <span
-                        class="text-sm font-bold"
-                        :style="{
-                          color: char.unlocked
-                            ? 'var(--theme-text-main, rgba(212,197,160,0.9))'
-                            : 'var(--theme-text-muted, var(--vn-muted))',
-                        }"
-                      >
-                        {{ char.unlocked ? char.name : '???' }}
-                      </span>
-                      <span
-                        v-if="!char.unlocked"
-                        class="border px-1"
-                        style="
-                          font-size: 8px;
-                          color: var(--theme-text-muted, var(--vn-muted));
-                          border-color: rgba(90, 79, 64, 0.3);
-                        "
-                        >未解锁</span
-                      >
-                    </div>
-                    <p
-                      v-if="char.unlocked && char.description"
-                      class="truncate"
-                      style="font-size: 11px; color: var(--theme-text-muted, var(--vn-muted)); margin-top: 2px"
-                    >
-                      {{ char.description }}
-                    </p>
-                  </div>
-                  <div v-if="char.unlocked" class="flex shrink-0 items-center gap-1">
-                    <i
-                      class="fa-solid fa-heart"
-                      style="font-size: 0.75rem; color: var(--theme-accent-soft, rgba(139, 69, 19, 0.6))"
-                    />
-                    <span class="font-mono text-xs" style="color: var(--theme-text-muted, var(--vn-muted))">{{
-                      char.affection
-                    }}</span>
-                  </div>
+                <div v-if="char.unlocked" class="flex shrink-0 items-center gap-1">
+                  <i
+                    class="fa-solid fa-heart"
+                    style="font-size: 0.75rem; color: var(--theme-accent-soft, rgba(139, 69, 19, 0.6))"
+                  />
+                  <span class="font-mono text-xs" style="color: var(--theme-text-muted, var(--vn-muted))">{{
+                    char.affection
+                  }}</span>
                 </div>
               </div>
             </div>
           </div>
+        </div>
 
         <div :style="decoBottomThin" />
         <div :style="decoBottom" />
@@ -415,8 +418,8 @@
 </template>
 
 <script setup lang="ts">
-import SkinShell from '../common/SkinShell.vue';
 import { useVNStore } from '../../store';
+import SkinShell from '../common/SkinShell.vue';
 
 const store = useVNStore();
 const fileInput = ref<HTMLInputElement | null>(null);

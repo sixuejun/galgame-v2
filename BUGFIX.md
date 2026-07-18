@@ -1,5 +1,216 @@
 # Galgame Bugfix Log
 
+## [2026-07-18] 横屏对话框坍缩成"细横条"：SkinShell 默认 `height: 100%` 找不到显式父高度，最终坍缩回内容高度
+
+### 问题描述
+
+横屏模式下，对话框被压扁成细横条（高度只有文字单行的高度），失去了原本"报纸版面"的对话框质感；设置面板里的滑动条在横屏面板里也显得过于紧凑，标签区只占 5rem。
+
+### 根因
+
+1. **新版 `components/dialogue/DialogueBox.vue` 把 SkinShell 作为容器**（旧版 `DialogueBox.vue` 是把 SkinShell 当绝对定位背景层），直接用 `<SkinShell :shell-style="dialogueOuterStyle">` 包裹所有内容。
+2. **`dialogueOuterStyle` 没设 `minHeight`**，注释写"min-height / max-height 不在这里设置，因为 SkinShell 的 height: 100% 模式下这些属性无法正确控制内部 .typewriter-container 的高度"。
+3. **SkinShell 默认 `height: '100%'`**，但父元素 `<div data-ui="dialogue-box" class="relative w-full">` 没有显式高度（auto），于是 `height: 100%` 找不到父高度 → 坍缩成内容高度。
+4. 即便外层写 `minHeight`，SkinShell 也不会把它透传，SkinShell 仍然 `height: 100%`，结果仍是坍缩。
+
+所以横屏对话框高度 = 一行文字高度 = 图1那种"细横条"。
+
+### 修复
+
+#### 1. `components/dialogue/DialogueBox.vue`：恢复 `minHeight`
+
+```typescript
+const dialogueOuterStyle = computed(() => ({
+  // ... margin/border/shadow 不变 ...
+  width: 'var(--theme-dialogue-width, 100%)',
+  // 关键：把 minHeight 加回来。
+  // 横屏走 --theme-dialogue-min-height（newspaper 主题默认 10rem）；
+  // 竖屏走 --theme-dialogue-min-height-portrait（vmin 单位，与横屏布局隔离）。
+  minHeight: props.isPortraitMode
+    ? 'var(--theme-dialogue-min-height-portrait, 16vmin)'
+    : 'var(--theme-dialogue-min-height, 12em)',
+  display: 'flex',
+  flexDirection: 'column',
+}));
+```
+
+`isPortraitMode` 走独立变量，与横屏内容隔离；`display: flex; flex-direction: column` 让内部 TypewriterText 等子组件能用 `h-full` 撑开 SkinShell。
+
+#### 2. `components/common/SkinShell.vue`：把 `minHeight` 透传到 `height`
+
+```typescript
+const shellContainerStyle = computed(() => {
+  const explicitHeight = props.shellStyle?.height;
+  const explicitMinHeight = props.shellStyle?.minHeight;
+  // ... 默认 height: skin.shellSize.height ?? '100%' ...
+  if (!explicitHeight && explicitMinHeight) {
+    style.minHeight = explicitMinHeight;
+    style.height = explicitMinHeight;  // 关键：用 minHeight 作为 height，避免 100% 找父高度失败
+  }
+  // ...
+});
+```
+
+模板上同时去掉外层 `class="... h-full"`，改为由内联 style 控制高度：
+
+```vue
+<div class="skin-shell relative" :style="shellContainerStyle">
+  ...
+  <div class="skin-shell__content relative h-full w-full" ...>
+    <slot />
+  </div>
+</div>
+```
+
+这样：
+- 对话框场景：`shellStyle.minHeight = 10rem` → SkinShell `height: 10rem` → `.skin-shell__content` 的 `h-full` 撑满
+- 面板场景：没传 `minHeight` → SkinShell 默认 `height: 100%` 继承父级 panel 高度 → 原行为不变
+
+#### 3. `components/common/SliderRow.vue`：横屏专属加宽标签与数值
+
+```vue
+<div class="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4 py-2">
+  <span class="text-xs sm:w-28 shrink-0" ...>...</span>  <!-- w-20 → w-28 -->
+  <div class="flex items-center gap-3 min-w-0">
+    <input class="flex-1 slider-vn min-w-0" ... />
+    <span class="text-xs font-mono w-12 shrink-0 text-right" ...>...</span>  <!-- w-10 → w-12 -->
+  </div>
+</div>
+```
+
+- 标签横屏宽度从 5rem (80px) 增加到 7rem (112px)，中文四字标签（如"立绘大小"）不会拥挤
+- 数值宽度从 2.5rem (40px) 增加到 3rem (48px)，三位数 + 单位（如 "200%"）也不会紧贴滑块
+- 滑块用 `flex-1 min-w-0` 拿到所有剩余空间，更舒展
+- 竖屏 `<sm` 仍走 `flex-col`，不受 sm: 影响，与横屏完全隔离
+
+### 验证
+
+通过 chrome-devtools 验证 iframe 内 `data-ui=dialogue-box` 下的 `.skin-shell`：
+
+```json
+{ "width": 1283, "height": 160, "minHeight": "160px", "heightStyle": "160px" }
+```
+
+- 视口 1283×722 = 16:9 横屏
+- SkinShell 高度 160px = 10rem，等于 newspaper 主题 `--theme-dialogue-min-height: 10rem`，与图2一致
+- TypewriterText 内容区 96px (6rem) 滚动显示，符合 galgame UI 习惯
+
+设置面板 SliderRow：
+- 标签宽度 112px (sm:w-28)
+- 数值宽度 48px (w-12)
+- 滑块 flex-1 自适应剩余空间
+
+### 教训
+
+**`SkinShell` 的默认 `height: '100%'` 在作为容器（而非背景）使用时会塌缩——它去找父级的显式高度，找不到就回退到内容高度。**
+
+- 当把 SkinShell 重新定位为"容器包裹内容"时，必须保证 shellStyle 同时给出 `minHeight` 或 `height`，否则会坍缩
+- 把 SkinShell 改成同时支持把 `minHeight` 透传为 `height`，可以让上层用 `minHeight`（语义更对：内容多了能更长）而不必纠结 `height: 100%` 的坍缩问题
+- SliderRow 的 sm: 类只在 `sm` 及以上断点生效，竖屏 `<sm` 完全走 `flex-col`，与横屏天然隔离，不需要在 component 内部判断 portraitMode
+
+防范措施：
+1. 把 SkinShell 用作容器时，外层 dialogOuterStyle 一定要带 `minHeight` 或 `height`（不要再依赖默认 `100%`）
+2. 凡是提到"minHeight 无法控制 SkinShell 高度"——这都是 SkinShell 的设计缺陷，应该改 SkinShell 而不是绕过 minHeight
+3. 修改 SliderRow 时优先用响应式断点（`sm:`）而不是 isPortraitMode prop，让组件保持简单
+
+## [2026-07-17] vue-loader 报错 "Missing semicolon" + "Cannot read properties of null"：SFC 块结尾多了一个 `)` 导致 script 块解析失败
+
+### 问题描述
+
+`pnpm watch` 持续报以下三个错误，TypewriterText.vue 编译失败，连锁导致 DialogueBox.vue、App.vue、index.ts 整条依赖链全部无法编译：
+
+```
+ERROR in ./src/galgame/components/dialogue/TypewriterText.vue?vue&type=script&setup=true&lang=ts
+Module Error (from vue-loader): [vue/compiler-sfc] Missing semicolon. (39:3)
+
+ERROR in ./src/galgame/components/dialogue/TypewriterText.vue?vue&type=script&setup=true&lang=ts
+Module build failed: TypeError: Cannot read properties of null (reading 'content')
+  at selectBlock (.../vue-loader/dist/select.js:23:45)
+
+ERROR in ./src/galgame/components/dialogue/TypewriterText.vue?vue&type=template&id=...
+Module Error (from templateLoader): [vue/compiler-sfc] Missing semicolon. (39:3)
+```
+
+stats 报错中指向的代码片段：
+
+```
+63 |    paddingBottom: 'var(--theme-dialogue-text-padding-bottom, 0.8rem)',
+64 |    paddingLeft: 'var(--theme-dialogue-text-padding-left, 2.5rem)',
+65 |  })));
+   |     ^
+```
+
+酒馆脚本不挂载：dist/galgame/index.js 编译产物为空或残缺，webpack 一直输出 "compiled with 3 errors" 而非 "compiled successfully"。
+
+### 根因
+
+`src/galgame/components/dialogue/TypewriterText.vue` 第 65 行有**多余的右括号**：
+
+```typescript
+/** 容器样式 */
+const containerStyle = computed(() => ({
+  paddingTop:   'var(--theme-dialogue-text-padding-top,    1.5rem)',
+  paddingRight: 'var(--theme-dialogue-text-padding-right,  2.5rem)',
+  paddingBottom:'var(--theme-dialogue-text-padding-bottom, 0.8rem)',
+  paddingLeft:  'var(--theme-dialogue-text-padding-left,   2.5rem)',
+})));  // ❌ 多了一个 )
+```
+
+`computed(() => ({...}))` 拆括号层数：
+
+| 层 | 含义 | 需要闭合的字符 |
+|---|---|---|
+| 1 | `computed(` 外的 `(` | `)` |
+| 2 | 箭头函数的参数 `()` | （无需闭合，参数是空的）|
+| 3 | 包裹对象字面量的 `(` | `)` |
+| 4 | 对象 `{...}` | `}` |
+
+正确闭合 = `}` + `)` + `)` + `;` = `}));`，**恰好 3 个右括号**。多打一个就成了 `})));`，后续整个 `<script>` 块都会被 vue/compiler-sfc 当成语法错误。
+
+### 连锁失败的原因
+
+vue/compiler-sfc 报错 `Missing semicolon (39:3)` 之后，vue-loader 内部 `selectBlock()` 在解析 SFC 的各个块时拿不到正确的 descriptor（descriptor.content 为 null），从而抛出 `Cannot read properties of null (reading 'content')`。
+
+**整个 SFC 解析失败 → 该文件的 `?vue&type=script` / `?vue&type=template` 两个子资源都打不出来 → 依赖此文件的 DialogueBox.vue 找不到对应模块 → App.vue 也编译失败 → index.ts 无法产出 bundle**。所以即使只是一个组件的小括号错误，也会让整个 galgame 脚本在酒馆里不挂载。
+
+### 修复
+
+```typescript
+// 修复前
+const containerStyle = computed(() => ({
+  paddingTop:   'var(--theme-dialogue-text-padding-top,    1.5rem)',
+  paddingRight: 'var(--theme-dialogue-text-padding-right,  2.5rem)',
+  paddingBottom:'var(--theme-dialogue-text-padding-bottom, 0.8rem)',
+  paddingLeft:  'var(--theme-dialogue-text-padding-left,   2.5rem)',
+})));
+
+// 修复后
+const containerStyle = computed(() => ({
+  paddingTop:   'var(--theme-dialogue-text-padding-top,    1.5rem)',
+  paddingRight: 'var(--theme-dialogue-text-padding-right,  2.5rem)',
+  paddingBottom:'var(--theme-dialogue-text-padding-bottom, 0.8rem)',
+  paddingLeft:  'var(--theme-dialogue-text-padding-left,   2.5rem)',
+}));
+```
+
+修复后 `pnpm watch` 输出 `webpack 5.107.2 compiled successfully in 4607 ms`，依赖链全部恢复。
+
+### 教训
+
+**vue-loader 的两个症状——`Missing semicolon` + `Cannot read properties of null (reading 'content')`——几乎总是同一根因：SFC 块内（template / script / style）的代码存在语法错误，vue/compiler-sfc 无法解析 descriptor，导致后续 `selectBlock` 拿到 null。**
+
+- `Missing semicolon (39:3)` 是 *症状*——编译失败抛出的第一个错误
+- `Cannot read properties of null (reading 'content')` 是 *副作用*——vue-loader 解析 SFC descriptor 时的连锁崩溃
+
+**不要被 stats 中的 `(39:3)` 误导**，那是从编译产物中得到的行号，不一定对应原 SFC 中的行。**真正有用的线索是 stats 给出的源码片段**（如本例的 `65 | }));`），结合 git diff 对比改动行就能定位。
+
+防范措施：
+
+1. **修改 `<script setup>` 时逐个 computed 块检查括号闭合**：`computed(() => ({...}))` 永远是 `}));`，多打少打都错
+2. **`pnpm watch` 出现 `compiled with N errors` 必须立刻处理**——vue-loader 错误会**整链失败**（即使错在 TypewriterText，也会导致 index.ts 整个 bundle 不产出）
+3. **酒馆脚本不挂载时，先看 watch 是否 compiled successfully**——dist/index.js 不更新 = 脚本不挂载 = 编译有问题
+4. 在 IDE 里打开文件时使用 `File > Reopen with Encoding > UTF-8 (No BOM)`，避免 PowerShell 等工具以 UTF-8 BOM 写入文件（BOM 也会让 vue-loader 解析失败）
+
 ## [2026-06-01] CharacterManagementModule 详情 Tab 崩溃：v-show 无法阻止 null 访问
 
 ### 问题描述

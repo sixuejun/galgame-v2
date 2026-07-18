@@ -7,32 +7,18 @@
       @scroll="handleScroll"
     >
       <!-- 角色台词：需要解析心理描写 -->
-      <p
-        v-if="textType === 'character'"
-        class="typewriter-text"
-        :style="textStyle"
-      >
+      <p v-if="textType === 'character'" class="typewriter-text" :style="textStyle">
         <template v-for="(segment, index) in parsedText" :key="index">
           <span v-if="segment.type === 'thought'" class="thought-segment">{{ segment.text }}</span>
           <template v-else>{{ segment.text }}</template>
         </template>
-        <span
-          v-if="isTyping"
-          class="typewriter-caret"
-        />
+        <span v-if="isTyping" class="typewriter-caret" />
       </p>
 
       <!-- 旁白/用户：直接显示 -->
-      <p
-        v-else
-        class="typewriter-text"
-        :style="textStyle"
-      >
+      <p v-else class="typewriter-text" :style="textStyle">
         {{ displayedText }}
-        <span
-          v-if="isTyping"
-          class="typewriter-caret"
-        />
+        <span v-if="isTyping" class="typewriter-caret" />
       </p>
     </div>
   </div>
@@ -56,9 +42,9 @@ const props = withDefaults(
   }>(),
   {
     textType: 'narration',
-    maxHeight: 'var(--theme-dialogue-text-max-height, 6em)',
+    maxHeight: 'var(--theme-dialogue-text-max-height, 6rem)', // 用 rem 而非 em 避免字号联动
     disableThoughtParsing: false,
-  }
+  },
 );
 
 const emit = defineEmits<{
@@ -72,21 +58,28 @@ const isManualScroll = ref(false);
 
 /** 容器样式 */
 const containerStyle = computed(() => ({
-  paddingTop: 'var(--theme-dialogue-text-padding-top, 2.5em)',
-  paddingRight: 'var(--theme-dialogue-text-padding-right, 3.5em)',
-  paddingBottom: 'var(--theme-dialogue-text-padding-bottom, 1.5em)',
-  paddingLeft: 'var(--theme-dialogue-text-padding-left, 0.5em)',
+  paddingTop: 'var(--theme-dialogue-text-padding-top, 1.5rem)',
+  paddingRight: 'var(--theme-dialogue-text-padding-right, 2.5rem)',
+  paddingBottom: 'var(--theme-dialogue-text-padding-bottom, 0.8rem)',
+  paddingLeft: 'var(--theme-dialogue-text-padding-left, 2.5rem)',
 }));
 
 /** 内容区样式 */
-const contentStyle = computed(() => ({
-  maxHeight: props.maxHeight,
-}));
+const contentStyle = computed(() => {
+  const base = { maxHeight: props.maxHeight };
+  if (store.settings.fixedDialogueMinHeight) {
+    // 开关开启：额外设 min-height 保底，避免短文本时高度坍缩
+    return { ...base, minHeight: 'var(--theme-dialogue-min-height, 25vmin)' };
+  }
+  // 开关关闭：只设 max-height，文本在范围内自由撑开，超出上限时内部滚动，不撑大外层
+  return base;
+});
 
 /** 文本样式 */
 const textStyle = computed(() => {
   const baseStyle: Record<string, string> = {
-    fontSize: 'var(--theme-dialogue-text-font-size, 1em)',
+    // 关键 fallback：用 rem 而非 em，避免被祖先 font-size 联动缩小、消失
+    fontSize: 'var(--theme-dialogue-text-font-size, 1rem)',
     lineHeight: 'var(--theme-dialogue-text-line-height, 1.75)',
     letterSpacing: 'var(--theme-dialogue-text-letter-spacing, 0.05em)',
   };
@@ -167,11 +160,12 @@ watch(
     if (!isManualScroll.value && textRef.value) {
       textRef.value.scrollTop = textRef.value.scrollHeight;
     }
-  }
+  },
 );
 </script>
 
 <style scoped>
+/* height 默认 100%，可在父级 .skin-shell__content 是 h-auto 时被全局样式覆盖 */
 .typewriter-container {
   width: 100%;
   height: 100%;
@@ -180,7 +174,7 @@ watch(
 
 .typewriter-content {
   width: 100%;
-  height: 100%;
+  /* 不强制 height:100%，让内容按需自然撑开（开关关闭时由父级 .h-auto 接管） */
   min-height: 0;
 }
 
@@ -210,10 +204,12 @@ watch(
 }
 
 @keyframes cursor-blink {
-  0%, 50% {
+  0%,
+  50% {
     opacity: 1;
   }
-  51%, 100% {
+  51%,
+  100% {
     opacity: 0;
   }
 }

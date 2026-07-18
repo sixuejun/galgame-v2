@@ -27,7 +27,7 @@ export const hedieTheme: ThemeDefinition = {
   // 主题在界面里显示给用户看的名称。
   name: '和蝶',
   // 主题说明文字，一般显示在主题选择或调试信息里。
-  description: '图片皮肤主题，使用 PNG 外壳承载视觉效果',
+  description: '图片皮肤主题，目前只建议电脑使用',
   // 是否启用图片外壳模式。为 true 时，dialogue/button/panel 等组件会优先套用 components 里的 PNG 皮肤。
   usesImageShell: true,
   cssVars: {
@@ -100,6 +100,9 @@ export const hedieTheme: ThemeDefinition = {
     '--theme-dialogue-bottom-portrait': '30vmin', // 竖屏模式下对话框距离舞台底部的位置
     '--theme-dialogue-margin-x-portrait': '0.5vmin', // 竖屏模式下对话框左右外边距
     '--theme-dialogue-min-height-portrait': '16vmin', // 竖屏模式下对话框最小高度
+
+    // 横屏模式专用变量
+    '--theme-dialogue-min-height': '10rem', // 横屏模式下对话框最小高度
 
     // ========== 头像壳 ==========
     // 使用 clamp(min, preferred, max) 实现响应式缩放，preferred 基于 vw 以便全屏时整体放大
@@ -182,6 +185,8 @@ export const hedieTheme: ThemeDefinition = {
     // 按钮外壳（固定高度，图片适应方式）
     '--theme-shell-object-fit': 'contain', // 图片适配方式：contain 完整显示不裁剪，cover 铺满裁剪。
     '--theme-choice-btn-shell-height': 'clamp(3.6rem, 8.4vw, 6.6rem)', // 按钮外壳固定高度（contain 模式下高度由图片宽高比决定）。
+    '--theme-choice-btn-height': 'clamp(3.6rem, 8.4vw, 6.6rem)', // 按钮固定高度。
+    '--theme-choice-btn-min-height': 'clamp(3rem, 7vw, 5.5rem)', // 按钮最小高度。
     // 序号与文字间距
     '--theme-choice-btn-inner-gap': '0.1rem', // 序号与文字之间的间距。
     // 序号区域左右内边距（决定序号与文字的距离）
@@ -421,7 +426,7 @@ export const hedieTheme: ThemeDefinition = {
     choiceButton: {
       shellImage: choiceButtonImage,
       shellSize: { width: '100%', height: 'var(--theme-choice-btn-shell-height, clamp(3rem, 7vw, 5.5rem))' },
-      contentInset: { top: '15px', right: '25px', bottom: '0px', left: '0px' },
+      contentInset: { top: '15px', right: '30px', bottom: '0px', left: '35px' },
       states: {
         hover: choiceButtonImage,
         active: choiceButtonImage,

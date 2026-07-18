@@ -164,8 +164,8 @@
 </template>
 
 <script setup lang="ts">
-import { useVNStore } from '../../store';
 import { useLatestMvuStore } from '../../latestMvuStore';
+import { useVNStore } from '../../store';
 
 interface Achievement {
   name: string;
@@ -439,7 +439,7 @@ function syncCompletedArray(name: string, action: 'add' | 'remove') {
   }
 }
 
-let pollTimer: ReturnType<typeof setInterval> | null = null;
+const pollTimer: ReturnType<typeof setInterval> | null = null;
 
 function startPolling() {
   // polling removed; MVU event auto sync via latestMvu
@@ -864,6 +864,34 @@ onUnmounted(() => {
 .notch-dot.is-active {
   background: var(--progress-fill);
   transform: scale(1.2);
+}
+
+/* 小屏幕适配：占据屏幕宽度减去边距 */
+@media (max-width: 400px) {
+  .achievement-notch {
+    left: 8px;
+    right: 8px;
+    transform: none;
+    width: auto;
+  }
+
+  .achievement-notch__panel {
+    left: 0;
+    right: 0;
+    width: auto;
+  }
+
+  .achievement-notch__toggle {
+    left: 50%;
+    transform: translateX(-50%);
+  }
+}
+
+/* 中等屏幕适配：限制最大宽度 */
+@media (min-width: 401px) and (max-width: 500px) {
+  .achievement-notch {
+    width: min(var(--panel-width), calc(100vw - 40px));
+  }
 }
 
 /* 刘海按钮 */

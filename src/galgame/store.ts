@@ -265,10 +265,10 @@ const VNSettings = z
     portraitY: z.number().min(-50).max(50).default(0),
     portraitMode: z.boolean().default(false),
     narrationSpriteInherit: z.boolean().default(true),
-    // 固定对话框最小高度：开启后横屏/竖屏下对话框分别按主题变量保持最小高度；
-    // 关闭后对话框随内容自然撑开，避免长文本被 max-height 截断（与文本 max-height 配合生效）。
-    // 注：使用 SkinShell 的主题（如和蝶）由图片外壳决定高度，不受此开关影响。
     fixedDialogueMinHeight: z.boolean().default(true),
+    // 开启时：TypewriterText 文本区同时设 min-height（保底）+ max-height（超出滚动），外层高度稳定不坍缩
+    // 关闭时：文本区无高度约束，文本自由撑开对话框（长文本会让对话框变高）
+    // 注：使用 SkinShell 的主题（如和蝶）由 PNG 外壳决定高度，不受此开关影响
     skinId: z.string().default('newspaper-default'),
     themeId: z.enum(['newspaper', 'hedie', 'animal-island', 'liquid-glass']).default('newspaper'),
     themeEnabled: z.boolean().default(true),

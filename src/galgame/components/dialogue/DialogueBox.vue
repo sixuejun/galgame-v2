@@ -12,9 +12,77 @@
     @next="nextBlock"
   />
 
-  <!-- 对话框主体（仅非黑屏时显示） -->
+  <!-- 虚拟块：选项 / 自定义输入触发生成后进入；DialogueBox 显示"等待生成"视图 -->
   <div
-    v-if="currentBlock && currentBlock.type !== 'blacktext'"
+    v-if="store.virtualBlockActive"
+    data-ui="virtual-block"
+    class="relative w-full"
+    :style="dialogueOuterStyle"
+    @click="handleClickText"
+  >
+    <SkinShell :skin="dialogueSkin" :shell-style="dialogueOuterStyle">
+      <div class="relative h-full w-full">
+        <!-- 居中提示卡片 -->
+        <div class="flex h-full min-h-[8em] w-full items-center justify-center px-6 py-5">
+          <div class="text-center">
+            <div class="mb-2 text-xs tracking-widest opacity-60" style="letter-spacing: 0.2em">
+              {{ virtualBlockPhaseLabel }}
+            </div>
+            <div class="text-base font-medium">
+              {{ virtualBlockHeadline }}
+            </div>
+            <div class="mt-3 text-xs opacity-60">左翻页可回退上一块</div>
+          </div>
+        </div>
+
+        <!-- 左侧翻页按钮：虚拟块期间可点（退出虚拟块回退到上一真实块） -->
+        <div
+          class="dialogue-nav-prev absolute flex items-center"
+          :style="{
+            top: 'var(--theme-dialogue-nav-prev-top, 50%)',
+            left: 'var(--theme-dialogue-nav-prev-left, 0.5rem)',
+            transform: 'translateY(-50%)',
+            zIndex: 15,
+          }"
+        >
+          <DialogueNavButton
+            :svg-content="DIALOGUE_NAV_SVG"
+            :disabled="isFirstBlock"
+            direction="prev"
+            :is-portrait-mode="isPortraitMode"
+            @click="!isFirstBlock && prevBlock()"
+          />
+        </div>
+
+        <!-- 右侧翻页按钮：虚拟块期间禁用 -->
+        <div
+          class="dialogue-nav-next absolute flex items-center"
+          :style="{
+            top: 'var(--theme-dialogue-nav-next-top, 50%)',
+            right: 'var(--theme-dialogue-nav-next-right, 0.5rem)',
+            transform: 'translateY(-50%)',
+            zIndex: 15,
+          }"
+        >
+          <DialogueNavButton
+            :svg-content="DIALOGUE_NAV_SVG"
+            :disabled="true"
+            direction="next"
+            :is-portrait-mode="isPortraitMode"
+            @click="() => {}"
+          />
+        </div>
+      </div>
+    </SkinShell>
+  </div>
+
+  <!-- 用户手动退出虚拟块后的提示：底部的 DialogueBox 主视图显示当前真实块；其右翻按钮会在
+       virtualBlockExitedByUser=true 时自动变为可用（navigateBlock(+1) 重新进入虚拟块），
+       并通过 .vn-dialogue-resumed-hint 在文本底部给出文字提示。 -->
+
+  <!-- 对话框主体（非黑屏时显示） -->
+  <div
+    v-if="!store.virtualBlockActive && currentBlock && currentBlock.type !== 'blacktext'"
     data-ui="dialogue-box"
     class="relative w-full"
     @click="handleClickText"
@@ -35,6 +103,7 @@
         <DialogueNameTag
           :character-name="currentBlock.type === 'character' ? currentBlock.character : undefined"
           :name-skin="nameSkin"
+          :is-portrait-mode="isPortraitMode"
         />
 
         <!-- 主文本框：使用 TypewriterText 子组件 -->
@@ -43,15 +112,29 @@
           :is-typing="isTyping"
           :text-type="textTypeForTypewriter"
           :disable-thought-parsing="currentBlock?.type !== 'character'"
+          :is-portrait-mode="isPortraitMode"
           @scroll="handleTextScroll"
         />
+
+        <!-- 用户主动退出虚拟块后的底部提示：点击右箭头重新进入虚拟块继续等待生成 -->
+        <div
+          v-if="store.virtualBlockExitedByUser"
+          class="vn-dialogue-resumed-hint pointer-events-none absolute inset-x-0 text-center text-xs"
+          :style="{
+            bottom: 'var(--theme-dialogue-resumed-hint-bottom, 0.35rem)',
+            color: 'var(--theme-dialogue-resumed-hint-color, rgba(212, 197, 160, 0.6))',
+            letterSpacing: '0.1em',
+          }"
+        >
+          右侧点击继续等待生成
+        </div>
 
         <!-- 左侧翻页按钮（浮动在对话框左侧） -->
         <div
           class="dialogue-nav-prev absolute flex items-center"
           :style="{
-            top: 'var(--theme-dialogue-nav-prev-top, 50%)',
-            left: 'var(--theme-dialogue-nav-prev-left, 0.5em)',
+            top: 'var(--theme-dialogue-nav-prev-top, 70%)',
+            left: 'var(--theme-dialogue-nav-prev-left, 0.5rem)',
             transform: 'translateY(-50%)',
             zIndex: 15,
           }"
@@ -60,6 +143,7 @@
             :svg-content="DIALOGUE_NAV_SVG"
             :disabled="isFirstBlock"
             direction="prev"
+            :is-portrait-mode="isPortraitMode"
             @click="!isFirstBlock && prevBlock()"
           />
         </div>
@@ -68,17 +152,18 @@
         <div
           class="dialogue-nav-next absolute flex items-center"
           :style="{
-            top: 'var(--theme-dialogue-nav-next-top, 50%)',
-            right: 'var(--theme-dialogue-nav-next-right, 0.5em)',
+            top: 'var(--theme-dialogue-nav-next-top, 70%)',
+            right: 'var(--theme-dialogue-nav-next-right, 0.5rem)',
             transform: 'translateY(-50%)',
             zIndex: 15,
           }"
         >
           <DialogueNavButton
             :svg-content="DIALOGUE_NAV_SVG"
-            :disabled="isLastBlock"
+            :disabled="isLastBlock && !store.virtualBlockExitedByUser"
             direction="next"
-            @click="!isLastBlock && nextBlock()"
+            :is-portrait-mode="isPortraitMode"
+            @click="!(isLastBlock && !store.virtualBlockExitedByUser) && nextBlock()"
           />
         </div>
       </div>
@@ -87,13 +172,13 @@
 </template>
 
 <script setup lang="ts">
-import DialogueNavButton from './DialogueNavButton.vue';
+import { useVNStore } from '../../store';
 import SkinShell from '../common/SkinShell.vue';
 import BlacktextOverlay from './BlacktextOverlay.vue';
 import DialogueNameTag from './DialogueNameTag.vue';
+import DialogueNavButton from './DialogueNavButton.vue';
 import DialoguePortrait from './DialoguePortrait.vue';
 import TypewriterText from './TypewriterText.vue';
-import { useVNStore } from '../../store';
 
 /** 翻页按钮 SVG（指向右侧；左侧按钮在 DialogueNavButton 中通过 scaleX(-1) 左右翻转） */
 const DIALOGUE_NAV_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" width="800" height="800" fill="#6e4736">
@@ -118,20 +203,21 @@ const portraitSkin = computed(() => store.getComponentSkinForCurrent('dialoguePo
 const nameSkin = computed(() => store.getComponentSkinForCurrent('dialogueName'));
 
 const dialogueOuterStyle = computed(() => ({
-  marginLeft: props.isPortraitMode
-    ? 'var(--theme-dialogue-margin-x-portrait, 0.5vmin)'
-    : 'var(--theme-dialogue-margin-x, 0.75em)',
-  marginRight: props.isPortraitMode
-    ? 'var(--theme-dialogue-margin-x-portrait, 0.5vmin)'
-    : 'var(--theme-dialogue-margin-x, 0.75em)',
-  background: 'var(--theme-dialogue-bg, var(--vn-dialogue-bg))',
-  border: '1px solid var(--theme-dialogue-border, var(--vn-border))',
+  marginLeft: 'var(--theme-dialogue-margin-x, var(--theme-dialogue-margin-x-lg, 0.75rem))',
+  marginRight: 'var(--theme-dialogue-margin-x, var(--theme-dialogue-margin-x-lg, 0.75rem))',
+  background: 'var(--theme-dialogue-bg, var(--vn-dialogue-bg, rgba(42,36,32,0.92)))',
+  border: '1px solid var(--theme-dialogue-border, var(--vn-border, rgba(90,79,64,0.55)))',
   borderRadius: 'var(--theme-dialogue-radius, 0px)',
-  boxShadow: 'var(--theme-dialogue-shadow)',
+  boxShadow: 'var(--theme-dialogue-shadow, 0 0.25rem 0.75rem rgba(0,0,0,0.4))',
   width: 'var(--theme-dialogue-width, 100%)',
-  minHeight: props.isPortraitMode
-    ? 'var(--theme-dialogue-min-height-portrait, 16vmin)'
-    : 'var(--theme-dialogue-min-height, 12em)',
+  // 高度策略：
+  //  - 外层对话框不强制 minHeight——由各主题的 --theme-dialogue-min-height / -portrait 控制保底。
+  //  - 长文本高度由 store.settings.fixedDialogueMinHeight（设置面板开关"固定对话框高度"）决定：
+  //      开启 → TypewriterText 给文本区设 minHeight，保底 + 自由撑开（适合短文本多的情况）
+  //      关闭 → TypewriterText 给文本区设 maxHeight，超出滚动（适合长文本不抖动的场景）
+  //  - SkinShell 主题（如和蝶）由 PNG 外壳决定高度，开关只影响文本区。
+  display: 'flex' as const,
+  flexDirection: 'column' as const,
 }));
 
 const displayedText = ref('');
@@ -144,10 +230,43 @@ const BLACKTEXT_MASK_IN_MS = 520;
 const currentBlock = computed(() => store.currentBlock);
 
 const isFirstBlock = computed(() => store.currentBlockFlatIndex === 0);
-
+// 虚拟块期间：isLastBlock 也保持真实块的判定（虚拟块本身不算"末尾"），
+// 否则右翻按钮会被错误地 disable（其实根本用不到右按钮）
 const isLastBlock = computed(() => {
   const flat = store.allBlocksFlat;
   return store.currentBlockFlatIndex >= (flat?.length ?? 1) - 1;
+});
+
+/** 虚拟块阶段标签（显示在对话框上方） */
+const virtualBlockPhaseLabel = computed(() => {
+  const phase = store.virtualBlockPhase;
+  switch (phase) {
+    case 'streaming':
+      return '生成中';
+    case 'danmaku':
+      return '弹幕生成中';
+    case 'image':
+      return '生图中';
+    case 'done':
+      return '即将进入下一段';
+    default:
+      return '';
+  }
+});
+
+/** 虚拟块提示文案（根据是否有第二 API 调用） */
+const virtualBlockHeadline = computed(() => {
+  const phase = store.virtualBlockPhase;
+  const hasDanmaku = store.settings.danmakuEnabled;
+  const hasImage = store.settings.imageGenEnabled;
+  if (phase === 'done') return '等待完成';
+  if (phase === 'image') return hasImage ? '生成图片中...' : '整理中...';
+  if (phase === 'danmaku') return hasDanmaku ? '准备弹幕中...' : '整理中...';
+  // streaming
+  if (hasDanmaku && hasImage) return 'AI 正在创作，生成完成后自动播放弹幕与场景图';
+  if (hasDanmaku) return 'AI 正在创作，生成完成后自动播放弹幕';
+  if (hasImage) return 'AI 正在创作，生成完成后自动生成场景图';
+  return 'AI 正在创作';
 });
 
 const hasChoices = computed(() => props.choices.length > 0);
@@ -253,12 +372,46 @@ function handleTextScroll() {
   // TypewriterText 内部处理滚动状态，这里仅作为占位回调
 }
 
-function handleClickText() {
+function handleClickText(event: MouseEvent) {
   if (isTyping.value) {
     if (typingTimer) clearTimeout(typingTimer);
     displayedText.value = getBlockText();
     isTyping.value = false;
-  } else if (!isLastBlock.value) {
+    return;
+  }
+
+  // 竖屏模式下，点击对话框的左/右半屏分别前进/后退（更宽容的点击区域）
+  if (props.isPortraitMode) {
+    const target = event.currentTarget as HTMLElement | null;
+    if (target) {
+      const rect = target.getBoundingClientRect();
+      const clickX = event.clientX - rect.left;
+      const isLeftHalf = clickX < rect.width / 2;
+      if (isLeftHalf) {
+        if (!isFirstBlock.value) {
+          prevBlock();
+        }
+        return;
+      }
+      // 右半屏：非末尾向前；末尾若用户曾退出虚拟块则允许重新进入
+      if (!isLastBlock.value) {
+        nextBlock();
+        return;
+      }
+      if (store.virtualBlockExitedByUser) {
+        nextBlock();
+      }
+      return;
+    }
+  }
+
+  // 横屏保持原行为：任意位置点击 = 向前翻页
+  if (!isLastBlock.value) {
+    nextBlock();
+    return;
+  }
+  // 末尾真实块：仅在『用户主动退出虚拟块』状态下，点文本也能重新进入虚拟块继续等待
+  if (store.virtualBlockExitedByUser) {
     nextBlock();
   }
 }
@@ -280,17 +433,17 @@ onUnmounted(() => {
 <style scoped>
 @media (min-width: 768px) {
   [data-ui='dialogue-box'] .dialogue-shell-wrap {
-    max-width: calc(100% - var(--theme-dialogue-margin-x-md, 1em) * 2);
-    margin-left: var(--theme-dialogue-margin-x-md, 1em) !important;
-    margin-right: var(--theme-dialogue-margin-x-md, 1em) !important;
+    max-width: calc(100% - var(--theme-dialogue-margin-x-md, 1rem) * 2);
+    margin-left: var(--theme-dialogue-margin-x-md, 1rem) !important;
+    margin-right: var(--theme-dialogue-margin-x-md, 1rem) !important;
   }
 }
 
 @media (min-width: 1024px) {
   [data-ui='dialogue-box'] .dialogue-shell-wrap {
-    max-width: calc(100% - var(--theme-dialogue-margin-x-lg, 2em) * 2);
-    margin-left: var(--theme-dialogue-margin-x-lg, 2em) !important;
-    margin-right: var(--theme-dialogue-margin-x-lg, 2em) !important;
+    max-width: calc(100% - var(--theme-dialogue-margin-x-lg, 2rem) * 2);
+    margin-left: var(--theme-dialogue-margin-x-lg, 2rem) !important;
+    margin-right: var(--theme-dialogue-margin-x-lg, 2rem) !important;
   }
 }
 </style>

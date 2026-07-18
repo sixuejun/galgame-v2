@@ -35,6 +35,7 @@
             icon-side="left"
             :skin-key="LEFT_EXPANDED_SKIN_KEY"
             @click="store.setOverlay('gameplay')"
+            v-if="gameplayUnlocked"
           />
           <CapsuleButton
             icon="fa-paper-plane"
@@ -99,9 +100,9 @@
 </template>
 
 <script setup lang="ts">
+import { useVNStore } from '../../store';
 import CapsuleButton from '../common/CapsuleButton.vue';
 import SkinShell from '../common/SkinShell.vue';
-import { useVNStore } from '../../store';
 
 const LEFT_EXPANDED_SKIN_KEY = 'quickMenuExpandedLeft';
 const RIGHT_EXPANDED_SKIN_KEY = 'quickMenuExpandedRight';
@@ -119,6 +120,9 @@ const leftCollapsedHovered = ref(false);
 const leftCollapsedActive = ref(false);
 const rightCollapsedHovered = ref(false);
 const rightCollapsedActive = ref(false);
+
+// 玩法按钮解锁状态：默认隐藏，控制台输入指令后才显示
+const gameplayUnlocked = ref(false);
 
 const leftCollapsedSkin = computed(() => store.getComponentSkinForCurrent('quickMenuCollapsedLeft'));
 const rightCollapsedSkin = computed(() => store.getComponentSkinForCurrent('quickMenuCollapsedRight'));
@@ -181,6 +185,31 @@ function handleClickOutside(e: MouseEvent) {
   if (store.rightMenuExpanded && rightRef.value && !rightRef.value.contains(e.target as Node)) store.toggleRightMenu();
 }
 
-onMounted(() => document.addEventListener('mousedown', handleClickOutside));
-onUnmounted(() => document.removeEventListener('mousedown', handleClickOutside));
+onMounted(() => {
+  document.addEventListener('mousedown', handleClickOutside);
+
+  // 监听控制台输入，解锁玩法按钮
+  const originalLog = console.log;
+  console.log = function (...args: unknown[]) {
+    const value = args[0];
+    if (typeof value === 'string' && (value.trim() === 'unlock_gameplay' || value.trim() === '解锁玩法')) {
+      gameplayUnlocked.value = true;
+      console.info('[QuickAccessMenu] 玩法按钮已解锁');
+    }
+    originalLog.apply(console, args);
+  };
+
+  const originalInfo = console.info;
+  console.info = function (...args: unknown[]) {
+    const value = args[0];
+    if (typeof value === 'string' && (value.trim() === 'unlock_gameplay' || value.trim() === '解锁玩法')) {
+      gameplayUnlocked.value = true;
+      console.info('[QuickAccessMenu] 玩法按钮已解锁');
+    }
+    originalInfo.apply(console, args);
+  };
+});
+onUnmounted(() => {
+  document.removeEventListener('mousedown', handleClickOutside);
+});
 </script>

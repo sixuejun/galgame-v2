@@ -1,18 +1,8 @@
 <template>
-  <div
-    v-if="characterName"
-    class="dialogue-name-shell absolute"
-    :style="nameShellStyle"
-  >
+  <div v-if="characterName" class="dialogue-name-shell absolute" :style="nameShellStyle">
     <SkinShell :skin="nameSkin">
-      <div
-        class="dialogue-name-content flex gap-2"
-        :style="nameContentStyle"
-      >
-        <span
-          class="dialogue-name-text"
-          :style="nameTextStyle"
-        >
+      <div class="dialogue-name-content flex gap-2" :style="nameContentStyle">
+        <span class="dialogue-name-text" :style="nameTextStyle">
           {{ characterName }}
         </span>
       </div>
@@ -36,10 +26,11 @@ const props = defineProps<{
 
 /** 名字壳样式 */
 const nameShellStyle = computed(() => ({
-  top: 'var(--theme-dialogue-name-top, 0.5em)',
-  left: 'var(--theme-dialogue-name-left, 5em)',
+  // 用 rem 作 fallback：避免祖先 font-size 较小时位置/大小也被缩小
+  top: 'var(--theme-dialogue-name-top, 0.5rem)',
+  left: 'var(--theme-dialogue-name-left, 2.5rem)',
   zIndex: 5,
-  maxWidth: 'var(--theme-dialogue-name-max-width, 12em)',
+  maxWidth: 'var(--theme-dialogue-name-max-width, 12rem)',
 }));
 
 /** 名字内容区样式 */
@@ -52,7 +43,8 @@ const nameContentStyle = computed(() => ({
 /** 名字文字样式 */
 const nameTextStyle = computed(() => ({
   color: 'var(--theme-dialogue-name-color, #6e4736)',
-  fontSize: 'var(--theme-dialogue-name-font-size, 0.875em)',
+  // 关键：fallback 用 rem 而非 em，避免被祖先 font-size 联动缩小甚至消失
+  fontSize: 'var(--theme-dialogue-name-font-size, 1rem)',
   fontWeight: 'bold',
   letterSpacing: '0.1em',
 }));

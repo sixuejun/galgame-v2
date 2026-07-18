@@ -108,6 +108,7 @@ function handleClick() {
 const contentStyle = computed(() => ({
   display: 'flex',
   alignItems: 'stretch',
+  minHeight: '0',
   gap: 'var(--theme-choice-btn-inner-gap, 0.5rem)',
   width: '100%',
   cursor: props.isLocked ? 'not-allowed' : 'pointer',
@@ -116,6 +117,8 @@ const contentStyle = computed(() => ({
 
 const letterStyle = computed(() => ({
   flex: '0 0 auto',
+  minWidth: '1.5em',
+  minHeight: '0',
   alignSelf: 'center',
   fontFamily: 'var(--theme-choice-letter-font-family, serif)',
   fontSize: 'var(--theme-choice-letter-font-size, clamp(0.9rem, 1.5vw, 1.1rem))',
@@ -124,19 +127,21 @@ const letterStyle = computed(() => ({
   transition: 'color 0.15s ease',
   paddingLeft: 'var(--theme-choice-btn-inner-padding-left, 0.5rem)',
   paddingRight: 'var(--theme-choice-btn-inner-padding-right, 0.5rem)',
-  userSelect: 'none',
+  userSelect: 'none' as const,
+  textAlign: 'center' as const,
 }));
 
 const textWrapperStyle = computed(() => ({
   flex: '1 1 0',
+  minHeight: '0',
+  minWidth: 0,
   display: 'flex',
   alignItems: 'center',
-  minWidth: 0,
-  height: 'var(--theme-choice-btn-text-area-height, 2.5rem)',
+  height: 'var(--theme-choice-btn-text-area-height, 3rem)',
   overflowY: 'auto' as const,
   paddingTop: 'var(--theme-choice-btn-inner-padding-top, 0.5rem)',
   paddingBottom: 'var(--theme-choice-btn-inner-padding-bottom, 0.5rem)',
-  paddingRight: 'var(--theme-choice-btn-inner-padding-right, 0.5rem)',
+  paddingRight: 'var(--theme-choice-btn-inner-padding-right, 0.75rem)',
 }));
 
 const textStyle = computed(() => ({

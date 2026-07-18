@@ -18,7 +18,7 @@ export function getTheme(id: string): ThemeDefinition {
 }
 
 export function getThemeList(): ThemeDefinition[] {
-  return Array.from(themeRegistry.values());
+  return Array.from(themeRegistry.values()).filter(t => !t.hidden);
 }
 
 export function getComponentSkin(themeId: string, componentKey: ComponentKey): ComponentSkin | undefined {

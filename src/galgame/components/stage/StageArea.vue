@@ -47,8 +47,8 @@
     <!-- Layer 5: 弹幕层 -->
     <div
       v-if="store.settings.danmakuEnabled"
-      class="pointer-events-none absolute inset-x-0 top-0 overflow-hidden"
-      :style="{ height: danmakuHeight, zIndex: 5 }"
+      class="pointer-events-none absolute inset-x-0 overflow-hidden"
+      :style="{ height: danmakuHeight, top: danmakuTopOffset, zIndex: 5 }"
     >
       <div class="danmaku-container">
         <div
@@ -67,10 +67,10 @@
 </template>
 
 <script setup lang="ts">
-import BackgroundLayer from './BackgroundLayer.vue';
-import SpriteLayer from './SpriteLayer.vue';
 import type { DanmakuItem } from '../../store';
 import { useVNStore } from '../../store';
+import BackgroundLayer from './BackgroundLayer.vue';
+import SpriteLayer from './SpriteLayer.vue';
 
 const store = useVNStore();
 
@@ -105,13 +105,18 @@ function getDanmakuStyle(item: DanmakuItem) {
   return {
     top: `${top}%`,
     height: `${trackHeight}%`,
+    display: 'flex',
+    alignItems: 'center',
     animationDuration: `${duration}s`,
     fontSize: `${store.settings.danmakuFontSize}em`,
     color: store.settings.danmakuColor,
     opacity: store.settings.danmakuOpacity,
-    lineHeight: `${trackHeight}%`,
   };
 }
+
+const danmakuTopOffset = computed(() => {
+  return `${store.settings.danmakuTopOffset ?? 10}rem`;
+});
 
 const currentBackgroundImage = computed(() => {
   return store.currentBlock?.sceneImageUrl || store.getCurrentDisplayBackground();

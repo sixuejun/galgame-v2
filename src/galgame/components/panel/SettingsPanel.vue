@@ -246,10 +246,20 @@
                 @update="v => store.updateSettings({ portraitMode: v })"
               />
             </div>
-            <!-- "固定对话框高度"开关已迁移到 CSS 变量 --theme-dialogue-fixed-height：
-                 在自定义 CSS 中设为 1 启用（默认，max-height 限高 + 滚动），
-                 设为 0 关闭（文本自由撑开）。不再在设置面板中暴露。
-            -->
+            <div class="flex items-center justify-between py-2">
+              <div>
+                <span class="text-xs" style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.7))"
+                  >固定对话框高度</span
+                >
+                <p style="font-size: 10px; color: var(--theme-text-muted, var(--vn-muted)); margin-top: 2px">
+                  关闭时文本自由撑开对话框
+                </p>
+              </div>
+              <ToggleSwitch
+                :checked="store.settings.fixedDialogueMinHeight"
+                @update="v => store.updateSettings({ fixedDialogueMinHeight: v })"
+              />
+            </div>
           </div>
 
           <!-- API Configuration -->
@@ -807,39 +817,6 @@
                 </div>
               </div>
             </div>
-            <div class="grid grid-cols-2 gap-2">
-              <button
-                v-for="skin in SKIN_PRESETS"
-                :key="skin.id"
-                class="cursor-pointer border p-3 text-left transition-all duration-200"
-                :style="{
-                  borderColor:
-                    store.settings.skinId === skin.id ? 'var(--theme-accent, var(--rust))' : 'rgba(90,79,64,0.4)',
-                  background: store.settings.skinId === skin.id ? 'rgba(139,69,19,0.1)' : 'transparent',
-                  borderRadius: '2px',
-                }"
-                @click="store.updateSettings({ skinId: skin.id })"
-              >
-                <div class="mb-1 text-xs font-bold" style="color: var(--theme-text-main, rgba(212, 197, 160, 0.9))">
-                  {{ skin.name }}
-                </div>
-                <div style="font-size: 10px; color: var(--theme-text-muted, var(--vn-muted))">
-                  {{ skin.description }}
-                </div>
-                <div
-                  v-if="store.settings.skinId === skin.id"
-                  style="
-                    margin-top: 6px;
-                    font-size: 9px;
-                    color: var(--theme-accent, var(--rust));
-                    font-family: monospace;
-                    letter-spacing: 0.1em;
-                  "
-                >
-                  [ 当前使用 ]
-                </div>
-              </button>
-            </div>
           </div>
 
           <!-- Achievement -->
@@ -982,13 +959,6 @@ async function testSecondApi() {
     secondApiTestResult.value = null;
   }, 5000);
 }
-
-const SKIN_PRESETS = [
-  { id: 'newspaper-default', name: '旧报', description: '泛黄报纸，油墨褪色' },
-  { id: 'telegram', name: '电报', description: '深灰背景，打字机字体' },
-  { id: 'wartime', name: '战时', description: '深红点缀，军事通讯风' },
-  { id: 'archive', name: '档案', description: '牛皮纸色，公文档案风' },
-];
 
 const danmakuDisplayOptions = [
   { value: 'third', label: '1/3 屏' },
