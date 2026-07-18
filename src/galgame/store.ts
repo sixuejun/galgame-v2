@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { GameEvent } from './boardgame/types';
 import { useLatestMvuStore } from './latestMvuStore';
 import { PROMPT_BOARD_GAME_EVENT_POOL } from './prompts/boardGameEvent';
-import { PROMPT_DANMAKU, PROMPT_DANMAKU_AND_IMAGE } from './prompts/danmaku';
+import { PROMPT_DANMAKU_AND_IMAGE_HINT, PROMPT_DANMAKU_HINT } from './prompts/danmaku';
 import { buildDispatchPrompt } from './prompts/dispatch';
 import { buildRiddlePrompt } from './prompts/riddle';
 import { PROMPT_SHOP } from './prompts/shop';
@@ -18,9 +18,10 @@ import {
   extractContentTag,
   extractDanmakuBlock,
   extractImageTagBlocks,
-  extractPlainTextFromContent,
   fuzzyMatchTitle,
   parseMessageBlocks,
+  sanitizeSecondApiOutput,
+  wrapContentTag,
 } from './utils/messageParser';
 import { createVNLogger } from './utils/vnLogger';
 
@@ -167,12 +168,68 @@ export interface ImageCard {
 
 // ====== Worldbook Enhancement Types ======
 
+/**
+ * 世界书条目的"增强字段" —— 在 Tavern 原生字段之上附加本项目所需的元数据。
+ *
+ * # 任务关联条目 vs 通用条目（路由模型）
+ *
+ * 每个条目都属于下面两类之一，由 `linkedFeature` 字段决定：
+ *
+ * ## 1. 任务关联条目（`linkedFeature = 'danmaku' | 'imageGen'`）
+ * 条目绑定到某个具体的"任务"（弹幕 / 生图），路由由 **任务配置** 决定：
+ *   - `settings.apiTaskDanmaku` / `settings.apiTaskImageTag`（取值为 `'main' | 'second' | 'disabled'`）
+ *   - `settings.danmakuEnabled` / `settings.imageGenEnabled`（功能总开关）
+ *
+ * 决策树（见 `resolveApiTarget`）：
+ *   - 功能总开关关 / 任务被禁用（`apiTaskXxx='disabled'`）→ 不发送
+ *   - 任务路由到主 API（`apiTaskXxx='main'`） → 主 API 发送
+ *   - 任务路由到第二 API（`apiTaskXxx='second'`） → 第二 API 发送（主 API 过滤掉）
+ *
+ * **关键不变量**：
+ *   - `targetApi` 字段对任务关联条目**完全无效** —— 它被弱化；
+ *   - 任务关联条目总是自动受 (功能开关 + 任务路由) 控制；
+ *   - 所有路由决策都在 API 调用瞬间**临时**决定，不持久化到世界书 `enabled` 字段。
+ *
+ * ## 2. 通用条目（`linkedFeature = 'universal'` 或未设置）
+ * 条目不属于特定任务，按 `targetApi` 路由：
+ *   - `'main'`  → 仅主 API
+ *   - `'second'`→ 仅第二 API
+ *   - `'both'`  → 两者都发送（同一份内容复制两份）
+ *
+ * 用户可以手动设置 `enabled` 控制是否启用。
+ * `targetApi` 决定通用条目发到哪个 API；任务关联条目由任务路由决定。
+ *
+ * # 历史数据
+ * 未设置（`undefined`）的 `linkedFeature` 按 `'universal'` 语义处理 —— 老数据无需迁移。
+ */
 export interface WorldbookEntryEnhanced {
   uid: number;
   enabled: boolean;
+  /**
+   * 主/第二 API 发送目标。**仅对通用条目（linkedFeature 为 undefined / universal）有效**——
+   * 任务关联条目（danmaku / imageGen）的实际 API 由 `apiTaskXxx` 决定，targetApi 字段被弱化。
+   *
+   * - 'main'  → 跟随主 API
+   * - 'second'→ 跟随第二 API
+   * - 'both'  → 两者都发送
+   */
   targetApi: 'main' | 'second' | 'both';
-  autoControl: boolean;
-  linkedFeature?: 'danmaku' | 'imageGen';
+  /**
+   * 条目关联到哪个任务，决定它会被发到哪个 API。
+   *
+   * 设计上 CG 和背景（场景）合并为同一个生图任务：UI 面板、世界书配置、
+   * 自动控制统一使用 'imageGen'，避免在两份代码之间再维护 'sceneTag' / 'cgTag' 拆分。
+   *
+   * - 'danmaku'  → 弹幕任务。
+   *               实际发送：apiTaskDanmaku='main' → 主 API；'second' → 第二 API；
+   *               'disabled' 或 danmakuEnabled=false → 不发送。**targetApi 字段被忽略。**
+   * - 'imageGen' → 生图任务（覆盖 CG + 背景）。路由规则与 danmaku 对称，使用
+   *               apiTaskImageTag / imageGenEnabled。
+   * - 'universal'→ 通用条目；按 targetApi 决定（保留旧行为）。
+   *
+   * 未设置（undefined）的历史条目按 "universal" 语义处理 —— 老数据无需迁移。
+   */
+  linkedFeature?: 'danmaku' | 'imageGen' | 'universal';
   /** Source worldbook name - set by getEnhancedWorldbook */
   _worldbookName?: string;
   // Original worldbook entry fields will be preserved
@@ -189,12 +246,29 @@ const VNSettings = z
     bgmVolume: z.number().min(0).max(100).default(70),
     sfxVolume: z.number().min(0).max(100).default(80),
     voiceVolume: z.number().min(0).max(100).default(100),
-    // 立绘设置
+    // 立绘设置：竖屏/横屏各自独立的值，避免相互污染。
+    // 历史字段 portraitScale/portraitX/portraitY 在 loadSettingsFromStorage 阶段
+    // 迁移到 *_Landscape，竖屏使用 *_Portrait 默认值（保持原有视觉）。
+    // 竖屏因画幅更窄、立绘往往只有上半部分，需要更激进的缩放才能贴合画面，
+    // 也需要更大的垂直位移范围才能把立绘头部/肩部调到理想位置，因此 *_Portrait 范围
+    // 在 Landscape 的基础上进一步放宽（scale 600% / y ±200%）。
+    portraitScaleLandscape: z.number().min(10).max(200).default(100),
+    portraitScalePortrait: z.number().min(10).max(600).default(100),
+    portraitXLandscape: z.number().min(-50).max(50).default(0),
+    portraitXPortrait: z.number().min(-50).max(50).default(0),
+    portraitYLandscape: z.number().min(-50).max(50).default(0),
+    portraitYPortrait: z.number().min(-200).max(200).default(0),
+    // 兼容字段：读旧 localStorage 时读到这里，写则不再落盘。
+    // schema 仍保留以便 VNSettings.parse 不抛错。
     portraitScale: z.number().min(10).max(200).default(100),
     portraitX: z.number().min(-50).max(50).default(0),
     portraitY: z.number().min(-50).max(50).default(0),
     portraitMode: z.boolean().default(false),
     narrationSpriteInherit: z.boolean().default(true),
+    // 固定对话框最小高度：开启后横屏/竖屏下对话框分别按主题变量保持最小高度；
+    // 关闭后对话框随内容自然撑开，避免长文本被 max-height 截断（与文本 max-height 配合生效）。
+    // 注：使用 SkinShell 的主题（如和蝶）由图片外壳决定高度，不受此开关影响。
+    fixedDialogueMinHeight: z.boolean().default(true),
     skinId: z.string().default('newspaper-default'),
     themeId: z.enum(['newspaper', 'hedie', 'animal-island', 'liquid-glass']).default('newspaper'),
     themeEnabled: z.boolean().default(true),
@@ -220,6 +294,8 @@ const VNSettings = z
     danmakuColor: z.string().default('#ffffff'),
     danmakuFontSize: z.number().min(0.8).max(2.5).default(1.2),
     danmakuOpacity: z.number().min(0.1).max(1).default(0.9),
+    // 弹幕层距离顶部的偏移量（rem），用于避开左上/右上菜单按钮
+    danmakuTopOffset: z.number().min(0).max(40).default(10),
     secondApiUrl: z.string().default(''),
     secondApiKey: z.string().default(''),
     secondApiModel: z.string().default(''),
@@ -343,13 +419,19 @@ interface SystemConfig extends BaseTaskConfig {
 }
 
 interface DanmakuConfig extends BaseTaskConfig {
-  task: 'danmaku' | 'danmakuAndImageGen';
+  task: 'danmaku';
   contentText: string;
 }
 
-interface ImageTagConfig extends BaseTaskConfig {
-  task: 'imageTag';
-  sceneDescription: string;
+interface DanmakuAndImageGenConfig extends BaseTaskConfig {
+  task: 'danmakuAndImageGen';
+  contentText: string;
+}
+
+/** 单独触发生图 tag，不注入弹幕条目 */
+interface ImageTagOnlyConfig extends BaseTaskConfig {
+  task: 'imageTagOnly';
+  contentText: string;
 }
 
 /** 第二 API 调用配置的联合类型 */
@@ -362,7 +444,8 @@ export type SecondApiConfig =
   | RiddleConfig
   | SystemConfig
   | DanmakuConfig
-  | ImageTagConfig;
+  | DanmakuAndImageGenConfig
+  | ImageTagOnlyConfig;
 
 const VNGameData = z
   .object({
@@ -742,7 +825,33 @@ export const useVNStore = defineStore('vn', () => {
   function loadSettingsFromStorage(): z.infer<typeof VNSettings> {
     try {
       const raw = localStorage.getItem('vn_galgame_settings');
-      if (raw) return VNSettings.parse(JSON.parse(raw));
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        // 数据迁移：旧版只有 portraitScale/portraitX/portraitY（横屏版），
+        // 没有 portraitScaleLandscape/Portrait 等双版本字段，
+        // 这里把旧值灌到 *_Landscape 上，避免用户已经调过的横屏参数被默认值覆盖。
+        if (parsed && typeof parsed === 'object') {
+          if (
+            (parsed.portraitScaleLandscape === undefined || parsed.portraitScaleLandscape === null) &&
+            typeof parsed.portraitScale === 'number'
+          ) {
+            parsed.portraitScaleLandscape = parsed.portraitScale;
+          }
+          if (
+            (parsed.portraitXLandscape === undefined || parsed.portraitXLandscape === null) &&
+            typeof parsed.portraitX === 'number'
+          ) {
+            parsed.portraitXLandscape = parsed.portraitX;
+          }
+          if (
+            (parsed.portraitYLandscape === undefined || parsed.portraitYLandscape === null) &&
+            typeof parsed.portraitY === 'number'
+          ) {
+            parsed.portraitYLandscape = parsed.portraitY;
+          }
+        }
+        return VNSettings.parse(parsed);
+      }
     } catch {
       /* ignore */
     }
@@ -756,6 +865,297 @@ export const useVNStore = defineStore('vn', () => {
       /* ignore */
     }
   });
+
+  /**
+   * 功能总开关（弹幕/生图）。
+   * 决定"该任务是否值得发送" —— 关掉后任何 API 都不该带关联条目。
+   * 任务关联条目是否发送 **首先** 看这个开关，再看路由。
+   */
+  const featureEnabled = (feature: 'danmaku' | 'imageGen'): boolean => {
+    if (feature === 'danmaku') return settings.value.danmakuEnabled;
+    return settings.value.imageGenEnabled;
+  };
+
+  /**
+   * 任务路由到第二 API 跑吗？
+   * - 'second'   → 是
+   * - 'main'     → 否（任务路由到主 API 跑）
+   * - 'disabled' → 否（任务被关闭）
+   */
+  const featureRoutesToSecond = (feature: 'danmaku' | 'imageGen'): boolean => {
+    if (feature === 'danmaku') return settings.value.apiTaskDanmaku === 'second';
+    return settings.value.apiTaskImageTag === 'second';
+  };
+
+  /**
+   * 任务路由到主 API 跑吗？（对称版本）
+   */
+  const featureRoutesToMain = (feature: 'danmaku' | 'imageGen'): boolean => {
+    if (feature === 'danmaku') return settings.value.apiTaskDanmaku === 'main';
+    return settings.value.apiTaskImageTag === 'main';
+  };
+
+  /**
+   * 决策条目实际会被发往哪个 API（统一入口）。
+   *
+   * 适用规则：
+   *   1. **linkedFeature='danmaku' | 'imageGen'**（任务关联条目）
+   *      - 不依赖 targetApi
+   *      - 功能总开关关掉 → 'none'（任何 API 都不该带）
+   *      - 任务路由到主 API → 'main'（主 API 直接消费）
+   *      - 任务路由到第二 API → 'second'（主 API 过滤掉，由第二 API 消费）
+   *      - 任务被禁用 ('disabled') → 'none'
+   *   2. **linkedFeature='universal' | undefined**（通用条目）
+   *      - 按 targetApi 决定：
+   *        - 'main'  → 'main'
+   *        - 'second'→ 'second'
+   *        - 'both'  → 'both'（同一份内容会被复制发到两边）
+   *
+   * 注意：
+   *   - 这里只决定"路由 / 是否发送"，**不**依赖条目的 `enabled` 字段。
+   *   - 所有判断在 API 调用瞬间临时决定，不持久化。
+   *   - 通用条目（universal / undefined）由 `targetApi` 决定；任务关联条目由 (功能开关 + 任务路由) 决定。
+   */
+  function resolveApiTarget(
+    entry: Pick<WorldbookEntryEnhanced, 'linkedFeature' | 'targetApi'>,
+  ): 'main' | 'second' | 'both' | 'none' {
+    const feature = entry.linkedFeature;
+    if (feature === 'danmaku' || feature === 'imageGen') {
+      // 任务关联条目：按 (功能开关 + 任务路由) 决定，不依赖 targetApi。
+      if (!featureEnabled(feature)) return 'none';
+      if (featureRoutesToSecond(feature)) return 'second';
+      if (featureRoutesToMain(feature)) return 'main';
+      return 'none'; // apiTaskXxx === 'disabled'
+    }
+    // 通用条目（universal / 未设置）：完全交给 targetApi。
+    return entry.targetApi ?? 'main';
+  }
+
+  /**
+   * 任务关联条目（linkedFeature=弹幕/生图）是否路由到第二 API。
+   *
+   * 决策树：
+   *   - 功能总开关关 / 任务被禁用 → false
+   *   - 任务路由到 'second' → true
+   *   - 任务路由到 'main' / 'disabled' → false
+   */
+  const shouldTaskEntryBeEnabled = (feature: 'danmaku' | 'imageGen'): boolean => {
+    return resolveApiTarget({ linkedFeature: feature, targetApi: 'main' }) === 'main';
+  };
+
+  /**
+   * 条目是否应该被发到**第二 API 调用**（供 buildSecondApiContext 的 worldbookFilter 使用）。
+   *
+   * 决策树（与 resolveApiTarget 同源，更明确的 boolean 形式）：
+   *   - 任务关联条目（danmaku / imageGen）：
+   *       - 功能关掉 / 任务路由不是 'second' → false（不应进入第二 API）
+   *       - 任务路由到 'second' → true
+   *   - 通用条目（universal / undefined）：
+   *       - targetApi 为 'second' 或 'both' → true
+   *       - targetApi 为 'main' → false
+   *
+   * 所有判断在 API 调用瞬间临时决定，不持久化。
+   */
+  const shouldSendToSecondApi = (entry: WorldbookEntryEnhanced): boolean => {
+    return resolveApiTarget(entry) === 'second' || resolveApiTarget(entry) === 'both';
+  };
+
+  /**
+   * 条目是否应该被发到**主 API 调用**。
+   * 与 shouldSendToSecondApi 互补。
+   *
+   * 决策树：
+   * - 任务关联条目（danmaku / imageGen）：
+   *     - 功能关掉 / 任务路由是 'second' → false（只发第二 API）
+   *     - 任务路由是 'main' 或 'both' → true
+   * - 通用条目（universal / undefined）：
+   *     - targetApi 为 'main' 或 'both' → true
+   *     - targetApi 为 'second' → false
+   */
+  const shouldSendToMainApi = (entry: WorldbookEntryEnhanced): boolean => {
+    const target = resolveApiTarget(entry);
+    return target === 'main' || target === 'both';
+  };
+
+  // ====== 主 API 世界书过滤（会话级，不持久化） ======
+  // 用于在主 API 调用时临时禁用"只应发到第二 API"的条目。
+  // 每次调用都返回一个新的、不共享状态的恢复函数。
+  //
+  // 可靠性机制：
+  //   1. 应用过滤前对**所有**世界书条目（含 toBlock 之外的）做一次 enabled 快照，
+  //      这样恢复时不依赖"toBlock 时记录的 originalEnabled"这一窄窗口。
+  //   2. 恢复函数执行后再次读世界书，对比快照：
+  //      - 任何"快照中是 enabled 但当前是 disabled"的条目都视为恢复失败
+  //      - 只要有一个失败，整个世界书按快照强制重写（extra/uid/strategy 都不动，仅修正 enabled）
+  //   这样即便 store 里某次 updateWorldbookWith 写入失败、或者中途被其他逻辑改写 enabled，
+  //   也能在恢复阶段被纠正。
+
+  /**
+   * 在主 API 调用前，临时禁用所有"只发第二 API"的条目。
+   * 返回一个恢复函数，调用后恢复所有条目的原始状态，并在校验失败时强制按快照回写。
+   */
+  async function applyMainApiWorldbookFilter(): Promise<() => Promise<void>> {
+    const entries = await getEnhancedWorldbook();
+
+    // ① 全量快照：所有 (worldbookName, uid) → enabled，按当前世界书实际状态记录
+    // 不仅是 toBlock 列表里的条目，理论上本函数不会修改 toBlock 之外条目的 enabled，
+    // 但保留全量快照能在校验阶段发现"中途被其他代码/用户改动"的异常。
+    const enabledSnapshot = new Map<string, Map<number, boolean>>();
+    for (const entry of entries) {
+      const wbName = entry._worldbookName ?? '';
+      if (!wbName) continue;
+      let inner = enabledSnapshot.get(wbName);
+      if (!inner) {
+        inner = new Map();
+        enabledSnapshot.set(wbName, inner);
+      }
+      inner.set(entry.uid, entry.enabled);
+    }
+
+    // ② 计算 toBlock（只发第二 API 且当前 enabled 的条目）
+    const toBlock: Array<{ worldbookName: string; uid: number }> = [];
+    for (const entry of entries) {
+      if (!shouldSendToMainApi(entry) && shouldSendToSecondApi(entry)) {
+        if (entry.enabled) {
+          toBlock.push({
+            worldbookName: entry._worldbookName ?? '',
+            uid: entry.uid,
+          });
+        }
+      }
+    }
+
+    if (toBlock.length === 0) {
+      // 没有需要临时禁用的条目，但仍然返回一个"保险"恢复函数：
+      // 如果校验阶段发现快照中应该有 enabled 的条目被外部代码意外禁用了，也走强制恢复路径。
+      return createRestorer(enabledSnapshot, /* toBlockApplied= */ false);
+    }
+
+    // 按世界书分组 toBlock
+    const byWorldbook = new Map<string, number[]>();
+    for (const item of toBlock) {
+      const arr = byWorldbook.get(item.worldbookName) ?? [];
+      arr.push(item.uid);
+      byWorldbook.set(item.worldbookName, arr);
+    }
+
+    // ③ 批量禁用
+    for (const [worldbookName, uids] of byWorldbook) {
+      const uidsSet = new Set(uids);
+      await updateWorldbookWith(
+        worldbookName,
+        wb =>
+          wb.map(e => {
+            if (uidsSet.has(e.uid)) {
+              return { ...e, enabled: false };
+            }
+            return e;
+          }),
+        { render: 'immediate' },
+      );
+    }
+
+    return createRestorer(enabledSnapshot, /* toBlockApplied= */ true);
+  }
+
+  /**
+   * 构造恢复函数：
+   *   1) 按快照把每个 (wb, uid) 写回 expectedEnabled
+   *   2) 重新读世界书，逐项对比快照；任何 expectedEnabled=true 但当前仍 disabled 的视为恢复失败
+   *   3) 一旦发现失败，按快照对**整个世界书**做一次强制重写（仅覆盖 enabled，其他字段保留）
+   *   4) 重复校验；若再次失败，console.error 报警（极端情况：可能世界书本身被外部删除/改名）
+   */
+  function createRestorer(
+    enabledSnapshot: Map<string, Map<number, boolean>>,
+    toBlockApplied: boolean,
+  ): () => Promise<void> {
+    // 把整本书写一遍（按快照）的辅助函数；单个失败不影响其他书
+    const writeBySnapshot = async (label: string): Promise<void> => {
+      for (const [worldbookName, inner] of enabledSnapshot) {
+        try {
+          await updateWorldbookWith(
+            worldbookName,
+            wb =>
+              wb.map(e => {
+                const expected = inner.get(e.uid);
+                if (expected === undefined) return e;
+                if (e.enabled === expected) return e;
+                return { ...e, enabled: expected };
+              }),
+            { render: 'immediate' },
+          );
+        } catch (err) {
+          console.warn(`[VN] 主 API 世界书过滤恢复（${label}）：写入 "${worldbookName}" 失败`, err);
+        }
+      }
+    };
+
+    return async () => {
+      try {
+        // ① 阶段 1：按快照逐条恢复
+        await writeBySnapshot('阶段 1');
+
+        // ② 阶段 2：校验
+        const stillBroken: Array<{ worldbookName: string; uid: number }> = [];
+        for (const [worldbookName, inner] of enabledSnapshot) {
+          let currentEntries: Awaited<ReturnType<typeof getWorldbook>>;
+          try {
+            currentEntries = await getWorldbook(worldbookName);
+          } catch (e) {
+            console.warn(`[VN] 主 API 世界书过滤恢复校验：读取世界书 "${worldbookName}" 失败`, e);
+            continue;
+          }
+          for (const e of currentEntries) {
+            const expected = inner.get(e.uid);
+            if (expected === undefined) continue;
+            if (expected === true && e.enabled === false) {
+              stillBroken.push({ worldbookName, uid: e.uid });
+            }
+          }
+        }
+
+        if (stillBroken.length === 0) {
+          console.info(
+            `[VN] 主 API 世界书过滤已恢复：toBlock=${toBlockApplied ? '已应用' : '无需禁用'}，快照=${enabledSnapshot.size} 本书，全部条目 enabled 与快照一致`,
+          );
+          return;
+        }
+
+        // ③ 阶段 3：强制按快照重写整个世界书（只动 enabled，其余字段完全保留）
+        console.warn(
+          `[VN] 主 API 世界书过滤恢复校验发现 ${stillBroken.length} 个条目仍处于禁用状态，按快照强制重写`,
+          stillBroken,
+        );
+        await writeBySnapshot('阶段 3 强制');
+
+        // ④ 阶段 4：再次校验
+        let remainingBroken = 0;
+        for (const { worldbookName, uid } of stillBroken) {
+          try {
+            const currentEntries = await getWorldbook(worldbookName);
+            const e = currentEntries.find(x => x.uid === uid);
+            const expected = enabledSnapshot.get(worldbookName)?.get(uid);
+            if (expected === true && e && e.enabled === false) {
+              remainingBroken++;
+            }
+          } catch {
+            remainingBroken++;
+          }
+        }
+        if (remainingBroken > 0) {
+          console.error(
+            `[VN] 主 API 世界书过滤强制恢复后仍有 ${remainingBroken} 个条目处于禁用状态（可能世界书被外部删除/改名或权限不足）`,
+          );
+        } else {
+          console.info(`[VN] 主 API 世界书过滤强制恢复成功：${stillBroken.length} 个条目已纠正`);
+        }
+      } catch (err) {
+        // 兜底：恢复过程中任何意外异常都不能让 _restoreMainApiWorldbook 永远挂着，
+        // 否则下次 STARTED 时会拿一个已经"半失败"的 restore 函数再跑一次。
+        console.error('[VN] 主 API 世界书过滤恢复过程中发生未捕获异常', err);
+      }
+    };
+  }
 
   // --- Theme ---
   const currentTheme = computed<ThemeDefinition>(() => getTheme(settings.value.themeId));
@@ -1451,9 +1851,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
    * 当前正在观看的楼层对应的「显示序号」（-1 表示尚未定位）。
    * 用于打开历史面板时把光标定位到玩家当前所在的楼层。
    */
-  const currentDisplayFloorIndex = computed<number>(() =>
-    physicalToDisplayIndex(currentFloorIndex.value),
-  );
+  const currentDisplayFloorIndex = computed<number>(() => physicalToDisplayIndex(currentFloorIndex.value));
 
   /**
    * 历史面板当前预览的「显示序号」（在可见楼层列表中的索引）。
@@ -1472,9 +1870,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
    */
   function enterHistoryBrowse(displayFloorIndex: number = currentDisplayFloorIndex.value) {
     const visible = visibleFloorIndices.value;
-    const clampedFloor = visible.length === 0
-      ? 0
-      : Math.max(0, Math.min(displayFloorIndex, visible.length - 1));
+    const clampedFloor = visible.length === 0 ? 0 : Math.max(0, Math.min(displayFloorIndex, visible.length - 1));
     historyPreviewFloorIndex.value = clampedFloor;
     historyPreviewBlockIndex.value = 0;
   }
@@ -1512,6 +1908,19 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
 
   // 当前显示的块
   const currentBlock = computed(() => allBlocksFlat.value[currentBlockFlatIndex.value]?.block ?? null);
+
+  /**
+   * 光标是否处于第一个真实块（用于禁用左翻页按钮）。
+   * 虚拟块期间也允许『左翻退回上一真实块』，所以此时 isFirstBlock=false 才是可左翻。
+   */
+  const isFirstBlock = computed(() => currentBlockFlatIndex.value <= 0);
+  /**
+   * 光标是否处于最后一个真实块（用于禁用右翻页按钮）。
+   * 虚拟块期间不算末尾（虚拟块本身就是『等待生成』），所以这里只看真实块。
+   */
+  const isLastBlock = computed(
+    () => allBlocksFlat.value.length > 0 && currentBlockFlatIndex.value >= allBlocksFlat.value.length - 1,
+  );
 
   // 初始化阶段：把光标的目标楼层锁定为“最新可见楼层的第一块”。
   // 该状态会在首次 pre-render 完成后清除。
@@ -1704,7 +2113,10 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
         } else {
           console.warn(
             '[Dialogues] appendNewMessage: getChatMessages 返回的 message_id 与入参不一致,跳过 push,',
-            'input=', messageId, 'returned=', messages?.[0]?.message_id,
+            'input=',
+            messageId,
+            'returned=',
+            messages?.[0]?.message_id,
           );
           return;
         }
@@ -1928,6 +2340,48 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
     const from = flat[currentBlockFlatIndex.value];
     const prevIdx = currentBlockFlatIndex.value;
 
+    // 虚拟块（过场）期间：
+    //   - 左翻（delta < 0）：退出虚拟块，光标留在原真实块上（不动 currentBlockFlatIndex），
+    //     并设置 virtualBlockExitedByUser 让用户可以『右翻回到虚拟块』继续等待。
+    //   - 右翻（delta > 0）：拒绝，必须等生成 + 弹幕 + 生图完成。
+    if (transitionActive.value) {
+      if (delta < 0) {
+        virtualBlockExitedByUser.value = true;
+        exitVirtualBlock();
+        vnLog.info('nav', 'navigateBlock (virtual, prev -> exited by user)', {
+          prevFlatIndex: prevIdx,
+          from: from ? { floorIndex: from.floorIndex, blockIndex: from.blockIndex, type: from.block?.type } : null,
+        });
+        return;
+      }
+      // delta > 0：虚拟块期间右翻页被禁用
+      vnLog.info('nav', 'navigateBlock (virtual, next denied)', {
+        prevFlatIndex: prevIdx,
+      });
+      return;
+    }
+
+    // 非虚拟块期间：若用户曾手动退出虚拟块，且光标处于末尾真实块，
+    // 右翻允许『重新进入虚拟块』继续等待生成；其他位置仍是普通翻页。
+    if (delta > 0 && virtualBlockExitedByUser.value && prevIdx >= flat.length - 1) {
+      // 保留光标位置（仍在原真实块上），重新进入虚拟块。
+      virtualBlockExitedByUser.value = false;
+      requestNextBlockTransition('navigateBlock');
+      vnLog.info('nav', 'navigateBlock (re-enter virtual after user exit)', {
+        prevFlatIndex: prevIdx,
+        from: from ? { floorIndex: from.floorIndex, blockIndex: from.blockIndex, type: from.block?.type } : null,
+      });
+      return;
+    }
+
+    // 末尾 +1 -> 进入虚拟块（虚拟块不消耗 currentBlockFlatIndex —— 等生成/弹幕/生图
+    // 完成后退出虚拟块，光标会自动落到新楼层的第一个真实块）
+    if (delta > 0 && prevIdx >= flat.length - 1) {
+      virtualBlockExitedByUser.value = false;
+      requestNextBlockTransition('navigateBlock');
+      return;
+    }
+
     const newIdx = prevIdx + delta;
     if (newIdx < 0) {
       currentBlockFlatIndex.value = 0;
@@ -1935,6 +2389,13 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
       currentBlockFlatIndex.value = flat.length - 1;
     } else {
       currentBlockFlatIndex.value = newIdx;
+    }
+
+    // 用户曾处于『虚拟块被手动退出』状态，但光标已经移动（多半是左翻回退到更早块），
+    // 此时 virtualBlockExitedByUser 已不再适用——光标不再停在原『等待生成』位置。
+    // 这里清掉标记，避免 UI 误提示『右侧继续等待』。
+    if (virtualBlockExitedByUser.value) {
+      virtualBlockExitedByUser.value = false;
     }
 
     const to = flat[currentBlockFlatIndex.value];
@@ -2476,6 +2937,188 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
   // 当前显示的图片类型（用于判断类型变化）
   const currentImageType = ref<'background' | 'cg' | null>(null);
 
+  // ============================================================
+  // 过场动画系统
+  // ============================================================
+  // 触发时机：
+  //   1) 酒馆 AI 生成结束后，若用户当前位于「最后一个可见块」-> 自动进入过场
+  //   2) 用户从非末尾块翻到末尾块后再尝试继续翻页 -> 进入过场
+  // 进入过场后等待 imageGenerating / 第二 API 弹幕 + 生图 tag 全部完成，
+  // 才解锁翻页并允许推进 currentBlockFlatIndex。
+  const atLastBlock = computed<boolean>(
+    () => allBlocksFlat.value.length > 0 && currentBlockFlatIndex.value >= allBlocksFlat.value.length - 1,
+  );
+  // 当前是否处于"过场中"（被锁定）
+  const transitionActive = ref(false);
+  // 过场阶段提示
+  const transitionPhase = ref<'idle' | 'streaming' | 'danmaku' | 'image' | 'done'>('idle');
+  // 第二 API 弹幕 / 生图 tag 调用是否还在跑（独立于 imageGenerating，因为生图由外部插件异步完成）
+  const secondApiInflight = ref(false);
+  // 主 API 是否在生成回复中（用户触发到酒馆流式结束之间为 true）。
+  // 关键修复：之前 transitionReady 只看 imageGenerating + secondApiInflight，
+  // 导致用户在末尾翻页 / 选项 / 输入触发生成后，AI 还没开始流式（secondApiInflight=false、
+  // imageGenerating=false）时，过场会被 watcher 立刻跳过 phase→done、350ms 后退场，
+  // 表现为"过场动画看不到、上一楼层没消失"。
+  const mainApiGenerating = ref(false);
+  // 阶段门控：仅当 主 API 完成 + 弹幕 / 第二 API 完成 + 生图 tag 全部完成 才算过场可结束
+  const transitionReady = computed<boolean>(
+    () => !imageGenerating.value && !secondApiInflight.value && !mainApiGenerating.value,
+  );
+  /**
+   * 虚拟块被用户『左翻页手动退出』的标记。
+   * - true 时：用户已经从虚拟块退回上一真实块，但仍可右翻页『重新进入虚拟块』继续等待。
+   * - 进入虚拟块（无论是自动还是手动）以及虚拟块自然完成时，重置为 false。
+   */
+  const virtualBlockExitedByUser = ref(false);
+
+  // ============================================================
+  // 虚拟块 / 过场
+  // ------------------------------------------------------------
+  // 设计：把"过场"视为一个**虚拟的对话块**——
+  //   - 选项触发 / 自定义输入触发 → 用户已经站在这个虚拟块上
+  //   - 虚拟块期间，左翻页可点（回退到上一真实块）；右翻页禁用
+  //   - 等到生成 + 弹幕 + 生图 tag 全部完成 → 虚拟块消失，光标跳到下一真实块
+  //
+  // 数据层与触发层解耦：
+  //   - `virtualBlockActive`（对外可见的"虚拟块状态"）== `transitionActive`（过场）
+  //   - 触发来源：`requestNextBlockTransition` (末尾翻页)、选项点击、MESSAGE_SENT（自定义输入）
+  //   - 退出条件：`transitionReady`（弹幕 + 生图全完成）自动 watch 退出
+  // ============================================================
+  /** 是否处于虚拟块（== 过场）。仅 true 时 DialogueBox 渲染"等待中"视图、禁用右翻页。 */
+  const virtualBlockActive = computed<boolean>(() => transitionActive.value);
+  /** 虚拟块当前阶段，用于在 UI 上提示用户"现在在干吗"。 */
+  const virtualBlockPhase = computed(() => transitionPhase.value);
+
+  // 进入虚拟块（统一入口）。origin 仅用于日志和未来可能的不同阶段处理。
+  // 与旧版 `enterTransition` 区别：不再要求 `atLastBlock` —— 选项/自定义输入
+  // 即使在中间块也能进入虚拟块（生成完后光标跳到下一真实块）。
+  function enterVirtualBlock(
+    origin: 'navigateBlock' | 'generationEnded' | 'option' | 'custom' = 'navigateBlock',
+  ): void {
+    if (transitionActive.value) {
+      // 已经在虚拟块中：保持锁，不再重复进入
+      console.info('[VirtualBlock] enterVirtualBlock called while active, origin=', origin);
+      return;
+    }
+    // 任何形式的进入都会清掉『用户曾手动退出虚拟块』的标记
+    virtualBlockExitedByUser.value = false;
+    transitionActive.value = true;
+    transitionPhase.value = 'streaming';
+    console.info('[VirtualBlock] enter, origin=', origin);
+  }
+
+  /**
+   * 退出虚拟块：等 imageGenerating / secondApiInflight 都为 false 后由 watcher 调 _finishTransitionIfReady。
+   * 这里仅暴露手动出口（调试用 / 取消生成）。
+   */
+  function exitVirtualBlock(): void {
+    if (!transitionActive.value) return;
+    transitionActive.value = false;
+    transitionPhase.value = 'idle';
+    // 注意：manual exit 不重置 virtualBlockExitedByUser —— 那标志专门表示
+    // 『用户曾主动退出』，让 UI 提示可以右翻回到虚拟块继续等待。
+    // 真正『完成』的路径（_finishTransitionIfReady）会在那时统一清掉该标志。
+    console.info('[VirtualBlock] exit (manual)');
+  }
+
+  /**
+   * 兼容性：旧 API 仍可用，但内部都转到虚拟块语义
+   * @deprecated 优先使用 enterVirtualBlock / exitVirtualBlock
+   */
+  function enterTransition(phase: 'streaming' | 'danmaku' | 'image' = 'streaming'): void {
+    enterVirtualBlock(phase === 'streaming' ? 'navigateBlock' : 'navigateBlock');
+  }
+  /**
+   * @deprecated
+   */
+  function setTransitionPhase(phase: 'streaming' | 'danmaku' | 'image' | 'done'): void {
+    if (transitionActive.value) {
+      transitionPhase.value = phase;
+      console.info('[VirtualBlock] phase=', phase);
+    }
+  }
+  /**
+   * @deprecated
+   */
+  function exitTransition(): void {
+    exitVirtualBlock();
+  }
+  // 供第二 API 调用包一层 try/finally
+  function beginSecondApi(): void {
+    secondApiInflight.value = true;
+  }
+  function endSecondApi(): void {
+    secondApiInflight.value = false;
+  }
+  /**
+   * 跟踪主 API 流式生成是否进行中。
+   * 在 GENERATION_STARTED → GENERATION_ENDED（GENERATION_STOPPED）之间为 true。
+   * 让虚拟块（过场动画）至少能撑到主 API 结束，不会因为 AI 还没开始流式就被 transitionReady
+   * 误判为『已经完成』而立刻退出。
+   */
+  function beginMainApi(): void {
+    mainApiGenerating.value = true;
+  }
+  function endMainApi(): void {
+    mainApiGenerating.value = false;
+  }
+
+  /**
+   * 请求进入虚拟块：
+   *  - 若已在虚拟块中：保持锁，不重复进入
+   *  - 否则直接进入虚拟块（已不依赖 atLastBlock —— 选项/自定义输入能在任意位置触发）
+   *
+   * @param origin 触发来源
+   *   - 'navigateBlock': 用户在末尾点右翻页
+   *   - 'generationEnded': GENERATION_ENDED 事件处理兜底（生成结束 → 进虚拟块）
+   *   - 'option': 选项点击
+   *   - 'custom': 自定义输入触发生成（MESSAGE_SENT）
+   */
+  function requestNextBlockTransition(
+    origin: 'navigateBlock' | 'generationEnded' | 'option' | 'custom' = 'navigateBlock',
+  ): void {
+    if (transitionActive.value) {
+      console.info('[VirtualBlock] request while active, origin=', origin);
+      return;
+    }
+    enterVirtualBlock(origin);
+  }
+
+  // 当过场所需外部资源都完成时，调用 _finishTransitionIfReady。
+  // 之所以 watch 一次而不是在 requestImage / handleImageResponse 里手动调用，
+  // 是为了统一通过 imageGenerating + secondApiInflight 两个 ref 收敛副作用来源。
+  let _transitionWatchInstalled = false;
+  function _installTransitionReadyWatcher(): void {
+    if (_transitionWatchInstalled) return;
+    _transitionWatchInstalled = true;
+    watch(
+      () => (transitionActive.value ? transitionReady.value : null),
+      ready => {
+        if (ready === true) {
+          setTransitionPhase('done');
+          // 给 UI 一帧用于播放"完成"过渡，再解锁
+          setTimeout(() => {
+            if (transitionActive.value) {
+              exitVirtualBlock();
+              // 虚拟块自然完成：清掉『用户曾手动退出』标记，避免 UI 继续显示『继续等待』提示
+              virtualBlockExitedByUser.value = false;
+              // 虚拟块退出后：把光标推到下一真实块（最新楼层解析后的第一个块）。
+              // 此时 dialogues 应已经 appendNewMessage + parseCurrentFloor 完毕，
+              // allBlocksFlat 长度 >= 旧长度；currentBlockFlatIndex 仍指向原真实块
+              // —— 直接把它 +1 即可；若 +1 越界则保持末尾。
+              const flat = allBlocksFlat.value;
+              const cur = currentBlockFlatIndex.value;
+              if (flat.length > cur + 1) {
+                currentBlockFlatIndex.value = cur + 1;
+              }
+            }
+          }, 350);
+        }
+      },
+    );
+  }
+  _installTransitionReadyWatcher();
+
   // --- 重试弹窗状态 ---
   const retryPanelOpen = ref(false);
   // --- 相册弹窗状态 ---
@@ -2839,7 +3482,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
         }
         if (matchedBindingKey) {
           // 确保绑定图在队列中（不在就插入），便于用户手动切换
-          let boundCard = findBoundCardInQueue(matchedBindingKey);
+          const boundCard = findBoundCardInQueue(matchedBindingKey);
           if (!boundCard) {
             insertBindingToQueue(matchedBindingKey);
           }
@@ -2907,8 +3550,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
       const isFirstImage = (imageResponseCounts.get(responseData.id) ?? 0) === 0;
 
       // 检查当前舞台该类型是否已被别的图占据（避免被新生成图顶掉）
-      const stageOccupied =
-        card.type === 'background' ? !!stageBackgroundImage.value : !!stageCgImage.value;
+      const stageOccupied = card.type === 'background' ? !!stageBackgroundImage.value : !!stageCgImage.value;
 
       // 第一张图且开启了自动上舞台：绑定到当前场景并显示到舞台
       // 条件：场景非空 + 当前舞台该类型为空（已被占则不动）
@@ -3144,26 +3786,113 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
     // ========== 按 task 分发构建 ordered_prompts ==========
 
     switch (task) {
-      case 'danmaku':
-      case 'danmakuAndImageGen': {
+      case 'danmaku': {
         const { contentText } = config as DanmakuConfig;
+        // 只注入 linkedFeature='danmaku' 的世界书条目
+        const context = await buildSecondApiContext({
+          includeChatHistory: false,
+          includeWorldbook: true,
+          respectEnabled: false,
+          worldbookFilter: e => {
+            if (e.strategy?.type !== 'constant') return false;
+            const feature = e.linkedFeature;
+            if (feature === 'danmaku') return shouldSendToSecondApi(e);
+            if (feature === 'imageGen' || feature === 'universal' || feature === undefined) {
+              return shouldSendToSecondApi(e);
+            }
+            return false;
+          },
+        });
         const ordered_prompts: OrderedPrompt[] = [
-          { role: 'system', content: task === 'danmaku' ? PROMPT_DANMAKU : PROMPT_DANMAKU_AND_IMAGE },
+          ...context,
+          { role: 'system', content: PROMPT_DANMAKU_HINT },
           { role: 'user', content: contentText },
         ];
         try {
           const raw = await doRequest(ordered_prompts);
-          if (task === 'danmaku') {
-            const lines = raw
-              .split(/\n/)
-              .map(s => s.trim())
-              .filter(Boolean);
-            return lines;
-          }
-          return raw;
+          const lines = raw
+            .split(/\n/)
+            .map(s => s.trim())
+            .filter(Boolean);
+          return lines;
         } catch (e) {
-          console.error('[SecondAPI] danmaku 请求异常:', e);
-          return '';
+          if (e instanceof Error) {
+            (e as any).secondApiTask = task;
+            (e as any).secondApiModel = model;
+            throw e;
+          }
+          throw new Error(`[SecondAPI] ${task} 请求失败：${String(e)}`);
+        }
+      }
+
+      case 'danmakuAndImageGen': {
+        const { contentText } = config as DanmakuAndImageGenConfig;
+        // 注入 linkedFeature='danmaku' 或 'imageGen' 的条目 + 通用条目
+        const allowedFeatures: WorldbookEntryEnhanced['linkedFeature'][] = ['danmaku', 'imageGen'];
+        const context = await buildSecondApiContext({
+          includeChatHistory: false,
+          includeWorldbook: true,
+          respectEnabled: false,
+          worldbookFilter: e => {
+            if (e.strategy?.type !== 'constant') return false;
+            const feature = e.linkedFeature;
+            if (feature === 'danmaku' || feature === 'imageGen') {
+              if (!allowedFeatures.includes(feature)) return false;
+              return shouldSendToSecondApi(e);
+            }
+            return shouldSendToSecondApi(e);
+          },
+        });
+        const ordered_prompts: OrderedPrompt[] = [
+          ...context,
+          { role: 'system', content: PROMPT_DANMAKU_AND_IMAGE_HINT },
+          { role: 'user', content: contentText },
+        ];
+        try {
+          const raw = await doRequest(ordered_prompts);
+          return typeof raw === 'string' ? raw : String(raw ?? '');
+        } catch (e) {
+          if (e instanceof Error) {
+            (e as any).secondApiTask = task;
+            (e as any).secondApiModel = model;
+            throw e;
+          }
+          throw new Error(`[SecondAPI] ${task} 请求失败：${String(e)}`);
+        }
+      }
+
+      case 'imageTagOnly': {
+        const { contentText } = config as ImageTagOnlyConfig;
+        // 只注入 linkedFeature='imageGen' 的条目，不注入弹幕条目
+        const context = await buildSecondApiContext({
+          includeChatHistory: false,
+          includeWorldbook: true,
+          respectEnabled: false,
+          worldbookFilter: e => {
+            if (e.strategy?.type !== 'constant') return false;
+            const feature = e.linkedFeature;
+            if (feature === 'imageGen') return shouldSendToSecondApi(e);
+            if (feature === 'universal' || feature === undefined) return shouldSendToSecondApi(e);
+            // 弹幕条目不注入
+            return false;
+          },
+        });
+        // 复用 PROMPT_DANMAKU_AND_IMAGE_HINT，因为它描述了完整的 <background>/<image>/<cg> 输出规范
+        const ordered_prompts: OrderedPrompt[] = [
+          ...context,
+          { role: 'system', content: PROMPT_DANMAKU_AND_IMAGE_HINT },
+          { role: 'user', content: contentText },
+        ];
+        try {
+          const raw = await doRequest(ordered_prompts);
+          return typeof raw === 'string' ? raw : String(raw ?? '');
+        } catch (e) {
+          if (e instanceof Error) {
+            (e as any).secondApiTask = task;
+            (e as any).secondApiModel = model;
+            throw e;
+          }
+          throw new Error(`[SecondAPI] ${task} 请求失败：${String(e)}`);
         }
       }
 
@@ -3201,7 +3930,11 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
 
       case 'roleProfile': {
         const { systemPrompt } = config as RoleProfileConfig;
-        const context = await buildSecondApiContext({ maxChatHistory: 20 });
+        // roleProfile 任务没有 caller 提供的剧情上下文，必须依赖聊天历史让 LLM 理解当前角色互动
+        const context = await buildSecondApiContext({
+          includeChatHistory: true,
+          maxChatHistory: 20,
+        });
         const ordered_prompts: OrderedPrompt[] = [...context, { role: 'system', content: systemPrompt }];
         try {
           return await doRequest(ordered_prompts);
@@ -3278,7 +4011,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
           const result = await generate({
             user_input: buildDispatchPrompt('', { 区域: '', 遭遇类型: '结算', 奖励: '' }) + '\n\n' + userPrompt,
           });
-          return result;
+          return typeof result === 'string' ? result : '';
         } catch (e) {
           console.error('[SecondAPI] dispatchStory 请求异常:', e);
           return '';
@@ -3394,20 +4127,39 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
    * 手动获取世界书（仅 targetApi='second' 或 'both' 的条目）、角色设定、聊天历史，
    * 避免依赖 generateRaw 无法解析的 PlaceholderPrompt 字符串。
    *
-   * @param options.worldbookFilter - 过滤世界书条目的函数，默认仅包含 targetApi 为 'second' 或 'both' 的条目
+   * 所有世界书条目的过滤都在调用时**临时**决定，不持久化到世界书的 `enabled` 字段。
+   *
+   * @param options.worldbookFilter - 过滤世界书条目的函数，默认按 targetApi 过滤
    * @param options.maxChatHistory - 聊天历史最大条数，默认 20
    * @param options.includeWorldbook - 是否包含世界书，默认 true
    * @param options.includeChatHistory - 是否包含聊天历史，默认 true
+   * @param options.respectEnabled - 是否在 filter 之后额外应用 `e.enabled` 过滤。
+   *   默认 true —— 大多数调用方希望只注入用户手动启用的条目。
+   *   但 danmaku / danmakuAndImageGen 任务传 false —— 因为所有路由决策都在
+   *   调用时临时决定，不依赖条目的 enabled 字段。
    */
   async function buildSecondApiContext(
     options: {
       worldbookFilter?: (entry: WorldbookEntryEnhanced) => boolean;
       maxChatHistory?: number;
       includeWorldbook?: boolean;
+      /**
+       * 是否在 system 段注入聊天历史（最多 maxChatHistory 楼原文）。
+       * 默认 false —— 大多数第二 API 任务（danmaku / danmakuAndImageGen / shop /
+       * boardGameEvent / workshopOrder / system / riddle）已经由 caller 显式提供了
+       * 当次剧情上下文，再注入聊天历史只会带噪音且可能把 <dm> 等内部标签泄漏给第二 API。
+       * 仅 roleProfile 等少数任务需要聊天历史，请显式传 true。
+       */
       includeChatHistory?: boolean;
+      /**
+       * 是否在 worldbookFilter 之后额外应用 `e.enabled` 过滤。默认 true。
+       * 第二 API 任务通常传 false，因为所有路由决策都在调用时临时决定，
+       * 不依赖条目的 enabled 字段。
+       */
+      respectEnabled?: boolean;
     } = {},
   ): Promise<{ role: 'system'; content: string }[]> {
-    const { maxChatHistory = 20, includeWorldbook = true, includeChatHistory = true } = options;
+    const { maxChatHistory = 20, includeWorldbook = true, includeChatHistory = false, respectEnabled = true } = options;
 
     const prompts: { role: 'system'; content: string }[] = [];
 
@@ -3419,9 +4171,20 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
           options.worldbookFilter ??
           (e => {
             const target = e.targetApi ?? 'main';
-            return target === 'second' || target === 'both';
+            if (target !== 'second' && target !== 'both') return false;
+            // 默认过滤：只接受"通用"条目的常亮版本。
+            // - strategy.type === 'constant'：常亮条目（蓝灯），永远激活，可以安全注入
+            // - strategy.type === 'selective' / 'vectorized'：依赖运行时触发判断，
+            //   不应在第二 API 里无脑带进来 —— 调用方必须显式 include 才能带。
+            if (e.strategy?.type !== 'constant') return false;
+            // 有关联任务的条目（danmaku / imageGen）必须由调用方显式 include
+            // —— 否则它们会泄漏到不相关的任务里，污染 prompt。
+            // （这是"任务大于发送许可"的入口保护：默认不允许任务关联条目
+            //   通过未限定的 path 进入任何第二 API 调用。）
+            const feature = e.linkedFeature;
+            return !feature || feature === 'universal';
           });
-        const filtered = entries.filter(filter).filter(e => e.enabled);
+        const filtered = respectEnabled ? entries.filter(filter).filter(e => e.enabled) : entries.filter(filter);
         if (filtered.length > 0) {
           const worldbookText = filtered.map(e => `【${e.name}】\n${e.content}`).join('\n\n');
           prompts.push({ role: 'system', content: worldbookText });
@@ -3481,6 +4244,224 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
     }
   }
 
+  // ====== Manual 第二 API 触发（设置界面用） ======
+
+  /** 手动生成弹幕的运行状态（用于 UI 按钮 loading） */
+  const manualDanmakuRunning = ref(false);
+  /** 手动生成生图 tag 的运行状态 */
+  const manualImageGenRunning = ref(false);
+
+  /**
+   * 从指定楼层的消息中按种类剥离标签块。
+   * 支持三种标签：'dm' | 'image' | 'background'
+   * 'image' 同时匹配 <image> 和 <cg> 标签（按现有 imageGen 系统约定）。
+   *
+   * @returns 剥离是否实际修改了消息内容
+   */
+  async function stripTagsFromLatestMessage(
+    kinds: Array<'dm' | 'image' | 'background'>,
+  ): Promise<{ stripped: boolean; messageId: number; beforeLen: number; afterLen: number }> {
+    const lastId = getLastMessageId();
+    if (typeof lastId !== 'number' || lastId < 0) {
+      showToast('当前没有可用的楼层');
+      return { stripped: false, messageId: -1, beforeLen: 0, afterLen: 0 };
+    }
+    const messages = getChatMessages(lastId);
+    if (messages.length === 0 || messages[0].message_id !== lastId) {
+      showToast('无法读取最新楼层');
+      return { stripped: false, messageId: lastId, beforeLen: 0, afterLen: 0 };
+    }
+    const msg = messages[0];
+    const before = msg.message ?? '';
+    let after = before;
+    if (kinds.includes('dm')) {
+      after = after.replace(/<dm>[\s\S]*?<\/dm>/gi, '');
+    }
+    if (kinds.includes('image')) {
+      // 覆盖 <image> 和 <cg> —— 二者都进入 imageGen 流水线
+      after = after.replace(/<image>[\s\S]*?<\/image>/gi, '');
+      after = after.replace(/<cg>[\s\S]*?<\/cg>/gi, '');
+    }
+    if (kinds.includes('background')) {
+      after = after.replace(/<background>[\s\S]*?<\/background>/gi, '');
+    }
+    // 收缩多余空行（连续 3 个及以上换行折叠成 2 个）
+    after = after.replace(/\n{3,}/g, '\n\n').trimEnd();
+    if (after === before) {
+      return { stripped: false, messageId: lastId, beforeLen: before.length, afterLen: after.length };
+    }
+    await setChatMessages([{ ...msg, message: after }]);
+    return { stripped: true, messageId: lastId, beforeLen: before.length, afterLen: after.length };
+  }
+
+  /**
+   * 手动单独调用第二 API 生成弹幕，写回最新楼层。
+   * 行为特点：
+   *  - 不论 `apiTaskDanmaku` 设置为 'main' / 'disabled' 都会强制走第二 API；
+   *  - 即便最新楼层里已经有 <dm>，也照常覆盖写入（绕过自动管线的「已检测到弹幕就中止」限制）；
+   *  - 用户可在调用前选择是否先剥离已有 <dm>；
+   *  - 写入 <dm> 后立即显示弹幕，并刷新 dialogueUnit 让解析同步。
+   */
+  async function manualGenerateDanmaku(options: { stripExisting?: boolean } = {}): Promise<void> {
+    if (manualDanmakuRunning.value) {
+      showToast('已有弹幕生成任务在进行中');
+      return;
+    }
+    manualDanmakuRunning.value = true;
+    try {
+      const lastId = getLastMessageId();
+      if (typeof lastId !== 'number' || lastId < 0) {
+        showToast('当前没有可用的楼层');
+        return;
+      }
+      // 可选：先剥离已有 <dm>
+      if (options.stripExisting) {
+        const r = await stripTagsFromLatestMessage(['dm']);
+        if (r.stripped) {
+          console.info('[ManualDanmaku] 已剥离旧 <dm>，从', r.beforeLen, '→', r.afterLen);
+          await updateDialogueUnit(lastId);
+        }
+      }
+      const messages = getChatMessages(lastId);
+      if (messages.length === 0 || messages[0].message_id !== lastId) {
+        showToast('无法读取最新楼层');
+        return;
+      }
+      const raw = messages[0].message ?? '';
+      const contentText = extractContentTag(raw);
+      if (!contentText) {
+        showToast('最新楼层缺少 <content> 标签，无法生成弹幕');
+        return;
+      }
+      // 强制走第二 API，绕过 apiTaskDanmaku 配置
+      beginSecondApi();
+      let lines: string[];
+      try {
+        lines = (await callSecondApi({
+          task: 'danmaku',
+          contentText: wrapContentTag(contentText),
+        })) as string[];
+      } finally {
+        endSecondApi();
+      }
+      if (!lines || lines.length === 0) {
+        showToast('第二 API 返回为空，未写入弹幕');
+        return;
+      }
+      // 写回消息末尾 <dm>...</dm>
+      const dmTag = `<dm>${lines.join('|')}</dm>`;
+      const updatedMessage = messages[0].message.replace(/\n*$/, '') + '\n' + dmTag;
+      await setChatMessages([{ ...messages[0], message: updatedMessage }]);
+      displayDanmakuFromMessage(updatedMessage);
+      // 同步刷新界面层的 danmaku 解析缓存
+      await updateDialogueUnit(lastId);
+      showToast(`手动生成弹幕完成：${lines.length} 条`);
+    } catch (e) {
+      const detail = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+      console.error('[ManualDanmaku] 失败:', e);
+      showToast(`手动弹幕失败：${detail}`);
+    } finally {
+      manualDanmakuRunning.value = false;
+    }
+  }
+
+  /**
+   * 手动单独调用第二 API 生成生图 tag，写回最新楼层并立即派发生图。
+   * 行为特点：
+   *  - 不论 `apiTaskImageTag` 设置为 'main' / 'disabled' 都会强制走第二 API；
+   *  - 即便最新楼层里已经有 <background>/<image>/<cg>，也照常覆盖写入（绕开已有的去重跳过）；
+   *  - 用户可在调用前选择是否先剥离已有 image tag；
+   *  - 调用后立即跑 processImageTagBlocks 让界面层接管生图流水线。
+   */
+  async function manualGenerateImageTags(options: { stripExisting?: boolean } = {}): Promise<void> {
+    if (manualImageGenRunning.value) {
+      showToast('已有生图任务在进行中');
+      return;
+    }
+    manualImageGenRunning.value = true;
+    try {
+      const lastId = getLastMessageId();
+      if (typeof lastId !== 'number' || lastId < 0) {
+        showToast('当前没有可用的楼层');
+        return;
+      }
+      // 可选：先剥离已有 <background>/<image>/<cg>
+      if (options.stripExisting) {
+        const r = await stripTagsFromLatestMessage(['image', 'background']);
+        if (r.stripped) {
+          console.info('[ManualImageGen] 已剥离旧 image tag，', r.beforeLen, '→', r.afterLen);
+          await updateDialogueUnit(lastId);
+        }
+      }
+      const messages = getChatMessages(lastId);
+      if (messages.length === 0 || messages[0].message_id !== lastId) {
+        showToast('无法读取最新楼层');
+        return;
+      }
+      const raw = messages[0].message ?? '';
+      const contentText = extractContentTag(raw);
+      if (!contentText) {
+        showToast('最新楼层缺少 <content> 标签，无法生成生图 tag');
+        return;
+      }
+      beginSecondApi();
+      let result: string;
+      try {
+        // 用 imageTagOnly 单独触发生图 tag，不注入弹幕条目
+        result = (await callSecondApi({
+          task: 'imageTagOnly',
+          contentText: wrapContentTag(contentText),
+        })) as string;
+      } finally {
+        endSecondApi();
+      }
+      if (!result || !result.trim()) {
+        showToast('第二 API 返回为空，未写入生图 tag');
+        return;
+      }
+      // 清洗：保留合法的 <dm>/<background>/<image>/<cg>，过滤人话说明、Markdown 等
+      const sanitized = sanitizeSecondApiOutput(result);
+      if (!sanitized) {
+        showToast('清洗后无可用标签，未写入生图 tag');
+        return;
+      }
+      const updatedMessage = messages[0].message.replace(/\n*$/, '') + '\n' + sanitized;
+      await setChatMessages([{ ...messages[0], message: updatedMessage }]);
+      // 立即显示随附的弹幕（如果有）
+      displayDanmakuFromMessage(updatedMessage);
+      // 刷新 dialogueUnit 让界面层重新解析 + 派发生图
+      await updateDialogueUnit(lastId);
+      // updateDialogueUnit 内部只会在 imageTags.length > 0 时自动调 processImageTagBlocks；
+      // 万一还没解析出来（理论上不应该），兜底再发一次：
+      const unit = dialogues.value.find(d => d.messageId === lastId);
+      if (unit && unit.imageTags.length > 0) {
+        await processImageTagBlocks(unit.imageTags);
+      }
+      showToast('手动生成生图 tag 完成');
+    } catch (e) {
+      const detail = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+      console.error('[ManualImageGen] 失败:', e);
+      showToast(`手动生图 tag 失败：${detail}`);
+    } finally {
+      manualImageGenRunning.value = false;
+    }
+  }
+
+  /**
+   * 仅剥离最新楼层的指定标签（不调 API）。
+   * 用户在「调用前选择清空」勾选时，可单独用来预览或重置。
+   */
+  async function manualStripLatestTags(kinds: Array<'dm' | 'image' | 'background'>): Promise<void> {
+    const r = await stripTagsFromLatestMessage(kinds);
+    if (!r.stripped) {
+      showToast('最新楼层中未找到要清除的标签');
+      return;
+    }
+    await updateDialogueUnit(r.messageId);
+    const summary = kinds.join(' / ');
+    showToast(`已清除最新楼层的 ${summary} 标签`);
+  }
+
   // ====== Worldbook Management ======
 
   /** Get all worldbook names associated with current character and chat */
@@ -3521,7 +4502,6 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
             ...entry,
             enabled: entry.enabled,
             targetApi: (entry.extra?.targetApi as 'main' | 'second' | 'both') ?? 'main',
-            autoControl: entry.extra?.autoControl ?? false,
             linkedFeature: entry.extra?.linkedFeature,
             _worldbookName: name,
           });
@@ -3535,7 +4515,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
 
   /** Update worldbook entry enhancement fields */
   async function updateWorldbookEntry(uid: number, worldbookName: string, updates: Partial<WorldbookEntryEnhanced>) {
-    const { targetApi, autoControl, linkedFeature, enabled } = updates;
+    const { targetApi, linkedFeature, enabled } = updates;
     try {
       await updateWorldbookWith(
         worldbookName,
@@ -3544,7 +4524,6 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
             if (e.uid !== uid) return e;
             const extra = { ...e.extra };
             if (targetApi !== undefined) extra.targetApi = targetApi;
-            if (autoControl !== undefined) extra.autoControl = autoControl;
             if (linkedFeature !== undefined) extra.linkedFeature = linkedFeature;
             const result: any = { ...e, extra };
             if (enabled !== undefined) result.enabled = enabled;
@@ -3556,46 +4535,6 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
     } catch (e) {
       console.error('[Worldbook] Failed to update entry:', e);
       showToast('更新失败');
-    }
-  }
-
-  /** Auto-control worldbook entries based on feature toggles */
-  async function updateWorldbookAutoControl() {
-    const names = getAllCurrentWorldbookNames();
-    for (const name of names) {
-      try {
-        const entries = await getWorldbook(name);
-        const hasAutoControl = entries.some(e => e.extra?.autoControl);
-        if (!hasAutoControl) continue;
-        let hasChange = false;
-        await updateWorldbookWith(
-          name,
-          wb =>
-            wb.map(e => {
-              if (!e.extra?.autoControl) return e;
-              let shouldEnable = false;
-              switch (e.extra?.linkedFeature) {
-                case 'danmaku':
-                  shouldEnable = settings.value.danmakuEnabled;
-                  break;
-                case 'imageGen':
-                  shouldEnable = settings.value.imageGenEnabled;
-                  break;
-              }
-              if (e.enabled !== shouldEnable) {
-                hasChange = true;
-                return { ...e, enabled: shouldEnable };
-              }
-              return e;
-            }),
-          { render: 'debounced' },
-        );
-        if (hasChange) {
-          console.info('[Worldbook] Auto-control updated entries in', name);
-        }
-      } catch (e) {
-        console.warn(`[Worldbook] Failed to update auto-control for "${name}":`, e);
-      }
     }
   }
 
@@ -3687,20 +4626,11 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
    * @param key 字段名（如 "剧情文本"），会写到 stat_data[key]
    * @param value 字段值
    */
-  function writeMvuMessageField(
-    messageId: number | 'latest',
-    key: string,
-    value: unknown,
-  ): void {
+  function writeMvuMessageField(messageId: number | 'latest', key: string, value: unknown): void {
     try {
       const vars = getVariables({ type: 'message', message_id: messageId }) || {};
-      const nextVars: Record<string, any> =
-        vars && typeof vars === 'object' && !Array.isArray(vars) ? { ...vars } : {};
-      if (
-        !nextVars.stat_data ||
-        typeof nextVars.stat_data !== 'object' ||
-        Array.isArray(nextVars.stat_data)
-      ) {
+      const nextVars: Record<string, any> = vars && typeof vars === 'object' && !Array.isArray(vars) ? { ...vars } : {};
+      if (!nextVars.stat_data || typeof nextVars.stat_data !== 'object' || Array.isArray(nextVars.stat_data)) {
         nextVars.stat_data = {};
       }
       nextVars.stat_data[key] = value;
@@ -4511,54 +5441,47 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
   }
 
   /**
+   /**
    * 调度循环播放
-   * 使用用户设置的 danmakuLoopDuration（秒）作为循环间隔
-   * 当间隔到达时，检查是否还有弹幕在飞：
-   *  - 如果有，等待最晚的一条飞完再清空（避免裁断）
-   *  - 如果没有，立即清空开始新一轮
+   * 使用用户设置的 danmakuLoopDuration（秒）作为循环间隔。
+   * - 一轮循环时长到点时，直接清空当前在飞的弹幕，开始新一轮。
+   * - 这样循环节奏严格跟用户设置对齐，不会因为慢速弹幕自然拖长等待时间。
+   *
+   * 重要：循环本身也走这条函数重新调度，确保只有 1 个活跃定时器。
    */
   function scheduleDanmakuLoop(texts: string[], trackCount: number) {
     if (!settings.value.danmakuLoop || !settings.value.danmakuEnabled) return;
     if (danmakuLoopTimer) return;
 
-    // 优先使用用户设置的循环时长（秒 -> 毫秒）
+    // 用户设置的循环时长（秒 -> 毫秒），叠加 ±15% 抖动避免节奏感过死板
     const baseDelayMs = (settings.value.danmakuLoopDuration || 10) * 1000;
     const jitter = 0.85 + Math.random() * 0.3;
     const loopDelay = baseDelayMs * jitter;
+
+    const startNewRound = () => {
+      // 防御：循环期间可能被关闭 / 切楼层 / 重新 pushDanmaku，
+      // 这些路径都会 clearTimeout 当前定时器并重置 danmakuLoopTimer。
+      if (!settings.value.danmakuLoop || !settings.value.danmakuEnabled) return;
+      if (danmakuItems.value.length > 0) {
+        // 已被另一轮抢占（例如 pushDanmaku 已重新启动），不再插入重复弹幕
+        return;
+      }
+      const shuffledTexts = shuffleArray(texts);
+      scheduleDanmakuBatch(shuffledTexts, trackCount);
+      // 启动下一轮循环
+      scheduleDanmakuLoop(shuffledTexts, trackCount);
+    };
 
     danmakuLoopTimer = setTimeout(() => {
       danmakuLoopTimer = null;
       if (!settings.value.danmakuLoop || !settings.value.danmakuEnabled) return;
 
-      // 计算"等待剩余弹幕飞完"的时间
-      // 每条弹幕有一个 duration（ms），记录它创建时间
-      // 但我们没有存 spawnTime，所以用 duration 的最大值近似估算剩余时间
-      let maxRemaining = 0;
-      const now = Date.now();
-      for (const item of danmakuItems.value) {
-        // 粗略估算：剩余时间 ≈ duration × 0.7（已经飞过约 30%）
-        // 没有更精确的方式但足够避免粗暴裁断
-        const remaining = Math.max(0, (item.duration || 0) * 0.7);
-        if (remaining > maxRemaining) maxRemaining = remaining;
-      }
-
-      // 用户设置的循环时长即新一轮开始的"最早"时间；
-      // 如果有弹幕在飞，则延后到所有弹幕飞完
-      const startNewRound = () => {
-        danmakuItems.value = [];
-        initTracks();
-        const shuffledTexts = shuffleArray(texts);
-        scheduleDanmakuBatch(shuffledTexts, trackCount);
-        scheduleDanmakuLoop(shuffledTexts, trackCount);
-      };
-
-      if (maxRemaining > 1000) {
-        // 还有弹幕在飞：延后到飞完再清空
-        setTimeout(startNewRound, maxRemaining);
-      } else {
-        // 没有弹幕在飞（或剩余 < 1 秒）：立即开始新一轮
-        startNewRound();
-      }
+      // 到点直接清空 + 开新一轮。
+      // 不再"等剩余弹幕飞完"——如果用户把循环时长设得比单条飞行时间还短，
+      //   等待逻辑会让循环永远卡在前一轮里，导致"循环莫名其妙开始不了 / 间隔很长"。
+      danmakuItems.value = [];
+      initTracks();
+      startNewRound();
     }, loopDelay);
   }
 
@@ -4771,8 +5694,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
       // 1) 优先把光标定位到「玩家当前正在观看的楼层」；找不到（如还没初始化）则用最新的可见楼层。
       // 2) 预解析当前楼层附近的 ±2 层，避免面板打开时出现「暂无对话记录」的空白闪烁。
       const fallbackDisplayIdx = Math.max(0, visibleFloorIndices.value.length - 1);
-      const startDisplayIdx =
-        currentDisplayFloorIndex.value >= 0 ? currentDisplayFloorIndex.value : fallbackDisplayIdx;
+      const startDisplayIdx = currentDisplayFloorIndex.value >= 0 ? currentDisplayFloorIndex.value : fallbackDisplayIdx;
       enterHistoryBrowse(startDisplayIdx);
 
       const previewPhysical = displayToPhysicalIndex(startDisplayIdx);
@@ -4807,6 +5729,35 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
     tempOptions.value = []; // Clear temp options when clearing choices
   }
 
+  /**
+   * 模式感知的 getter：返回指定模式下立绘的"大小/水平/垂直"参数。
+   * 调用方只需传 isPortraitMode（当前是否竖屏），无需关心后端字段命名。
+   */
+  function getPortraitScale(isPortrait: boolean): number {
+    return isPortrait ? settings.value.portraitScalePortrait : settings.value.portraitScaleLandscape;
+  }
+  function getPortraitX(isPortrait: boolean): number {
+    return isPortrait ? settings.value.portraitXPortrait : settings.value.portraitXLandscape;
+  }
+  function getPortraitY(isPortrait: boolean): number {
+    return isPortrait ? settings.value.portraitYPortrait : settings.value.portraitYLandscape;
+  }
+
+  /**
+   * 模式感知的 setter：写入指定模式下的立绘参数。
+   * - isPortrait = true  → portraitScalePortrait / portraitXPortrait / portraitYPortrait
+   * - isPortrait = false → portraitScaleLandscape / portraitXLandscape / portraitYLandscape
+   * 调用方传 { scale, x, y } 中需要的字段即可，未传的字段不动。
+   */
+  function setPortraitSettings(isPortrait: boolean, partial: { scale?: number; x?: number; y?: number }) {
+    const suffix = isPortrait ? 'Portrait' : 'Landscape';
+    const patch: Record<string, number> = {};
+    if (typeof partial.scale === 'number') patch[`portraitScale${suffix}`] = partial.scale;
+    if (typeof partial.x === 'number') patch[`portraitX${suffix}`] = partial.x;
+    if (typeof partial.y === 'number') patch[`portraitY${suffix}`] = partial.y;
+    if (Object.keys(patch).length > 0) updateSettings(patch);
+  }
+
   function updateSettings(partial: Partial<z.infer<typeof VNSettings>>) {
     vnLog.info('action', 'updateSettings', { keys: Object.keys(partial) });
     Object.assign(settings.value, partial);
@@ -4819,6 +5770,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
       'danmakuColor',
       'danmakuFontSize',
       'danmakuOpacity',
+      'danmakuTopOffset',
     ];
     if (Object.keys(partial).some(key => danmakuSettings.includes(key))) {
       notifyDanmakuSettingsChanged();
@@ -4894,11 +5846,40 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
     callSecondApi,
     buildSecondApiContext,
     triggerDanmakuForMessage,
+    // Manual 第二 API 触发（设置界面用）
+    manualDanmakuRunning,
+    manualImageGenRunning,
+    manualGenerateDanmaku,
+    manualGenerateImageTags,
+    manualStripLatestTags,
     imageApiStatus,
     stageBackgroundImage,
     stageCgImage,
     imageGenerating,
     imageCardQueue,
+    // 过场系统（虚拟块）
+    atLastBlock,
+    transitionActive,
+    transitionPhase,
+    transitionReady,
+    secondApiInflight,
+    mainApiGenerating,
+    // 虚拟块语义别名（推荐使用）
+    virtualBlockActive,
+    virtualBlockPhase,
+    virtualBlockExitedByUser,
+    isFirstBlock,
+    isLastBlock,
+    enterVirtualBlock,
+    exitVirtualBlock,
+    enterTransition,
+    setTransitionPhase,
+    exitTransition,
+    beginSecondApi,
+    endSecondApi,
+    beginMainApi,
+    endMainApi,
+    requestNextBlockTransition,
     setupImageGenListener,
     requestBackgroundImage,
     requestCgImage,
@@ -5075,13 +6056,18 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
     updateSettings,
     updateUserCharacter,
     showToast,
+    // 模式感知 (竖屏/横屏) 的立绘参数 getter/setter
+    getPortraitScale,
+    getPortraitX,
+    getPortraitY,
+    setPortraitSettings,
     // Second API generations
     secondApiGenerations,
     // Worldbook management
     getAllCurrentWorldbookNames,
     getEnhancedWorldbook,
     updateWorldbookEntry,
-    updateWorldbookAutoControl,
+    applyMainApiWorldbookFilter,
     // Character system
     roleMaxId,
     roles,

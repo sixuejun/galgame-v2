@@ -19,11 +19,11 @@
       <template v-if="useTwoColumn">
         <div class="choice-grid" :style="choiceGridStyle">
           <!-- Left column: items at indices 0, 2, 4 -->
-          <div class="choice-two-col flex flex-1 flex-col" :style="{ gap: 'var(--theme-choice-list-gap, 0.5rem)' }">
+          <div class="choice-two-col" :style="{ gap: 'var(--theme-choice-list-gap, 0.5rem)' }">
             <div
               v-for="choice in leftColumnChoices"
               :key="choice.choiceId"
-              class="choice-btn-shell w-full"
+              class="choice-btn-shell"
               :class="{ 'is-hovered': isHovered(choice.choiceId), 'is-selected': isSelected(choice.choiceId) }"
               @mouseenter="hoveredChoiceId = choice.choiceId"
               @mouseleave="hoveredChoiceId = null"
@@ -52,11 +52,11 @@
           </div>
 
           <!-- Right column: items at indices 1, 3, 5 -->
-          <div class="choice-two-col flex flex-1 flex-col" :style="{ gap: 'var(--theme-choice-list-gap, 0.5rem)' }">
+          <div class="choice-two-col" :style="{ gap: 'var(--theme-choice-list-gap, 0.5rem)' }">
             <div
               v-for="choice in rightColumnChoices"
               :key="choice.choiceId"
-              class="choice-btn-shell w-full"
+              class="choice-btn-shell"
               :class="{ 'is-hovered': isHovered(choice.choiceId), 'is-selected': isSelected(choice.choiceId) }"
               @mouseenter="hoveredChoiceId = choice.choiceId"
               @mouseleave="hoveredChoiceId = null"
@@ -90,12 +90,12 @@
       <template v-else>
         <div
           class="choice-list"
-          :style="{ display: 'flex', flexDirection: 'column', gap: 'var(--theme-choice-list-gap, 0.5rem)' }"
+          :style="singleColumnStyle"
         >
           <div
             v-for="(choice, index) in choices"
             :key="choice.choiceId"
-            class="choice-btn-shell choice-item w-full"
+            class="choice-btn-shell choice-item"
             :class="{ 'is-hovered': isHovered(choice.choiceId), 'is-selected': isSelected(choice.choiceId) }"
             @mouseenter="hoveredChoiceId = choice.choiceId"
             @mouseleave="hoveredChoiceId = null"
@@ -149,9 +149,7 @@ const choiceButtonSkin = computed(() => store.getComponentSkinForCurrent('choice
 
 const choicePanelListStyle = computed(() => ({
   left: 'var(--theme-choice-left, 50%)',
-  bottom: store.settings.portraitMode
-    ? 'var(--theme-choice-bottom-portrait, 8rem)'
-    : 'var(--theme-choice-bottom, 11rem)',
+  bottom: 'var(--theme-choice-bottom, 11rem)',
   width: 'var(--theme-choice-width, 100%)',
   maxWidth: useTwoColumn.value
     ? 'var(--theme-choice-two-col-max-width, 64rem)'
@@ -172,7 +170,17 @@ const choiceGridStyle = {
   width: '100%',
 };
 
-const useTwoColumn = computed(() => props.choices.length >= 4);
+// 确保单列布局与双列布局中选项按钮的样式一致
+const singleColumnStyle = computed(() => ({
+  display: 'flex' as const,
+  flexDirection: 'column' as const,
+  gap: 'var(--theme-choice-list-gap, 0.5rem)',
+  width: '100%',
+}));
+
+// Two-column layout only when there are >=4 choices AND the screen is in landscape
+// (portrait screens are narrow — single-column vertical stacking reads better there)
+const useTwoColumn = computed(() => !store.settings.portraitMode && props.choices.length >= 4);
 const displayChoices = computed(() => props.choices.slice(0, 6));
 
 const leftColumnChoices = computed(() =>
@@ -206,6 +214,8 @@ function handleSelect(choiceId: string) {
     submitTimeout = setTimeout(() => {
       store.lockChoice();
       const text = choice.text;
+      // 进入虚拟块（选项触发）—— 在消息真正发出之前锁定视觉状态
+      store.requestNextBlockTransition('option');
       setTimeout(() => {
         emit('choiceSubmitted', choiceId, text);
         store.clearChoices();
@@ -236,6 +246,9 @@ function handleCustomSubmit() {
     submitTimeout = null;
   }
 
+  // 进入虚拟块（自定义输入触发）
+  store.requestNextBlockTransition('option');
+
   emit('choiceSubmitted', selectedId, text);
   store.clearChoices();
   store.customInputText = '';
@@ -249,6 +262,8 @@ onBeforeUnmount(() => {
 <style scoped>
 /* Non-PNG theme choice button: CSS fallback background/border/shadow */
 .choice-btn-shell {
+  width: 100%;
+  min-height: var(--theme-choice-btn-min-height, 3rem);
   background: var(--theme-choice-btn-bg, var(--vn-choice-bg, rgba(42, 36, 32, 0.65)));
   border: 1px solid var(--theme-choice-btn-border, var(--vn-border, transparent));
   box-shadow: var(--theme-choice-btn-shadow, none);
@@ -269,5 +284,30 @@ onBeforeUnmount(() => {
   background: var(--theme-choice-btn-selected-bg, transparent);
   border-color: var(--theme-choice-btn-selected-border, transparent);
   box-shadow: var(--theme-choice-btn-selected-shadow, none);
+}
+
+/* 单列布局容器 */
+.choice-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--theme-choice-list-gap, 0.5rem);
+  width: 100%;
+}
+
+/* 两列布局容器样式 */
+.choice-two-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--theme-choice-list-gap, 0.5rem);
+  min-width: 0;
+}
+
+/* 统一网格布局样式 */
+.choice-grid {
+  display: flex;
+  flex-direction: row;
+  gap: var(--theme-choice-list-gap, 0.5rem);
+  width: 100%;
 }
 </style>

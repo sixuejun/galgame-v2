@@ -56,28 +56,28 @@
           <SectionHeader icon="fa-user" title="立绘设置" />
           <div class="mb-6 pl-2">
             <SliderRow
-              label="立绘大小"
-              :value="store.settings.portraitScale"
+              :label="isPortraitMode ? '立绘大小 (竖屏)' : '立绘大小 (横屏)'"
+              :value="store.getPortraitScale(isPortraitMode)"
               :min="10"
-              :max="200"
+              :max="isPortraitMode ? 600 : 200"
               suffix="%"
-              @update="v => store.updateSettings({ portraitScale: v })"
+              @update="v => store.setPortraitSettings(isPortraitMode, { scale: v })"
             />
             <SliderRow
-              label="水平位置"
-              :value="store.settings.portraitX"
+              :label="isPortraitMode ? '水平位置 (竖屏)' : '水平位置 (横屏)'"
+              :value="store.getPortraitX(isPortraitMode)"
               :min="-50"
               :max="50"
               suffix="%"
-              @update="v => store.updateSettings({ portraitX: v })"
+              @update="v => store.setPortraitSettings(isPortraitMode, { x: v })"
             />
             <SliderRow
-              label="垂直位置"
-              :value="store.settings.portraitY"
-              :min="-50"
-              :max="50"
+              :label="isPortraitMode ? '垂直位置 (竖屏)' : '垂直位置 (横屏)'"
+              :value="store.getPortraitY(isPortraitMode)"
+              :min="isPortraitMode ? -200 : -50"
+              :max="isPortraitMode ? 200 : 50"
               suffix="%"
-              @update="v => store.updateSettings({ portraitY: v })"
+              @update="v => store.setPortraitSettings(isPortraitMode, { y: v })"
             />
             <div class="flex items-center justify-between py-2">
               <div>
@@ -85,7 +85,7 @@
                   >旁白继承立绘</span
                 >
                 <p style="font-size: 10px; color: var(--theme-text-muted, var(--vn-muted)); margin-top: 2px">
-                  旁白块显示上一个角色的立绘（如角色与旁白穿插时保持立绘不消失）
+                  角色与旁白穿插时保持立绘不消失
                 </p>
               </div>
               <ToggleSwitch
@@ -215,7 +215,19 @@
                 suffix=""
                 @update="v => store.updateSettings({ danmakuOpacity: v })"
               />
-              <div class="flex items-center justify-center pt-2 text-xs opacity-60" style="color: var(--theme-text-soft, rgba(212,197,160,0.7))">
+              <SliderRow
+                label="顶部偏移 (rem)"
+                :value="store.settings.danmakuTopOffset ?? 10"
+                :min="0"
+                :max="30"
+                :step="0.5"
+                suffix="rem"
+                @update="v => store.updateSettings({ danmakuTopOffset: v })"
+              />
+              <div
+                class="flex items-center justify-center pt-2 text-xs opacity-60"
+                style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.7))"
+              >
                 设置已实时生效，无需手动保存
               </div>
             </template>
@@ -227,15 +239,17 @@
             <div class="flex items-center justify-between py-2">
               <div>
                 <span class="text-xs" style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.7))">竖屏模式</span>
-                <p style="font-size: 10px; color: var(--theme-text-muted, var(--vn-muted)); margin-top: 2px">
-                  画面宽度铺满楼层，高度随宽度按竖屏比例增高（适配 iframe，不使用视口高度单位）
-                </p>
+                <p style="font-size: 10px; color: var(--theme-text-muted, var(--vn-muted)); margin-top: 2px"></p>
               </div>
               <ToggleSwitch
                 :checked="store.settings.portraitMode"
                 @update="v => store.updateSettings({ portraitMode: v })"
               />
             </div>
+            <!-- "固定对话框高度"开关已迁移到 CSS 变量 --theme-dialogue-fixed-height：
+                 在自定义 CSS 中设为 1 启用（默认，max-height 限高 + 滚动），
+                 设为 0 关闭（文本自由撑开）。不再在设置面板中暴露。
+            -->
           </div>
 
           <!-- API Configuration -->
@@ -268,7 +282,7 @@
                 :value="store.settings.secondApiKey"
                 @input="store.updateSettings({ secondApiKey: ($event.target as HTMLInputElement).value })"
               />
-              <div class="mb-3 flex gap-2">
+              <div class="mb-3 flex flex-col sm:flex-row gap-2">
                 <select
                   class="vn-input flex-1 text-xs"
                   :value="store.settings.secondApiModel"
@@ -299,8 +313,9 @@
                   {{ store.secondApiModelListLoading ? '…' : '拉取模型' }}
                 </button>
               </div>
-              <div class="mb-3 flex items-center justify-between gap-3">
-                <div class="flex items-center gap-2">
+              <div class="mb-3 flex flex-col sm:flex-row sm:items-center justify-end sm:justify-between gap-2 sm:gap-3">
+                <!-- 流式开关在竖屏时独占一行靠左，桌面时靠左 -->
+                <div class="flex items-center gap-2 order-2 sm:order-1">
                   <span class="shrink-0 text-xs" style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.7))"
                     >流式</span
                   >
@@ -310,7 +325,7 @@
                   />
                 </div>
                 <button
-                  class="flex shrink-0 cursor-pointer items-center gap-1.5 border px-2.5 py-1 text-xs transition-all"
+                  class="flex shrink-0 cursor-pointer items-center gap-1.5 border px-2.5 py-1 text-xs transition-all order-1 sm:order-2"
                   :style="{
                     borderColor: canTestSecondApi ? 'var(--theme-accent, var(--rust))' : 'rgba(90,79,64,0.2)',
                     color: canTestSecondApi
@@ -332,8 +347,10 @@
               <div class="mb-3 pt-2" style="border-top: 1px solid rgba(90, 79, 64, 0.2)">
                 <p class="mb-2 text-xs" style="color: var(--theme-text-muted, var(--vn-muted))">生成参数</p>
                 <div class="flex flex-col gap-1">
-                  <div class="flex items-center gap-4 py-2">
-                    <span class="w-20 shrink-0 text-xs" style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.7))"
+                  <div class="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4 py-2">
+                    <span
+                      class="text-xs sm:w-20 shrink-0"
+                      style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.7))"
                       >最大回复长度</span
                     >
                     <input
@@ -408,6 +425,118 @@
                   世界书管理
                 </button>
               </div>
+
+              <!-- 手动调用第二 API（绕过自动管线限制） -->
+              <div class="mt-3 pt-3" style="border-top: 1px solid rgba(90, 79, 64, 0.2)">
+                <div class="mb-2 flex items-center gap-2">
+                  <i class="fa-solid fa-bolt" style="font-size: 0.75rem; color: var(--theme-accent, var(--rust))" />
+                  <span class="text-xs font-bold" style="color: var(--theme-text-main, rgba(212, 197, 160, 0.9))"
+                    >手动调用第二 API</span
+                  >
+                  <span
+                    class="rounded px-1.5 py-0.5 text-[9px] tracking-[0.12em]"
+                    style="color: var(--theme-accent, var(--rust)); background: rgba(139, 69, 19, 0.08)"
+                    >绕过自动限制</span
+                  >
+                </div>
+                <p style="font-size: 10px; color: var(--theme-text-muted, var(--vn-muted)); margin-bottom: 8px">
+                  强制走第二 API，不受「弹幕已存在则跳过」等自动管线限制影响； 即使 apiTaskDanmaku/apiTaskImageTag
+                  被关闭或被路由到主 API，也能调一次。
+                </p>
+
+                <!-- 弹幕 -->
+                <div
+                  class="mb-2 rounded border p-2"
+                  style="border-color: rgba(90, 79, 64, 0.25); background: rgba(42, 36, 32, 0.25)"
+                >
+                  <div class="mb-2 flex items-center justify-between">
+                    <span class="text-xs" style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.7))"
+                      ><i class="fa-solid fa-comment-dots mr-1.5" />手动生成弹幕</span
+                    >
+                  </div>
+                  <label class="mb-2 flex cursor-pointer items-center gap-2 py-1">
+                    <input
+                      type="checkbox"
+                      v-model="manualDanmakuStripExisting"
+                      class="cursor-pointer"
+                      style="accent-color: var(--theme-accent, var(--rust))"
+                    />
+                    <span class="text-[11px]" style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.7))"
+                      >生成前先剥离本次 &lt;dm&gt; 标签</span
+                    >
+                  </label>
+                  <button
+                    class="w-full cursor-pointer border px-3 py-2 text-xs transition-all"
+                    :style="{
+                      borderColor: 'rgba(90,79,64,0.4)',
+                      background: store.manualDanmakuRunning ? 'rgba(139,69,19,0.08)' : 'transparent',
+                      color:
+                        store.manualDanmakuRunning || !canManualSecondApi
+                          ? 'var(--theme-text-muted, var(--vn-muted))'
+                          : 'var(--theme-text-main, rgba(212,197,160,0.9))',
+                      borderRadius: '2px',
+                      opacity: store.manualDanmakuRunning || !canManualSecondApi ? 0.5 : 1,
+                    }"
+                    :disabled="store.manualDanmakuRunning || !canManualSecondApi"
+                    @click="onManualDanmaku"
+                  >
+                    <i
+                      :class="store.manualDanmakuRunning ? 'fa-solid fa-spinner fa-spin mr-2' : 'fa-solid fa-play mr-2'"
+                      style="font-size: 0.7rem"
+                    />
+                    {{ store.manualDanmakuRunning ? '生成中…' : '立即生成弹幕' }}
+                  </button>
+                </div>
+
+                <!-- 生图 tag -->
+                <div
+                  class="rounded border p-2"
+                  style="border-color: rgba(90, 79, 64, 0.25); background: rgba(42, 36, 32, 0.25)"
+                >
+                  <div class="mb-2 flex items-center justify-between">
+                    <span class="text-xs" style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.7))"
+                      ><i class="fa-solid fa-image mr-1.5" />手动生成生图 tag</span
+                    >
+                  </div>
+                  <label class="mb-2 flex cursor-pointer items-center gap-2 py-1">
+                    <input
+                      type="checkbox"
+                      v-model="manualImageStripExisting"
+                      class="cursor-pointer"
+                      style="accent-color: var(--theme-accent, var(--rust))"
+                    />
+                    <span class="text-[11px]" style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.7))"
+                      >生成前先剥离本次生图标签（&lt;background&gt; / &lt;image&gt; / &lt;cg&gt;）</span
+                    >
+                  </label>
+                  <button
+                    class="w-full cursor-pointer border px-3 py-2 text-xs transition-all"
+                    :style="{
+                      borderColor: 'rgba(90,79,64,0.4)',
+                      background: store.manualImageGenRunning ? 'rgba(139,69,19,0.08)' : 'transparent',
+                      color:
+                        store.manualImageGenRunning || !canManualSecondApi
+                          ? 'var(--theme-text-muted, var(--vn-muted))'
+                          : 'var(--theme-text-main, rgba(212,197,160,0.9))',
+                      borderRadius: '2px',
+                      opacity: store.manualImageGenRunning || !canManualSecondApi ? 0.5 : 1,
+                    }"
+                    :disabled="store.manualImageGenRunning || !canManualSecondApi"
+                    @click="onManualImageGen"
+                  >
+                    <i
+                      :class="
+                        store.manualImageGenRunning ? 'fa-solid fa-spinner fa-spin mr-2' : 'fa-solid fa-play mr-2'
+                      "
+                      style="font-size: 0.7rem"
+                    />
+                    {{ store.manualImageGenRunning ? '生成中…' : '立即生成生图 tag' }}
+                  </button>
+                  <p style="font-size: 9px; color: var(--theme-text-muted, var(--vn-muted)); margin-top: 6px">
+                    仅当同时打开「生图总开关」时，生成的 tag 才会实际派发生图； 若未开总开关，仅写入标签文本到楼层末尾。
+                  </p>
+                </div>
+              </div>
             </div>
 
             <!-- 生图（前端助手事件，需安装支持生图事件的插件） -->
@@ -456,7 +585,9 @@
                   />
                 </div>
                 <div class="flex items-center justify-between py-2">
-                  <span class="text-xs" style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.7))">自动上舞台</span>
+                  <span class="text-xs" style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.7))"
+                    >自动上舞台</span
+                  >
                   <ToggleSwitch
                     :checked="store.settings.autoStageGeneratedImage"
                     @update="v => store.updateSettings({ autoStageGeneratedImage: v })"
@@ -470,8 +601,9 @@
                     margin-bottom: 8px;
                   "
                 >
-                  打开后自动启用对应世界书条目。同时打开背景与 CG 时，将根据消息内容判断生成类型，并显示扇形卡牌队列。<br />
-                  <span style="color: var(--theme-accent, var(--rust))">自动上舞台</span>：开启后，生成的第一张图片会自动绑定到当前场景并显示到舞台，第二张入队列待选。
+                  <br />
+                  <span style="color: var(--theme-accent, var(--rust))">自动上舞台</span
+                  >：开启后，生成的第一张图片会自动绑定到当前场景并显示到舞台，第二张入队列待选。
                 </p>
                 <div v-if="store.settings.backgroundGenEnabled && store.settings.cgGenEnabled" class="py-2">
                   <span class="mb-2 block text-xs" style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.7))">
@@ -555,7 +687,7 @@
               <span class="mb-2 block text-xs font-bold" style="color: var(--theme-text-main, rgba(212, 197, 160, 0.9))"
                 >主题</span
               >
-              <div class="grid grid-cols-2 gap-2">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <button
                   v-for="theme in themeList"
                   :key="theme.id"
@@ -619,12 +751,13 @@
                 class="mb-3 rounded border p-3"
                 style="border-color: rgba(90, 79, 64, 0.25); background: rgba(42, 36, 32, 0.2)"
               >
-                <div class="mb-2 flex items-start justify-between gap-3">
+                <div class="mb-2 flex flex-col sm:flex-row sm:items-start justify-between gap-3">
                   <div>
                     <span class="text-xs font-bold" style="color: rgba(212, 197, 160, 0.88)">自定义 CSS</span>
                     <p class="mt-1 text-[11px] leading-5" style="color: var(--theme-text-muted, var(--vn-muted))"></p>
                   </div>
-                  <div class="flex items-center gap-1.5">
+                  <!-- 竖屏: 按钮另起一行横向排列并换行；桌面: 紧靠右侧 -->
+                  <div class="flex flex-wrap items-center gap-1.5 sm:self-start">
                     <button
                       class="flex h-8 w-8 cursor-pointer items-center justify-center border transition-all"
                       :style="actionIconStyle"
@@ -766,14 +899,19 @@
 </template>
 
 <script setup lang="ts">
+import { useVNStore } from '../../store';
+import { getThemeList } from '../../themes';
 import ApiTaskConfigPanel from '../common/ApiTaskConfigPanel.vue';
 import SectionHeader from '../common/SectionHeader.vue';
 import SkinShell from '../common/SkinShell.vue';
 import SliderRow from '../common/SliderRow.vue';
-import { useVNStore } from '../../store';
-import { getThemeList } from '../../themes';
 import ToggleSwitch from '../common/ToggleSwitch.vue';
 import WorldbookManagerPanel from './WorldbookManagerPanel.vue';
+
+/** 当前是否竖屏（由父组件传入）。
+ *  决定"立绘设置"区读/写哪个版本的字段（横屏/竖屏各自独立）。 */
+const props = withDefaults(defineProps<{ isPortraitMode?: boolean }>(), { isPortraitMode: false });
+const isPortraitMode = computed(() => !!props.isPortraitMode);
 
 const store = useVNStore();
 
@@ -795,6 +933,30 @@ const showApiTaskConfig = ref(false);
 const showWorldbookManager = ref(false);
 const themeFileInput = ref<HTMLInputElement | null>(null);
 const themeCssInput = ref<HTMLTextAreaElement | null>(null);
+
+// 手动调用第二 API（弹幕 / 生图）的选项
+const manualDanmakuStripExisting = ref(false);
+const manualImageStripExisting = ref(false);
+
+// 只有 URL + Key + Model 全部填好才允许手动调用 —— 否则 toast 已在 callSecondApi 里给出
+const canManualSecondApi = computed(
+  () =>
+    !!(
+      store.settings.secondApiUrl?.trim() &&
+      store.settings.secondApiKey?.trim() &&
+      store.settings.secondApiModel?.trim()
+    ),
+);
+
+async function onManualDanmaku() {
+  if (store.manualDanmakuRunning) return;
+  await store.manualGenerateDanmaku({ stripExisting: manualDanmakuStripExisting.value });
+}
+
+async function onManualImageGen() {
+  if (store.manualImageGenRunning) return;
+  await store.manualGenerateImageTags({ stripExisting: manualImageStripExisting.value });
+}
 
 const actionIconStyle = {
   borderColor: 'rgba(90,79,64,0.42)',
