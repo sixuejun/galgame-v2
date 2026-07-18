@@ -888,7 +888,7 @@ import WorldbookManagerPanel from './WorldbookManagerPanel.vue';
 /** 当前是否竖屏（由父组件传入）。
  *  决定"立绘设置"区读/写哪个版本的字段（横屏/竖屏各自独立）。 */
 const props = withDefaults(defineProps<{ isPortraitMode?: boolean }>(), { isPortraitMode: false });
-const isPortraitMode = computed(() => !!props.isPortraitMode);
+const isPortraitMode = computed(() => store.settings.portraitMode);
 
 const store = useVNStore();
 

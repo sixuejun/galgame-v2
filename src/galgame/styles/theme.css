@@ -471,7 +471,10 @@ select option {
   --theme-choice-bottom: var(--theme-choice-bottom-portrait, 8rem);
 
   /* 头像壳位置：竖屏用 -portrait 版本 */
-  --theme-dialogue-portrait-left: var(--theme-dialogue-portrait-left-portrait, var(--theme-dialogue-portrait-left, 0.75rem));
+  --theme-dialogue-portrait-left: var(
+    --theme-dialogue-portrait-left-portrait,
+    var(--theme-dialogue-portrait-left, 0.75rem)
+  );
   --theme-dialogue-portrait-bottom: var(--theme-dialogue-portrait-bottom-portrait, calc(16vmin + 3vmin));
 
   /* 对话框最小高度：竖屏用 -portrait 版本 */

@@ -1,26 +1,720 @@
-{
-  "type": "script",
-  "enabled": true,
-  "name": "限制消息加载",
-  "id": "limit-messages-script-0001",
-  "content": "(function() {\n    'use strict';\n\n    // ==========================================\n    // 配置\n    // ==========================================\n\n    var CONFIG = {\n        STORAGE_KEY: 'limit_messages_settings',\n        DEBUG: true,\n    };\n\n    // 顶层文档（脚本可能运行在 srcdoc 嵌套 iframe 中，面板必须挂到顶层）\n    var topDoc = (function() {\n        try {\n            if (window.top && window.top.document) return window.top.document;\n        } catch (e) {}\n        try {\n            if (window.parent && window.parent.document && window.parent !== window) return window.parent.document;\n        } catch (e) {}\n        return document;\n    })();\n    var topWin = (function() {\n        try {\n            if (window.top && window.top.document) return window.top;\n        } catch (e) {}\n        try {\n            if (window.parent && window.parent.document && window.parent !== window) return window.parent;\n        } catch (e) {}\n        return window;\n    })();\n\n    // ==========================================\n    // 日志\n    // ==========================================\n\n    function log(level, message, data) {\n        if (!CONFIG.DEBUG && level !== 'ERROR') return;\n        var prefix = '[限制消息][' + level + ']';\n        if (level === 'ERROR') console.error(prefix, message, data || '');\n        else if (level === 'WARN') console.warn(prefix, message, data || '');\n        else console.log(prefix, message, data || '');\n    }\n\n    // ==========================================\n    // 工具\n    // ==========================================\n\n    function getSettings() {\n        var defaults = {\n            enabled: false,\n            preserveZeroFloor: true,\n            loadCount: 20,\n        };\n        try {\n            var raw = topWin.localStorage.getItem(CONFIG.STORAGE_KEY);\n            if (raw) {\n                var parsed = JSON.parse(raw);\n                return Object.assign({}, defaults, parsed);\n            }\n        } catch (e) {\n            log('ERROR', '读取设置失败', e.message);\n        }\n        return Object.assign({}, defaults);\n    }\n\n    function saveSettings(settings) {\n        try {\n            topWin.localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(settings));\n        } catch (e) {\n            log('ERROR', '保存设置失败', e.message);\n        }\n    }\n\n    // 获取顶层页面上所有 .mes[mesid] 元素，按 mesid 升序排列\n    function getChatMesElements() {\n        try {\n            var nodes = topDoc.querySelectorAll('.mes[mesid]');\n            var list = [];\n            for (var i = 0; i < nodes.length; i++) {\n                var n = parseInt(nodes[i].getAttribute('mesid'), 10);\n                if (Number.isFinite(n)) list.push({ el: nodes[i], mesid: n });\n            }\n            list.sort(function (a, b) { return a.mesid - b.mesid; });\n            return list;\n        } catch (e) {\n            log('ERROR', 'getChatMesElements 失败: ' + e.message);\n            return [];\n        }\n    }\n\n    // === v2.0 重构 ===\n    // 不再调用 getChatMessages / setChatMessages\n    // 仅通过 DOM 操作隐藏消息，不影响 LLM 上下文\n    function getChatMessagesSafe() { return []; }\n    function setChatMessagesSafe() { return Promise.resolve(); }\n\n    // ==========================================\n    // 核心：计算与执行\n    // ==========================================\n\n    // 计算需要在界面上隐藏的 mesid 列表\n    // 规则：保留最后 X 条；如果 preserveZeroFloor 则额外保留 id=0\n    function getMesIdsToHideDOM(settings) {\n        if (!settings.enabled) return { toHide: [], toShow: [], total: 0 };\n        var list = getChatMesElements();\n        var total = list.length;\n        if (total === 0) return { toHide: [], toShow: [], total: 0 };\n\n        var x = Math.max(1, settings.loadCount | 0);\n        // 需要保留的 mesid 集合\n        var keepSet = {};\n        if (settings.preserveZeroFloor && list[0].mesid === 0) {\n            keepSet[0] = true;\n        }\n        // 最后 X 条\n        var startIdx = Math.max(0, total - x);\n        for (var i = startIdx; i < total; i++) {\n            keepSet[list[i].mesid] = true;\n        }\n\n        var toHide = [];\n        var toShow = [];\n        for (var j = 0; j < total; j++) {\n            var mid = list[j].mesid;\n            if (keepSet[mid]) toShow.push(mid);\n            else toHide.push(mid);\n        }\n        return { toHide: toHide, toShow: toShow, total: total };\n    }\n\n    // 取消隐藏：显示所有 DOM 上被隐藏的楼层\n    function getMesIdsToUnhideDOM() {\n        var hidden = topDoc.querySelectorAll('.mes.lm-dom-hidden');\n        var ids = [];\n        for (var i = 0; i < hidden.length; i++) {\n            var n = parseInt(hidden[i].getAttribute('mesid'), 10);\n            if (Number.isFinite(n)) ids.push(n);\n        }\n        return ids;\n    }\n\n    // 应用 DOM 隐藏：通过 class + display\n    function applyMessageLimit() {\n        log('INFO', '触发应用 DOM 隐藏');\n        var settings = getSettings();\n        if (!settings.enabled) {\n            if (typeof toastr !== 'undefined') toastr.warning('请先在「限制消息设置」中启用');\n            return { hidden: 0, total: 0 };\n        }\n        var result = getMesIdsToHideDOM(settings);\n        if (result.total === 0) {\n            if (typeof toastr !== 'undefined') toastr.info('聊天中没有楼层');\n            return result;\n        }\n        // 抑制 observer（同样会触发 mutation 回调）\n        suppressObserverTicks = result.total + 5;\n        var nodes = topDoc.querySelectorAll('.mes[mesid]');\n        var hideSet = {};\n        for (var i = 0; i < result.toHide.length; i++) hideSet[result.toHide[i]] = true;\n        for (var k = 0; k < nodes.length; k++) {\n            var mid = parseInt(nodes[k].getAttribute('mesid'), 10);\n            if (hideSet[mid]) {\n                nodes[k].classList.add('lm-dom-hidden');\n            } else {\n                nodes[k].classList.remove('lm-dom-hidden');\n            }\n        }\n        var msg = '已隐藏 ' + result.toHide.length + ' / ' + result.total + ' 楼';\n        if (typeof toastr !== 'undefined') toastr.success(msg);\n        log('INFO', msg);\n        refreshStatusBar();\n        return result;\n    }\n\n    // 取消所有 DOM 隐藏\n    function unhideAllMessages() {\n        log('INFO', '触发取消全部 DOM 隐藏');\n        var ids = getMesIdsToUnhideDOM();\n        if (ids.length === 0) {\n            if (typeof toastr !== 'undefined') toastr.info('当前没有隐藏的楼层');\n            return 0;\n        }\n        // 抑制 observer：每次 classList.remove 会触发 mutation 回调\n        suppressObserverTicks = ids.length + 5;\n        var nodes = topDoc.querySelectorAll('.mes.lm-dom-hidden');\n        for (var i = 0; i < nodes.length; i++) {\n            nodes[i].classList.remove('lm-dom-hidden');\n        }\n        if (typeof toastr !== 'undefined') toastr.success('已恢复显示 ' + ids.length + ' 个楼层');\n        refreshStatusBar();\n        return ids.length;\n    }\n\n    // ==========================================\n    // UI：设置面板（顶层挂载）\n    // ==========================================\n\n    function buildStatusText(settings) {\n        var list = getChatMesElements();\n        var total = list.length;\n        if (total === 0) return '当前没有聊天消息';\n        if (!settings.enabled) {\n            // 仍然统计 DOM 隐藏的数量\n            var hiddenNow = topDoc.querySelectorAll('.mes.lm-dom-hidden').length;\n            if (hiddenNow > 0) {\n                return '当前共 <strong>' + total + '</strong> 楼，已隐藏 <strong>' + hiddenNow + '</strong> 楼（限制已禁用但未清除）';\n            }\n            return '当前共 <strong>' + total + '</strong> 楼，限制已禁用';\n        }\n        // 实时计算预期结果\n        var x = Math.max(1, settings.loadCount | 0);\n        var keep = settings.preserveZeroFloor ? Math.min(x + 1, total) : Math.min(x, total);\n        var hiddenCount = total - keep;\n        return '当前共 <strong>' + total + '</strong> 楼，保留最后 <strong>' + keep + '</strong> 楼' +\n            (settings.preserveZeroFloor ? '（含第 0 层）' : '') +\n            '，隐藏 <strong>' + hiddenCount + '</strong> 楼';\n    }\n\n    function ensurePanel() {\n        var existing = topDoc.getElementById('limit-messages-panel');\n        if (existing) return existing;\n\n        var panel = topDoc.createElement('div');\n        panel.id = 'limit-messages-panel';\n        panel.innerHTML = [\n            '<div id=\"limit-messages-backdrop\"></div>',\n            '<div class=\"limit-messages-card\">',\n            '  <div class=\"limit-messages-header\">',\n            '    <span class=\"limit-messages-title\">限制消息加载 · 设置</span>',\n            '    <button class=\"limit-messages-close\" id=\"lm-close-btn\">&times;</button>',\n            '  </div>',\n            '  <div class=\"limit-messages-body\">',\n            '    <div class=\"limit-messages-status\">',\n            '      <i class=\"fa-solid fa-layer-group\"></i>',\n            '      <span id=\"lm-status-text\">加载中...</span>',\n            '    </div>',\n            '    <div class=\"limit-messages-setting-item\">',\n            '      <div class=\"limit-messages-label-group\">',\n            '        <span>启用消息限制</span>',\n            '        <small>开启后自动隐藏超出范围的楼层</small>',\n            '      </div>',\n            '      <label class=\"limit-messages-switch\">',\n            '        <input type=\"checkbox\" id=\"lm-enabled\">',\n            '        <span class=\"limit-messages-slider\"></span>',\n            '      </label>',\n            '    </div>',\n            '    <div class=\"limit-messages-setting-item\">',\n            '      <div class=\"limit-messages-label-group\">',\n            '        <span>保留第零层</span>',\n            '        <small>勾选：显示 0~X 楼；不勾选：显示 1~X 楼</small>',\n            '      </div>',\n            '      <label class=\"limit-messages-switch\">',\n            '        <input type=\"checkbox\" id=\"lm-preserve-zero\">',\n            '        <span class=\"limit-messages-slider\"></span>',\n            '      </label>',\n            '    </div>',\n            '    <div class=\"limit-messages-setting-item\">',\n            '      <div class=\"limit-messages-label-group\">',\n            '        <span>加载最新消息数量 (X)</span>',\n            '        <small>保留多少最新的楼层</small>',\n            '      </div>',\n            '      <input type=\"number\" id=\"lm-load-count\" class=\"limit-messages-number-input\" min=\"1\" max=\"1000\">',\n            '    </div>',\n            '  </div>',\n            '  <div class=\"limit-messages-footer\">',\n            '    <button class=\"limit-messages-btn limit-messages-btn-primary\" id=\"lm-apply-btn\">',\n            '      <i class=\"fa-solid fa-check\"></i> 应用设置',\n            '    </button>',\n            '    <button class=\"limit-messages-btn limit-messages-btn-secondary\" id=\"lm-unhide-btn\">',\n            '      <i class=\"fa-solid fa-eye\"></i> 取消全部隐藏',\n            '    </button>',\n            '  </div>',\n            '</div>'\n        ].join('\\n');\n\n        topDoc.body.appendChild(panel);\n        injectStylesOnce();\n        return panel;\n    }\n\n    function openSettingsPanel() {\n        log('INFO', '打开设置面板');\n        var panel = ensurePanel();\n        syncPanelFromSettings(panel);\n        panel.classList.add('lm-open');\n        // 调试日志：输出视口和面板尺寸，便于排查\n        var winH = topWin.innerHeight || topDoc.documentElement.clientHeight;\n        var winW = topWin.innerWidth || topDoc.documentElement.clientWidth;\n        var card = panel.querySelector('.limit-messages-card');\n        var cardRect = card ? card.getBoundingClientRect() : null;\n        log('INFO', '顶层视口: ' + winW + 'x' + winH);\n        if (cardRect) log('INFO', '卡片尺寸: ' + cardRect.width + 'x' + cardRect.height + ' @(' + Math.round(cardRect.left) + ',' + Math.round(cardRect.top) + ')');\n    }\n\n    function closeSettingsPanel() {\n        var panel = topDoc.getElementById('limit-messages-panel');\n        if (panel) panel.classList.remove('lm-open');\n    }\n\n    function syncPanelFromSettings(panel) {\n        var settings = getSettings();\n        var enabledEl = panel.querySelector('#lm-enabled');\n        var preserveEl = panel.querySelector('#lm-preserve-zero');\n        var countEl = panel.querySelector('#lm-load-count');\n        var statusEl = panel.querySelector('#lm-status-text');\n        if (enabledEl) enabledEl.checked = settings.enabled;\n        if (preserveEl) preserveEl.checked = settings.preserveZeroFloor;\n        if (countEl) countEl.value = settings.loadCount;\n        if (statusEl) statusEl.innerHTML = buildStatusText(settings);\n    }\n\n    function bindPanelEvents() {\n        // 委托到顶层 document\n        topDoc.addEventListener('change', function (e) {\n            var t = e.target;\n            if (!t) return;\n            if (t.id === 'lm-enabled') {\n                var s = getSettings();\n                s.enabled = t.checked;\n                saveSettings(s);\n                var status = topDoc.getElementById('lm-status-text');\n                if (status) status.innerHTML = buildStatusText(s);\n            } else if (t.id === 'lm-preserve-zero') {\n                var s2 = getSettings();\n                s2.preserveZeroFloor = t.checked;\n                saveSettings(s2);\n                var status2 = topDoc.getElementById('lm-status-text');\n                if (status2) status2.innerHTML = buildStatusText(s2);\n            } else if (t.id === 'lm-load-count') {\n                var value = parseInt(t.value, 10);\n                if (!Number.isFinite(value) || value < 1) {\n                    if (typeof toastr !== 'undefined') toastr.warning('加载数量必须 ≥ 1');\n                    t.value = getSettings().loadCount;\n                    return;\n                }\n                var s3 = getSettings();\n                s3.loadCount = value;\n                saveSettings(s3);\n                var status3 = topDoc.getElementById('lm-status-text');\n                if (status3) status3.innerHTML = buildStatusText(s3);\n            }\n        });\n\n        topDoc.addEventListener('click', function (e) {\n            var t = e.target;\n            if (!t) return;\n            var closest = t.closest ? t.closest('[id]') : null;\n            var id = (closest && closest.id) || t.id;\n\n            if (id === 'lm-close-btn') {\n                closeSettingsPanel();\n            } else if (id === 'limit-messages-backdrop') {\n                closeSettingsPanel();\n            } else if (id === 'lm-apply-btn') {\n                e.preventDefault();\n                e.stopPropagation();\n                applyMessageLimit();\n                var panel = topDoc.getElementById('limit-messages-panel');\n                if (panel) syncPanelFromSettings(panel);\n            } else if (id === 'lm-unhide-btn') {\n                e.preventDefault();\n                e.stopPropagation();\n                unhideAllMessages();\n                var panel2 = topDoc.getElementById('limit-messages-panel');\n                if (panel2) syncPanelFromSettings(panel2);\n            }\n        });\n    }\n\n    function refreshStatusBar() {\n        var bar = topDoc.getElementById('limit-messages-statusbar');\n        if (!bar) return;\n        var s = getSettings();\n        var text = bar.querySelector('#lm-statusbar-text');\n        if (text) text.innerHTML = buildStatusText(s);\n    }\n\n    function ensureStatusBar() {\n        // 先清理所有旧的状态栏（包括热重载遗留的）\n        var existingBars = topDoc.querySelectorAll('#limit-messages-statusbar');\n        for (var i = 0; i < existingBars.length; i++) {\n            existingBars[i].parentNode && existingBars[i].parentNode.removeChild(existingBars[i]);\n        }\n\n        var bar = topDoc.createElement('div');\n        bar.id = 'limit-messages-statusbar';\n        bar.className = 'limit-messages-statusbar';\n        bar.innerHTML = '<i class=\"fa-solid fa-layer-group\"></i><span id=\"lm-statusbar-text\">加载中...</span>';\n\n        var chat = topDoc.getElementById('chat');\n        if (chat && chat.firstChild) {\n            chat.insertBefore(bar, chat.firstChild);\n        } else if (chat) {\n            chat.appendChild(bar);\n        } else {\n            topDoc.body.appendChild(bar);\n        }\n        refreshStatusBar();\n    }\n\n    // ==========================================\n    // 样式（注入到顶层 head）\n    // ==========================================\n\n    function injectStylesOnce() {\n        if (topDoc.getElementById('limit-messages-styles')) return;\n        var style = topDoc.createElement('style');\n        style.id = 'limit-messages-styles';\n        style.textContent = [\n            '.limit-messages-statusbar {',\n            '  display: flex; align-items: center; gap: 8px;',\n            '  padding: 8px 14px; margin: 6px 12px;',\n            '  background: color-mix(in srgb, var(--SmartThemeQuoteColor) 18%, transparent);',\n            '  border: 1px solid color-mix(in srgb, var(--SmartThemeQuoteColor) 35%, transparent);',\n            '  border-radius: 8px; font-size: 13px;',\n            '  color: var(--SmartThemeBodyColor);',\n            '}',\n            '.limit-messages-statusbar i { color: var(--SmartThemeQuoteColor); }',\n            '.limit-messages-statusbar strong { color: var(--SmartThemeUnderlineColor); font-weight: 600; margin: 0 2px; }',\n\n            '.mes.lm-dom-hidden { display: none !important; }',\n\n\n            '#limit-messages-panel { position: fixed; inset: 0; z-index: 2147483647; display: none; align-items: center; justify-content: center; padding: 16px; overflow-y: auto; box-sizing: border-box; }',\n            '#limit-messages-panel.lm-open { display: flex !important; }',\n            '#limit-messages-backdrop {',\n            '  position: fixed; inset: 0;',\n            '  background: rgba(0,0,0,0.55);',\n            '  backdrop-filter: blur(6px);',\n            '}',\n            '.limit-messages-card {',\n            '  position: relative;',\n            '  width: 420px; max-width: 92vw;',\n            '  max-height: calc(100vh - 32px);',\n            '  background: color-mix(in srgb, var(--SmartThemeBlurTintColor) 100%, transparent);',\n            '  border: 1px solid var(--SmartThemeBorderColor);',\n            '  border-radius: 12px;',\n            '  display: flex; flex-direction: column;',\n            '  box-shadow: 0 10px 40px rgba(0,0,0,0.5);',\n            '  color: var(--SmartThemeBodyColor);',\n            '  font-family: var(--mainFontFamily, sans-serif);',\n            '}',\n            '.limit-messages-header {',\n            '  display: flex; align-items: center; justify-content: space-between;',\n            '  padding: 14px 18px;',\n            '  border-bottom: 1px solid var(--SmartThemeBorderColor);',\n            '}',\n            '.limit-messages-title { font-size: 16px; font-weight: 600; color: var(--SmartThemeBodyColor); }',\n            '.limit-messages-close {',\n            '  background: transparent; border: none; color: var(--SmartThemeBodyColor);',\n            '  font-size: 22px; line-height: 1; cursor: pointer; padding: 0 6px;',\n            '  border-radius: 4px;',\n            '}',\n            '.limit-messages-close:hover { background: color-mix(in srgb, var(--SmartThemeBodyColor) 15%, transparent); }',\n\n            '.limit-messages-body {',\n            '  padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;',\n            '  overflow-y: auto;',\n            '  flex: 1 1 auto; min-height: 0;',\n            '}',\n            '.limit-messages-status {',\n            '  display: flex; align-items: center; gap: 10px;',\n            '  padding: 10px 14px;',\n            '  background: color-mix(in srgb, var(--SmartThemeQuoteColor) 18%, transparent);',\n            '  border: 1px solid color-mix(in srgb, var(--SmartThemeQuoteColor) 30%, transparent);',\n            '  border-radius: 8px; font-size: 13px;',\n            '  color: var(--SmartThemeBodyColor);',\n            '}',\n            '.limit-messages-status i { color: var(--SmartThemeQuoteColor); font-size: 16px; }',\n            '.limit-messages-status strong { color: var(--SmartThemeUnderlineColor); font-weight: 600; margin: 0 2px; }',\n\n            '.limit-messages-setting-item {',\n            '  display: flex; align-items: center; justify-content: space-between;',\n            '  padding: 12px 14px;',\n            '  background: color-mix(in srgb, var(--SmartThemeBodyColor) 8%, transparent);',\n            '  border-radius: 8px; gap: 14px;',\n            '}',\n            '.limit-messages-label-group { display: flex; flex-direction: column; gap: 3px; flex: 1; }',\n            '.limit-messages-label-group span { font-size: 14px; color: var(--SmartThemeBodyColor); }',\n            '.limit-messages-label-group small { font-size: 12px; color: var(--SmartThemeBodyColor); opacity: 0.7; line-height: 1.4; }',\n\n            '.limit-messages-switch { position: relative; display: inline-block; width: 44px; height: 24px; flex-shrink: 0; }',\n            '.limit-messages-switch input { opacity: 0; width: 0; height: 0; }',\n            '.limit-messages-slider { position: absolute; cursor: pointer; inset: 0; background-color: color-mix(in srgb, var(--SmartThemeBodyColor) 25%, transparent); transition: 0.3s; border-radius: 24px; }',\n            '.limit-messages-slider::before { position: absolute; content: \\'\\'; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: var(--SmartThemeBlurTintColor); transition: 0.3s; border-radius: 50%; }',\n            '.limit-messages-switch input:checked + .limit-messages-slider { background-color: var(--SmartThemeQuoteColor); }',\n            '.limit-messages-switch input:checked + .limit-messages-slider::before { transform: translateX(20px); }',\n\n            '.limit-messages-number-input {',\n            '  width: 86px; padding: 7px 10px;',\n            '  background: var(--SmartThemeBlurTintColor);',\n            '  border: 1px solid var(--SmartThemeBorderColor);',\n            '  border-radius: 6px;',\n            '  color: var(--SmartThemeBodyColor);',\n            '  font-size: 14px; text-align: center; outline: none;',\n            '  flex-shrink: 0;',\n            '}',\n            '.limit-messages-number-input:focus { border-color: var(--SmartThemeQuoteColor); }',\n\n            '.limit-messages-footer {',\n            '  display: flex; gap: 10px;',\n            '  padding: 14px 18px;',\n            '  border-top: 1px solid var(--SmartThemeBorderColor);',\n            '}',\n            '.limit-messages-btn {',\n            '  flex: 1; padding: 9px 14px;',\n            '  border: none; border-radius: 8px;',\n            '  font-size: 14px; font-weight: 500;',\n            '  cursor: pointer;',\n            '  display: inline-flex; align-items: center; justify-content: center; gap: 6px;',\n            '  font-family: inherit;',\n            '}',\n            '.limit-messages-btn-primary { background: var(--SmartThemeQuoteColor); color: var(--SmartThemeBlurTintColor); }',\n            '.limit-messages-btn-primary:hover { filter: brightness(1.15); }',\n            '.limit-messages-btn-secondary { background: color-mix(in srgb, var(--SmartThemeBodyColor) 8%, transparent); color: var(--SmartThemeBodyColor); }',\n            '.limit-messages-btn-secondary:hover { background: color-mix(in srgb, var(--SmartThemeBodyColor) 15%, transparent); }'\n        ].join('\\n');\n        topDoc.head.appendChild(style);\n    }\n\n    // ==========================================\n    // 暴露\n    // ==========================================\n\n    function exposeToGlobal() {\n        window.LimitMessages = {\n            openSettings: openSettingsPanel,\n            apply: applyMessageLimit,\n            unhide: unhideAllMessages,\n            getSettings: getSettings,\n            topDoc: topDoc === document ? 'current' : 'top',\n        };\n        // 也暴露到顶层方便排查\n        try {\n            topWin.LimitMessages = window.LimitMessages;\n        } catch (e) {}\n        log('INFO', '已暴露到 window.LimitMessages (面板挂载到: ' + (topDoc === document ? '当前 document' : '顶层 window.top.document') + ')');\n    }\n\n    // ==========================================\n    // 按钮注册\n    // ==========================================\n\n    function registerButtons() {\n        log('INFO', '开始注册按钮');\n        try {\n            if (typeof replaceScriptButtons === 'function') {\n                replaceScriptButtons([\n                    { name: '限制消息设置', visible: true },\n                    { name: '应用消息限制', visible: true },\n                    { name: '取消全部隐藏', visible: true },\n                ]);\n                log('INFO', 'replaceScriptButtons 调用完成');\n            } else {\n                log('ERROR', 'replaceScriptButtons 不可用');\n            }\n\n            if (typeof eventOn === 'function' && typeof getButtonEvent === 'function') {\n                eventOn(getButtonEvent('限制消息设置'), openSettingsPanel);\n                eventOn(getButtonEvent('应用消息限制'), applyMessageLimit);\n                eventOn(getButtonEvent('取消全部隐藏'), unhideAllMessages);\n                log('INFO', 'eventOn 按钮事件已注册');\n            } else if (typeof eventOnButton === 'function') {\n                eventOnButton('限制消息设置', openSettingsPanel);\n                eventOnButton('应用消息限制', applyMessageLimit);\n                eventOnButton('取消全部隐藏', unhideAllMessages);\n                log('INFO', 'eventOnButton 按钮事件已注册');\n            } else {\n                log('ERROR', 'eventOn / eventOnButton 都不可用');\n            }\n        } catch (e) {\n            log('ERROR', '注册按钮失败: ' + e.message);\n        }\n    }\n\n    // ==========================================\n    // 自动应用\n    // ==========================================\n\n    function setupAutoApply() {\n        if (typeof eventOn !== 'function') return;\n\n        try {\n            var generatedEvent = (typeof tavern_events !== 'undefined' && tavern_events.MESSAGE_RECEIVED)\n                || (typeof tavern_events !== 'undefined' && tavern_events.GENERATION_ENDED)\n                || null;\n            if (generatedEvent) {\n                eventOn(generatedEvent, function () {\n                    var settings = getSettings();\n                    if (settings.enabled) {\n                        // 等 DOM 更新后再应用\n                        setTimeout(function () { applyMessageLimit(); }, 200);\n                    }\n                });\n            }\n\n            var chatChangeEvent = (typeof tavern_events !== 'undefined' && tavern_events.CHAT_CHANGED) || null;\n            if (chatChangeEvent) {\n                eventOn(chatChangeEvent, function () {\n                    setTimeout(function () {\n                        var settings = getSettings();\n                        if (settings.enabled) applyMessageLimit();\n                        refreshStatusBar();\n                    }, 300);\n                });\n            }\n        } catch (e) {\n            log('ERROR', 'setupAutoApply 失败: ' + e.message);\n        }\n    }\n\n    // ==========================================\n    // 初始化\n    // ==========================================\n\n    // === v2.0 新增：DOM 变化监听 ===\n    // 当新楼层添加进来时，自动应用隐藏规则\n    var lmObserver = null;\n    var suppressObserverTicks = 0;  // 抑制 N 次 observer 回调（用户主动 unhide 时用）\n    function setupMutationObserver() {\n        if (lmObserver) return;\n        if (typeof MutationObserver === 'undefined') {\n            log('WARN', 'MutationObserver 不可用');\n            return;\n        }\n        var chat = topDoc.getElementById('chat');\n        if (!chat) {\n            log('WARN', '未找到 #chat 容器');\n            return;\n        }\n        var pending = false;\n        lmObserver = new MutationObserver(function () {\n            if (pending) return;\n            pending = true;\n            // 微任务后批量处理\n            setTimeout(function () {\n                pending = false;\n                if (suppressObserverTicks > 0) {\n                    suppressObserverTicks--;\n                    return;\n                }\n                var settings = getSettings();\n                if (!settings.enabled) return;\n                var result = getMesIdsToHideDOM(settings);\n                var hideSet = {};\n                for (var i = 0; i < result.toHide.length; i++) hideSet[result.toHide[i]] = true;\n                var nodes = topDoc.querySelectorAll('.mes[mesid]');\n                for (var k = 0; k < nodes.length; k++) {\n                    var mid = parseInt(nodes[k].getAttribute('mesid'), 10);\n                    if (hideSet[mid]) {\n                        if (!nodes[k].classList.contains('lm-dom-hidden')) {\n                            nodes[k].classList.add('lm-dom-hidden');\n                        }\n                    } else {\n                        if (nodes[k].classList.contains('lm-dom-hidden')) {\n                            nodes[k].classList.remove('lm-dom-hidden');\n                        }\n                    }\n                }\n                refreshStatusBar();\n            }, 100);\n        });\n        lmObserver.observe(chat, { childList: true, subtree: true });\n        log('INFO', 'MutationObserver 已启动');\n    }\n\n    function init() {\n        log('INFO', '限制消息加载脚本开始加载 (v2.0 纯 DOM 模式)');\n        exposeToGlobal();\n        injectStylesOnce();\n        bindPanelEvents();\n        ensureStatusBar();\n        registerButtons();\n        setupAutoApply();\n        setupMutationObserver();\n        // 启动时立即应用一次\n        setTimeout(function () {\n            var settings = getSettings();\n            if (settings.enabled) applyMessageLimit();\n        }, 500);\n        log('INFO', '限制消息加载脚本加载完成');\n    }\n\n    if (topDoc.readyState === 'loading') {\n        topDoc.addEventListener('DOMContentLoaded', init);\n    } else {\n        // 立即执行，同时让顶层 ready 之后再补一次（保险）\n        init();\n    }\n})();",
-  "info": "**作者**：你的名字\n**版本**：v2.2\n**脚本说明：**\n参考 hide-main 限制器实现的「限制消息加载」脚本。\n\n**v1.2 关键修复：**\n酒馆助手脚本以 IIFE 形式运行在嵌套 iframe（about:srcdoc）中。如果面板挂到当前嵌套 iframe 的 document.body，由于嵌套 iframe 尺寸很小（甚至 0 高度），虽然 CSS 里 position:fixed 但面板仍然不可见。\n现在所有 DOM 操作基于 `window.top.document`（顶层页面），面板就能正常显示了。\n\n**测试步骤：**\n1. 重新导入本 JSON 文件\n2. 浏览器控制台 F12 → Console，观察以下日志：\n   ```\n   [限制消息][INFO] 已暴露到 window.LimitMessages (面板挂载到: 顶层 window.top.document)\n   ```\n3. 点「限制消息设置」按钮：\n   ```\n   [限制消息][INFO] 打开设置面板\n   [限制消息][INFO] 面板位置：top=顶层 body\n   [限制消息][INFO] 面板尺寸：420x... @(...)\n   ```\n4. 如果还看不到，手动在控制台执行 `window.LimitMessages.openSettings()`\n\n**v1.3 修复：**\n面板容器改用 `align-items: flex-start` + `padding-top: 4vh`，避免内容超过视口高度时被上下各裁一半的问题。卡片 max-height 也从 85vh 提高到 92vh。\n\n\n**v1.4 修复：**\n- 面板改回 `align-items: center` 居中对齐，容器自身可滚动\n- 卡片 max-height 改为 `calc(100vh - 32px)`，留 16px 上下边距\n- 修复状态栏重复插入问题（热重载时会清理所有旧状态栏再插入新的）\n\n\n**v1.5 修复：**\n- **隐藏楼层没生效**：`setChatMessages` 默认 refresh 改为 `affected`，之前 `none` 不会更新页面显示\n- **面板太透明**：卡片底色从 `ChatTintColor`（透明 tint）改为 `BlurTintColor`（不透明），设置项透明度 0.04→0.08\n- **配色自适应主题**：小字颜色、关闭按钮、切换器颜色全部改用酒馆 CSS 变量\n\n\n**v2.0 完全重构：**\n按用户需求重写为**纯 DOM 隐藏模式**：\n- **不再调用** `getChatMessages` / `setChatMessages` — 完全不影响酒馆消息数据，**LLM 仍可读取所有楼层**\n- 隐藏方式：给对应 `.mes[mesid]` 元素添加 `.lm-dom-hidden` class（display: none）\n- **保留第 0 层**：始终保留 id=0 的楼层不被隐藏\n- **加载最新 X 条**：从最后一条往前数，保留最后 X 条；其它楼层在界面上不可见\n- 新增 **MutationObserver**：新楼层插入时自动应用规则\n- 启动时立即应用一次\n\n**算法示例**（4 楼，X=2）：\n- 不保留第 0 层：隐藏 0,1，只显示 2,3\n- 保留第 0 层：隐藏 1,2，只显示 0,3\n\n\n**v2.1 修复：**\n- 修复「取消全部隐藏」不生效的 bug\n- 根因：`classList.remove` 触发 DOM mutation，Observer 100ms 后又把所有楼层重新隐藏\n- 修复：添加 `suppressObserverTicks` 计数器，主动操作时抑制 Observer\n\n\n**v2.2 完全主题适配：**\n所有写死颜色（紫色、白色、灰色）全部改用酒馆 CSS 变量：\n- `--SmartThemeBodyColor` - 主题文字色（亮色主题为深色，暗色主题为浅色）\n- `--SmartThemeBlurTintColor` - 主题背景色\n- `--SmartThemeBorderColor` - 主题边框色\n- `--SmartThemeQuoteColor` - 主题高亮色（替代紫色用作强调）\n- `--SmartThemeUnderlineColor` - 主题次要高亮色\n- `color-mix(in srgb, var(--xxx) N%, transparent)` - 任意透明度混合\n",
-  "button": {
-    "enabled": true,
-    "buttons": [
-      {
-        "name": "限制消息设置",
-        "visible": true
-      },
-      {
-        "name": "应用消息限制",
-        "visible": true
-      },
-      {
-        "name": "取消全部隐藏",
-        "visible": true
-      }
-    ]
-  },
-  "data": {}
-}
+(function() {
+    'use strict';
+
+    // ==========================================
+    // 配置
+    // ==========================================
+
+    var CONFIG = {
+        STORAGE_KEY: 'limit_messages_settings',
+        DEBUG: true,
+    };
+
+    // 顶层文档（脚本可能运行在 srcdoc 嵌套 iframe 中，面板必须挂到顶层）
+    var topDoc = (function() {
+        try {
+            if (window.top && window.top.document) return window.top.document;
+        } catch (e) {}
+        try {
+            if (window.parent && window.parent.document && window.parent !== window) return window.parent.document;
+        } catch (e) {}
+        return document;
+    })();
+    var topWin = (function() {
+        try {
+            if (window.top && window.top.document) return window.top;
+        } catch (e) {}
+        try {
+            if (window.parent && window.parent.document && window.parent !== window) return window.parent;
+        } catch (e) {}
+        return window;
+    })();
+
+    // ==========================================
+    // 日志
+    // ==========================================
+
+    function log(level, message, data) {
+        if (!CONFIG.DEBUG && level !== 'ERROR') return;
+        var prefix = '[限制消息][' + level + ']';
+        if (level === 'ERROR') console.error(prefix, message, data || '');
+        else if (level === 'WARN') console.warn(prefix, message, data || '');
+        else console.log(prefix, message, data || '');
+    }
+
+    // ==========================================
+    // 工具
+    // ==========================================
+
+    function getSettings() {
+        var defaults = {
+            enabled: false,
+            preserveZeroFloor: true,
+            loadCount: 20,
+        };
+        try {
+            var raw = topWin.localStorage.getItem(CONFIG.STORAGE_KEY);
+            if (raw) {
+                var parsed = JSON.parse(raw);
+                return Object.assign({}, defaults, parsed);
+            }
+        } catch (e) {
+            log('ERROR', '读取设置失败', e.message);
+        }
+        return Object.assign({}, defaults);
+    }
+
+    function saveSettings(settings) {
+        try {
+            topWin.localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(settings));
+        } catch (e) {
+            log('ERROR', '保存设置失败', e.message);
+        }
+    }
+
+    // 获取顶层页面上所有 .mes[mesid] 元素，按 mesid 升序排列
+    function getChatMesElements() {
+        try {
+            var nodes = topDoc.querySelectorAll('.mes[mesid]');
+            var list = [];
+            for (var i = 0; i < nodes.length; i++) {
+                var n = parseInt(nodes[i].getAttribute('mesid'), 10);
+                if (Number.isFinite(n)) list.push({ el: nodes[i], mesid: n });
+            }
+            list.sort(function (a, b) { return a.mesid - b.mesid; });
+            return list;
+        } catch (e) {
+            log('ERROR', 'getChatMesElements 失败: ' + e.message);
+            return [];
+        }
+    }
+
+    // === v2.0 重构 ===
+    // 不再调用 getChatMessages / setChatMessages
+    // 仅通过 DOM 操作隐藏消息，不影响 LLM 上下文
+    function getChatMessagesSafe() { return []; }
+    function setChatMessagesSafe() { return Promise.resolve(); }
+
+    // ==========================================
+    // 核心：计算与执行
+    // ==========================================
+
+    // 计算需要在界面上隐藏的 mesid 列表
+    // 规则：保留最后 X 条；如果 preserveZeroFloor 则额外保留 id=0
+    function getMesIdsToHideDOM(settings) {
+        if (!settings.enabled) return { toHide: [], toShow: [], total: 0 };
+        var list = getChatMesElements();
+        var total = list.length;
+        if (total === 0) return { toHide: [], toShow: [], total: 0 };
+
+        var x = Math.max(1, settings.loadCount | 0);
+        // 需要保留的 mesid 集合
+        var keepSet = {};
+        if (settings.preserveZeroFloor && list[0].mesid === 0) {
+            keepSet[0] = true;
+        }
+        // 最后 X 条
+        var startIdx = Math.max(0, total - x);
+        for (var i = startIdx; i < total; i++) {
+            keepSet[list[i].mesid] = true;
+        }
+
+        var toHide = [];
+        var toShow = [];
+        for (var j = 0; j < total; j++) {
+            var mid = list[j].mesid;
+            if (keepSet[mid]) toShow.push(mid);
+            else toHide.push(mid);
+        }
+        return { toHide: toHide, toShow: toShow, total: total };
+    }
+
+    // 取消隐藏：显示所有 DOM 上被隐藏的楼层
+    function getMesIdsToUnhideDOM() {
+        var hidden = topDoc.querySelectorAll('.mes.lm-dom-hidden');
+        var ids = [];
+        for (var i = 0; i < hidden.length; i++) {
+            var n = parseInt(hidden[i].getAttribute('mesid'), 10);
+            if (Number.isFinite(n)) ids.push(n);
+        }
+        return ids;
+    }
+
+    // 应用 DOM 隐藏：通过 class + display
+    function applyMessageLimit() {
+        log('INFO', '触发应用 DOM 隐藏');
+        var settings = getSettings();
+        if (!settings.enabled) {
+            if (typeof toastr !== 'undefined') toastr.warning('请先在「限制消息设置」中启用');
+            return { hidden: 0, total: 0 };
+        }
+        var result = getMesIdsToHideDOM(settings);
+        if (result.total === 0) {
+            if (typeof toastr !== 'undefined') toastr.info('聊天中没有楼层');
+            return result;
+        }
+        // 抑制 observer（同样会触发 mutation 回调）
+        suppressObserverTicks = result.total + 5;
+        var nodes = topDoc.querySelectorAll('.mes[mesid]');
+        var hideSet = {};
+        for (var i = 0; i < result.toHide.length; i++) hideSet[result.toHide[i]] = true;
+        for (var k = 0; k < nodes.length; k++) {
+            var mid = parseInt(nodes[k].getAttribute('mesid'), 10);
+            if (hideSet[mid]) {
+                nodes[k].classList.add('lm-dom-hidden');
+            } else {
+                nodes[k].classList.remove('lm-dom-hidden');
+            }
+        }
+        var msg = '已隐藏 ' + result.toHide.length + ' / ' + result.total + ' 楼';
+        if (typeof toastr !== 'undefined') toastr.success(msg);
+        log('INFO', msg);
+        refreshStatusBar();
+        return result;
+    }
+
+    // 取消所有 DOM 隐藏
+    function unhideAllMessages() {
+        log('INFO', '触发取消全部 DOM 隐藏');
+        var ids = getMesIdsToUnhideDOM();
+        if (ids.length === 0) {
+            if (typeof toastr !== 'undefined') toastr.info('当前没有隐藏的楼层');
+            return 0;
+        }
+        // 抑制 observer：每次 classList.remove 会触发 mutation 回调
+        suppressObserverTicks = ids.length + 5;
+        var nodes = topDoc.querySelectorAll('.mes.lm-dom-hidden');
+        for (var i = 0; i < nodes.length; i++) {
+            nodes[i].classList.remove('lm-dom-hidden');
+        }
+        if (typeof toastr !== 'undefined') toastr.success('已恢复显示 ' + ids.length + ' 个楼层');
+        refreshStatusBar();
+        return ids.length;
+    }
+
+    // ==========================================
+    // UI：设置面板（顶层挂载）
+    // ==========================================
+
+    function buildStatusText(settings) {
+        var list = getChatMesElements();
+        var total = list.length;
+        if (total === 0) return '当前没有聊天消息';
+        if (!settings.enabled) {
+            // 仍然统计 DOM 隐藏的数量
+            var hiddenNow = topDoc.querySelectorAll('.mes.lm-dom-hidden').length;
+            if (hiddenNow > 0) {
+                return '当前共 <strong>' + total + '</strong> 楼，已隐藏 <strong>' + hiddenNow + '</strong> 楼（限制已禁用但未清除）';
+            }
+            return '当前共 <strong>' + total + '</strong> 楼，限制已禁用';
+        }
+        // 实时计算预期结果
+        var x = Math.max(1, settings.loadCount | 0);
+        var keep = settings.preserveZeroFloor ? Math.min(x + 1, total) : Math.min(x, total);
+        var hiddenCount = total - keep;
+        return '当前共 <strong>' + total + '</strong> 楼，保留最后 <strong>' + keep + '</strong> 楼' +
+            (settings.preserveZeroFloor ? '（含第 0 层）' : '') +
+            '，隐藏 <strong>' + hiddenCount + '</strong> 楼';
+    }
+
+    function ensurePanel() {
+        var existing = topDoc.getElementById('limit-messages-panel');
+        if (existing) return existing;
+
+        var panel = topDoc.createElement('div');
+        panel.id = 'limit-messages-panel';
+        panel.innerHTML = [
+            '<div id="limit-messages-backdrop"></div>',
+            '<div class="limit-messages-card">',
+            '  <div class="limit-messages-header">',
+            '    <span class="limit-messages-title">限制消息加载 · 设置</span>',
+            '    <button class="limit-messages-close" id="lm-close-btn">&times;</button>',
+            '  </div>',
+            '  <div class="limit-messages-body">',
+            '    <div class="limit-messages-status">',
+            '      <i class="fa-solid fa-layer-group"></i>',
+            '      <span id="lm-status-text">加载中...</span>',
+            '    </div>',
+            '    <div class="limit-messages-setting-item">',
+            '      <div class="limit-messages-label-group">',
+            '        <span>启用消息限制</span>',
+            '        <small>开启后自动隐藏超出范围的楼层</small>',
+            '      </div>',
+            '      <label class="limit-messages-switch">',
+            '        <input type="checkbox" id="lm-enabled">',
+            '        <span class="limit-messages-slider"></span>',
+            '      </label>',
+            '    </div>',
+            '    <div class="limit-messages-setting-item">',
+            '      <div class="limit-messages-label-group">',
+            '        <span>保留第零层</span>',
+            '        <small>勾选：显示 0~X 楼；不勾选：显示 1~X 楼</small>',
+            '      </div>',
+            '      <label class="limit-messages-switch">',
+            '        <input type="checkbox" id="lm-preserve-zero">',
+            '        <span class="limit-messages-slider"></span>',
+            '      </label>',
+            '    </div>',
+            '    <div class="limit-messages-setting-item">',
+            '      <div class="limit-messages-label-group">',
+            '        <span>加载最新消息数量 (X)</span>',
+            '        <small>保留多少最新的楼层</small>',
+            '      </div>',
+            '      <input type="number" id="lm-load-count" class="limit-messages-number-input" min="1" max="1000">',
+            '    </div>',
+            '  </div>',
+            '  <div class="limit-messages-footer">',
+            '    <button class="limit-messages-btn limit-messages-btn-primary" id="lm-apply-btn">',
+            '      <i class="fa-solid fa-check"></i> 应用设置',
+            '    </button>',
+            '    <button class="limit-messages-btn limit-messages-btn-secondary" id="lm-unhide-btn">',
+            '      <i class="fa-solid fa-eye"></i> 取消全部隐藏',
+            '    </button>',
+            '  </div>',
+            '</div>'
+        ].join('\n');
+
+        topDoc.body.appendChild(panel);
+        injectStylesOnce();
+        return panel;
+    }
+
+    function openSettingsPanel() {
+        log('INFO', '打开设置面板');
+        var panel = ensurePanel();
+        syncPanelFromSettings(panel);
+        panel.classList.add('lm-open');
+        // 调试日志：输出视口和面板尺寸，便于排查
+        var winH = topWin.innerHeight || topDoc.documentElement.clientHeight;
+        var winW = topWin.innerWidth || topDoc.documentElement.clientWidth;
+        var card = panel.querySelector('.limit-messages-card');
+        var cardRect = card ? card.getBoundingClientRect() : null;
+        log('INFO', '顶层视口: ' + winW + 'x' + winH);
+        if (cardRect) log('INFO', '卡片尺寸: ' + cardRect.width + 'x' + cardRect.height + ' @(' + Math.round(cardRect.left) + ',' + Math.round(cardRect.top) + ')');
+    }
+
+    function closeSettingsPanel() {
+        var panel = topDoc.getElementById('limit-messages-panel');
+        if (panel) panel.classList.remove('lm-open');
+    }
+
+    function syncPanelFromSettings(panel) {
+        var settings = getSettings();
+        var enabledEl = panel.querySelector('#lm-enabled');
+        var preserveEl = panel.querySelector('#lm-preserve-zero');
+        var countEl = panel.querySelector('#lm-load-count');
+        var statusEl = panel.querySelector('#lm-status-text');
+        if (enabledEl) enabledEl.checked = settings.enabled;
+        if (preserveEl) preserveEl.checked = settings.preserveZeroFloor;
+        if (countEl) countEl.value = settings.loadCount;
+        if (statusEl) statusEl.innerHTML = buildStatusText(settings);
+    }
+
+    function bindPanelEvents() {
+        // 委托到顶层 document
+        topDoc.addEventListener('change', function (e) {
+            var t = e.target;
+            if (!t) return;
+            if (t.id === 'lm-enabled') {
+                var s = getSettings();
+                s.enabled = t.checked;
+                saveSettings(s);
+                var status = topDoc.getElementById('lm-status-text');
+                if (status) status.innerHTML = buildStatusText(s);
+            } else if (t.id === 'lm-preserve-zero') {
+                var s2 = getSettings();
+                s2.preserveZeroFloor = t.checked;
+                saveSettings(s2);
+                var status2 = topDoc.getElementById('lm-status-text');
+                if (status2) status2.innerHTML = buildStatusText(s2);
+            } else if (t.id === 'lm-load-count') {
+                var value = parseInt(t.value, 10);
+                if (!Number.isFinite(value) || value < 1) {
+                    if (typeof toastr !== 'undefined') toastr.warning('加载数量必须 ≥ 1');
+                    t.value = getSettings().loadCount;
+                    return;
+                }
+                var s3 = getSettings();
+                s3.loadCount = value;
+                saveSettings(s3);
+                var status3 = topDoc.getElementById('lm-status-text');
+                if (status3) status3.innerHTML = buildStatusText(s3);
+            }
+        });
+
+        topDoc.addEventListener('click', function (e) {
+            var t = e.target;
+            if (!t) return;
+            var closest = t.closest ? t.closest('[id]') : null;
+            var id = (closest && closest.id) || t.id;
+
+            if (id === 'lm-close-btn') {
+                closeSettingsPanel();
+            } else if (id === 'limit-messages-backdrop') {
+                closeSettingsPanel();
+            } else if (id === 'lm-apply-btn') {
+                e.preventDefault();
+                e.stopPropagation();
+                applyMessageLimit();
+                var panel = topDoc.getElementById('limit-messages-panel');
+                if (panel) syncPanelFromSettings(panel);
+            } else if (id === 'lm-unhide-btn') {
+                e.preventDefault();
+                e.stopPropagation();
+                unhideAllMessages();
+                var panel2 = topDoc.getElementById('limit-messages-panel');
+                if (panel2) syncPanelFromSettings(panel2);
+            }
+        });
+    }
+
+    function refreshStatusBar() {
+        var bar = topDoc.getElementById('limit-messages-statusbar');
+        if (!bar) return;
+        var s = getSettings();
+        var text = bar.querySelector('#lm-statusbar-text');
+        if (text) text.innerHTML = buildStatusText(s);
+    }
+
+    function ensureStatusBar() {
+        // 先清理所有旧的状态栏（包括热重载遗留的）
+        var existingBars = topDoc.querySelectorAll('#limit-messages-statusbar');
+        for (var i = 0; i < existingBars.length; i++) {
+            existingBars[i].parentNode && existingBars[i].parentNode.removeChild(existingBars[i]);
+        }
+
+        var bar = topDoc.createElement('div');
+        bar.id = 'limit-messages-statusbar';
+        bar.className = 'limit-messages-statusbar';
+        bar.innerHTML = '<i class="fa-solid fa-layer-group"></i><span id="lm-statusbar-text">加载中...</span>';
+
+        // 检测手机端布局：
+        // 手机端: #chat 在 #sheld 内（parent 是 #sheld 而非 body），#chat.parentElement.id === 'sheld'
+        // 电脑端: #chat 是 body 的直接子元素
+        // 另外检测 #sheld 是否存在（手机端专有）
+        var chat = topDoc.getElementById('chat');
+        var sheld = topDoc.getElementById('sheld');
+        var isMobileLayout = !!sheld && chat && chat.parentElement === sheld;
+        if (isMobileLayout) {
+            bar.classList.add('lm-fixed');
+            // 直接设置 inline style 确保 position: fixed 生效（不依赖 CSS 注入）
+            bar.style.cssText = 'position:fixed!important;top:28px!important;left:12px!important;right:12px!important;z-index:35!important;';
+        }
+
+        if (chat) {
+            if (chat.firstChild) {
+                chat.insertBefore(bar, chat.firstChild);
+            } else {
+                chat.appendChild(bar);
+            }
+        } else {
+            topDoc.body.appendChild(bar);
+        }
+        refreshStatusBar();
+    }
+
+    // ==========================================
+    // 样式（注入到顶层 head）
+    // ==========================================
+
+    function injectStylesOnce() {
+        // 热重载场景下，脚本会重新执行，但旧样式仍存在。
+        // 先移除旧样式，确保注入最新规则（包括手机端 lm-fixed 等新增样式）
+        var existing = topDoc.getElementById('limit-messages-styles');
+        if (existing) existing.parentNode && existing.parentNode.removeChild(existing);
+
+        var style = topDoc.createElement('style');
+        style.id = 'limit-messages-styles';
+        style.textContent = [
+            '.limit-messages-statusbar {',
+            '  display: flex; align-items: center; gap: 8px;',
+            '  padding: 8px 14px; margin: 6px 12px;',
+            '  background: color-mix(in srgb, var(--SmartThemeQuoteColor) 18%, transparent);',
+            '  border: 1px solid color-mix(in srgb, var(--SmartThemeQuoteColor) 35%, transparent);',
+            '  border-radius: 8px; font-size: 13px;',
+            '  color: var(--SmartThemeBodyColor);',
+            '  flex-shrink: 0;',
+            '}',
+            // 手机端: #chat 被 #sheld 包裹，statusbar 若在 chat 内部会随 overflow:hidden 被裁剪
+            // 使用 fixed 定位使其固定在 #chat 顶部可见（top-bar 下方 28px）
+            '.limit-messages-statusbar.lm-fixed {',
+            '  position: fixed !important;',
+            '  top: 28px !important;',
+            '  left: 12px !important;',
+            '  right: 12px !important;',
+            '  z-index: 35 !important;',
+            '}',
+            '.limit-messages-statusbar i { color: var(--SmartThemeQuoteColor); }',
+            '.limit-messages-statusbar strong { color: var(--SmartThemeUnderlineColor); font-weight: 600; margin: 0 2px; }',
+
+            '.mes.lm-dom-hidden { display: none !important; }',
+
+
+            '#limit-messages-panel { position: fixed !important; top: 0 !important; left: 0 !important; width: 100% !important; height: 100vh !important; height: 100dvh !important; z-index: 2147483647 !important; display: none; align-items: center; justify-content: center; padding: 16px; overflow-y: auto; }',
+            '#limit-messages-panel.lm-open { display: flex !important; }',
+            '#limit-messages-backdrop {',
+            '  position: fixed; inset: 0;',
+            '  background: rgba(0,0,0,0.55);',
+            '  backdrop-filter: blur(6px);',
+            '}',
+            '.limit-messages-card {',
+            '  position: relative;',
+            '  width: 420px; max-width: 92vw;',
+            '  max-height: calc(100vh - 32px);',
+            '  background: color-mix(in srgb, var(--SmartThemeBlurTintColor) 100%, transparent);',
+            '  border: 1px solid var(--SmartThemeBorderColor);',
+            '  border-radius: 12px;',
+            '  display: flex; flex-direction: column;',
+            '  box-shadow: 0 10px 40px rgba(0,0,0,0.5);',
+            '  color: var(--SmartThemeBodyColor);',
+            '  font-family: var(--mainFontFamily, sans-serif);',
+            '  overflow-y: auto;',
+            '}',
+            '.limit-messages-header {',
+            '  display: flex; align-items: center; justify-content: space-between;',
+            '  padding: 14px 18px;',
+            '  border-bottom: 1px solid var(--SmartThemeBorderColor);',
+            '}',
+            '.limit-messages-title { font-size: 16px; font-weight: 600; color: var(--SmartThemeBodyColor); }',
+            '.limit-messages-close {',
+            '  background: transparent; border: none; color: var(--SmartThemeBodyColor);',
+            '  font-size: 22px; line-height: 1; cursor: pointer; padding: 0 6px;',
+            '  border-radius: 4px;',
+            '}',
+            '.limit-messages-close:hover { background: color-mix(in srgb, var(--SmartThemeBodyColor) 15%, transparent); }',
+
+            '.limit-messages-body {',
+            '  padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;',
+            '  overflow-y: auto;',
+            '  flex: 1 1 auto; min-height: 0;',
+            '}',
+            '.limit-messages-status {',
+            '  display: flex; align-items: center; gap: 10px;',
+            '  padding: 10px 14px;',
+            '  background: color-mix(in srgb, var(--SmartThemeQuoteColor) 18%, transparent);',
+            '  border: 1px solid color-mix(in srgb, var(--SmartThemeQuoteColor) 30%, transparent);',
+            '  border-radius: 8px; font-size: 13px;',
+            '  color: var(--SmartThemeBodyColor);',
+            '}',
+            '.limit-messages-status i { color: var(--SmartThemeQuoteColor); font-size: 16px; }',
+            '.limit-messages-status strong { color: var(--SmartThemeUnderlineColor); font-weight: 600; margin: 0 2px; }',
+
+            '.limit-messages-setting-item {',
+            '  display: flex; align-items: center; justify-content: space-between;',
+            '  padding: 12px 14px;',
+            '  background: color-mix(in srgb, var(--SmartThemeBodyColor) 8%, transparent);',
+            '  border-radius: 8px; gap: 14px;',
+            '}',
+            '.limit-messages-label-group { display: flex; flex-direction: column; gap: 3px; flex: 1; }',
+            '.limit-messages-label-group span { font-size: 14px; color: var(--SmartThemeBodyColor); }',
+            '.limit-messages-label-group small { font-size: 12px; color: var(--SmartThemeBodyColor); opacity: 0.7; line-height: 1.4; }',
+
+            '.limit-messages-switch { position: relative; display: inline-block; width: 44px; height: 24px; flex-shrink: 0; }',
+            '.limit-messages-switch input { opacity: 0; width: 0; height: 0; }',
+            '.limit-messages-slider { position: absolute; cursor: pointer; inset: 0; background-color: color-mix(in srgb, var(--SmartThemeBodyColor) 25%, transparent); transition: 0.3s; border-radius: 24px; }',
+            '.limit-messages-slider::before { position: absolute; content: \'\'; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: var(--SmartThemeBlurTintColor); transition: 0.3s; border-radius: 50%; }',
+            '.limit-messages-switch input:checked + .limit-messages-slider { background-color: var(--SmartThemeQuoteColor); }',
+            '.limit-messages-switch input:checked + .limit-messages-slider::before { transform: translateX(20px); }',
+
+            '.limit-messages-number-input {',
+            '  width: 86px; padding: 7px 10px;',
+            '  background: var(--SmartThemeBlurTintColor);',
+            '  border: 1px solid var(--SmartThemeBorderColor);',
+            '  border-radius: 6px;',
+            '  color: var(--SmartThemeBodyColor);',
+            '  font-size: 14px; text-align: center; outline: none;',
+            '  flex-shrink: 0;',
+            '}',
+            '.limit-messages-number-input:focus { border-color: var(--SmartThemeQuoteColor); }',
+
+            '.limit-messages-footer {',
+            '  display: flex; gap: 10px;',
+            '  padding: 14px 18px;',
+            '  border-top: 1px solid var(--SmartThemeBorderColor);',
+            '}',
+            '.limit-messages-btn {',
+            '  flex: 1; padding: 9px 14px;',
+            '  border: none; border-radius: 8px;',
+            '  font-size: 14px; font-weight: 500;',
+            '  cursor: pointer;',
+            '  display: inline-flex; align-items: center; justify-content: center; gap: 6px;',
+            '  font-family: inherit;',
+            '}',
+            '.limit-messages-btn-primary { background: var(--SmartThemeQuoteColor); color: var(--SmartThemeBlurTintColor); }',
+            '.limit-messages-btn-primary:hover { filter: brightness(1.15); }',
+            '.limit-messages-btn-secondary { background: color-mix(in srgb, var(--SmartThemeBodyColor) 8%, transparent); color: var(--SmartThemeBodyColor); }',
+            '.limit-messages-btn-secondary:hover { background: color-mix(in srgb, var(--SmartThemeBodyColor) 15%, transparent); }'
+        ].join('\n');
+        topDoc.head.appendChild(style);
+    }
+
+    // ==========================================
+    // 暴露
+    // ==========================================
+
+    function exposeToGlobal() {
+        window.LimitMessages = {
+            openSettings: openSettingsPanel,
+            apply: applyMessageLimit,
+            unhide: unhideAllMessages,
+            getSettings: getSettings,
+            topDoc: topDoc === document ? 'current' : 'top',
+        };
+        // 也暴露到顶层方便排查
+        try {
+            topWin.LimitMessages = window.LimitMessages;
+        } catch (e) {}
+        log('INFO', '已暴露到 window.LimitMessages (面板挂载到: ' + (topDoc === document ? '当前 document' : '顶层 window.top.document') + ')');
+    }
+
+    // ==========================================
+    // 按钮注册
+    // ==========================================
+
+    function registerButtons() {
+        log('INFO', '开始注册按钮');
+        try {
+            if (typeof replaceScriptButtons === 'function') {
+                replaceScriptButtons([
+                    { name: '限制消息设置', visible: true },
+                    { name: '应用消息限制', visible: true },
+                    { name: '取消全部隐藏', visible: true },
+                ]);
+                log('INFO', 'replaceScriptButtons 调用完成');
+            } else {
+                log('ERROR', 'replaceScriptButtons 不可用');
+            }
+
+            if (typeof eventOn === 'function' && typeof getButtonEvent === 'function') {
+                eventOn(getButtonEvent('限制消息设置'), openSettingsPanel);
+                eventOn(getButtonEvent('应用消息限制'), applyMessageLimit);
+                eventOn(getButtonEvent('取消全部隐藏'), unhideAllMessages);
+                log('INFO', 'eventOn 按钮事件已注册');
+            } else if (typeof eventOnButton === 'function') {
+                eventOnButton('限制消息设置', openSettingsPanel);
+                eventOnButton('应用消息限制', applyMessageLimit);
+                eventOnButton('取消全部隐藏', unhideAllMessages);
+                log('INFO', 'eventOnButton 按钮事件已注册');
+            } else {
+                log('ERROR', 'eventOn / eventOnButton 都不可用');
+            }
+        } catch (e) {
+            log('ERROR', '注册按钮失败: ' + e.message);
+        }
+    }
+
+    // ==========================================
+    // 自动应用
+    // ==========================================
+
+    function setupAutoApply() {
+        if (typeof eventOn !== 'function') return;
+
+        try {
+            var generatedEvent = (typeof tavern_events !== 'undefined' && tavern_events.MESSAGE_RECEIVED)
+                || (typeof tavern_events !== 'undefined' && tavern_events.GENERATION_ENDED)
+                || null;
+            if (generatedEvent) {
+                eventOn(generatedEvent, function () {
+                    var settings = getSettings();
+                    if (settings.enabled) {
+                        // 等 DOM 更新后再应用
+                        setTimeout(function () { applyMessageLimit(); }, 200);
+                    }
+                });
+            }
+
+            var chatChangeEvent = (typeof tavern_events !== 'undefined' && tavern_events.CHAT_CHANGED) || null;
+            if (chatChangeEvent) {
+                eventOn(chatChangeEvent, function () {
+                    setTimeout(function () {
+                        var settings = getSettings();
+                        if (settings.enabled) applyMessageLimit();
+                        refreshStatusBar();
+                    }, 300);
+                });
+            }
+        } catch (e) {
+            log('ERROR', 'setupAutoApply 失败: ' + e.message);
+        }
+    }
+
+    // ==========================================
+    // 初始化
+    // ==========================================
+
+    // === v2.0 新增：DOM 变化监听 ===
+    // 当新楼层添加进来时，自动应用隐藏规则
+    var lmObserver = null;
+    var suppressObserverTicks = 0;  // 抑制 N 次 observer 回调（用户主动 unhide 时用）
+    function setupMutationObserver() {
+        if (lmObserver) return;
+        if (typeof MutationObserver === 'undefined') {
+            log('WARN', 'MutationObserver 不可用');
+            return;
+        }
+        var chat = topDoc.getElementById('chat');
+        if (!chat) {
+            log('WARN', '未找到 #chat 容器');
+            return;
+        }
+        var pending = false;
+        lmObserver = new MutationObserver(function () {
+            if (pending) return;
+            pending = true;
+            // 微任务后批量处理
+            setTimeout(function () {
+                pending = false;
+                if (suppressObserverTicks > 0) {
+                    suppressObserverTicks--;
+                    return;
+                }
+                var settings = getSettings();
+                if (!settings.enabled) return;
+                var result = getMesIdsToHideDOM(settings);
+                var hideSet = {};
+                for (var i = 0; i < result.toHide.length; i++) hideSet[result.toHide[i]] = true;
+                var nodes = topDoc.querySelectorAll('.mes[mesid]');
+                for (var k = 0; k < nodes.length; k++) {
+                    var mid = parseInt(nodes[k].getAttribute('mesid'), 10);
+                    if (hideSet[mid]) {
+                        if (!nodes[k].classList.contains('lm-dom-hidden')) {
+                            nodes[k].classList.add('lm-dom-hidden');
+                        }
+                    } else {
+                        if (nodes[k].classList.contains('lm-dom-hidden')) {
+                            nodes[k].classList.remove('lm-dom-hidden');
+                        }
+                    }
+                }
+                refreshStatusBar();
+            }, 100);
+        });
+        lmObserver.observe(chat, { childList: true, subtree: true });
+        log('INFO', 'MutationObserver 已启动');
+    }
+
+    function init() {
+        log('INFO', '限制消息加载脚本开始加载 (v2.0 纯 DOM 模式)');
+        exposeToGlobal();
+        injectStylesOnce();
+        bindPanelEvents();
+        ensureStatusBar();
+        registerButtons();
+        setupAutoApply();
+        setupMutationObserver();
+        // 启动时立即应用一次
+        setTimeout(function () {
+            var settings = getSettings();
+            if (settings.enabled) applyMessageLimit();
+        }, 500);
+        log('INFO', '限制消息加载脚本加载完成');
+    }
+
+    if (topDoc.readyState === 'loading') {
+        topDoc.addEventListener('DOMContentLoaded', init);
+    } else {
+        // 立即执行，同时让顶层 ready 之后再补一次（保险）
+        init();
+    }
+})();

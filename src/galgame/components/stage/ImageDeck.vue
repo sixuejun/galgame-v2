@@ -22,7 +22,10 @@
         </svg>
       </button>
 
-      <div class="deck-wrapper" :class="{ 'is-collapsed': isCollapsed, 'is-expanding': isTransitioning }">
+      <div
+        class="deck-wrapper"
+        :class="{ 'is-collapsed': isCollapsed, 'is-expanding': isTransitioning, 'portrait-mode': store.settings.portraitMode }"
+      >
         <div class="deck-glow" />
 
         <!-- 宽大悬停区：从左侧伸入画面，避免扇形被裁切 -->
@@ -673,93 +676,98 @@ function handleRetryLatest() {
   filter: brightness(0.55) saturate(0.5) !important;
 }
 
-@media (orientation: portrait) {
-  .deck-wrapper {
-    left: 2px;
-    transform: translateY(-50%) translateX(40px);
-  }
+/* 竖屏模式样式 */
+.portrait-mode .deck-wrapper {
+  left: 2px;
+  transform: translateY(-50%) translateX(40px);
+}
 
-  .deck-hit-area {
-    width: min(72vw, 520px);
-    height: min(80vh, 560px);
-    padding-left: 30px;
-  }
+.portrait-mode .deck-hit-area {
+  width: min(72vw, 520px);
+  height: min(80vh, 560px);
+  padding-left: 30px;
+}
 
-  .deck-card {
-    width: 82px;
-    height: 124px;
-    margin-left: -41px;
-    margin-top: -124px;
-  }
+.portrait-mode .deck-card {
+  width: 82px;
+  height: 124px;
+  margin-left: -41px;
+  margin-top: -124px;
+}
 
-  .deck-hit-area.is-hovered .deck-card {
-    transform: rotate(calc(var(--i) * 4deg)) translate(calc(var(--i) * 88px), -44px);
-  }
+.portrait-mode .deck-hit-area.is-hovered .deck-card {
+  transform: rotate(calc(var(--i) * 4deg)) translate(calc(var(--i) * 88px), -44px);
+}
 
-  .deck-card.deck-card-hovered {
-    transform: rotate(calc(var(--i) * 4deg)) translate(calc(var(--i) * 88px), -44px)
-      translate(calc(var(--i) * 16px), -40px) !important;
-  }
+.portrait-mode .deck-card.deck-card-hovered {
+  transform: rotate(calc(var(--i) * 4deg)) translate(calc(var(--i) * 88px), -44px)
+    translate(calc(var(--i) * 16px), -40px) !important;
 }
 
 /* ====== 竖屏时滚动范围较大（屏幕上卡片更多被裁） ====== */
-@media (orientation: portrait) {
-  :root {
-    --scroll-max: 280px;
-  }
+.portrait-mode :root {
+  --scroll-max: 280px;
 }
 
-/* 横屏模式 / 小窗口：整体缩小（优先横屏判断，小窗口也适用） 中*/
-@media (orientation: landscape) {
-  .deck-wrapper {
-    transform: translateY(-50%) translateX(-20px) scale(0.7);
-  }
-
-  .deck-hit-area {
-    width: min(52vw, 560px);
-    height: min(82vh, 600px);
-  }
-
-  .deck-card {
-    width: 80px;
-    height: 120px;
-    margin-left: -40px;
-    margin-top: -120px;
-  }
-
-  .deck-hit-area.is-hovered .deck-card {
-    transform: rotate(calc(var(--i) * 4deg)) translate(calc(var(--i) * 72px), -36px);
-  }
-
-  .deck-card.deck-card-hovered {
-    transform: rotate(calc(var(--i) * 4deg)) translate(calc(var(--i) * 72px), -36px)
-      translate(calc(var(--i) * 12px), -32px) !important;
-  }
+/* 横屏模式样式 */
+:not(.portrait-mode) .deck-wrapper,
+.landscape-only .deck-wrapper {
+  transform: translateY(-50%) translateX(-20px) scale(0.7);
 }
 
-/* 小窗口（宽 < 768px）通用缩放：横竖屏均适用 */
+:not(.portrait-mode) .deck-hit-area,
+.landscape-only .deck-hit-area {
+  width: min(52vw, 560px);
+  height: min(82vh, 600px);
+}
+
+:not(.portrait-mode) .deck-card,
+.landscape-only .deck-card {
+  width: 80px;
+  height: 120px;
+  margin-left: -40px;
+  margin-top: -120px;
+}
+
+:not(.portrait-mode) .deck-hit-area.is-hovered .deck-card,
+.landscape-only .deck-hit-area.is-hovered .deck-card {
+  transform: rotate(calc(var(--i) * 4deg)) translate(calc(var(--i) * 72px), -36px);
+}
+
+:not(.portrait-mode) .deck-card.deck-card-hovered,
+.landscape-only .deck-card.deck-card-hovered {
+  transform: rotate(calc(var(--i) * 4deg)) translate(calc(var(--i) * 72px), -36px)
+    translate(calc(var(--i) * 12px), -32px) !important;
+}
+
+/* 小窗口（宽 < 768px）横屏模式下的额外缩放 */
 @media (max-width: 768px) {
-  .deck-wrapper {
+  :not(.portrait-mode) .deck-wrapper,
+  .landscape-only .deck-wrapper {
     transform: translateY(-50%) translateX(-20px) scale(0.65);
   }
 
-  .deck-hit-area {
+  :not(.portrait-mode) .deck-hit-area,
+  .landscape-only .deck-hit-area {
     width: min(52vw, 560px);
     height: min(82vh, 600px);
   }
 
-  .deck-card {
+  :not(.portrait-mode) .deck-card,
+  .landscape-only .deck-card {
     width: 72px;
     height: 108px;
     margin-left: -36px;
     margin-top: -108px;
   }
 
-  .deck-hit-area.is-hovered .deck-card {
+  :not(.portrait-mode) .deck-hit-area.is-hovered .deck-card,
+  .landscape-only .deck-hit-area.is-hovered .deck-card {
     transform: rotate(calc(var(--i) * 4deg)) translate(calc(var(--i) * 64px), -32px);
   }
 
-  .deck-card.deck-card-hovered {
+  :not(.portrait-mode) .deck-card.deck-card-hovered,
+  .landscape-only .deck-card.deck-card-hovered {
     transform: rotate(calc(var(--i) * 4deg)) translate(calc(var(--i) * 64px), -32px)
       translate(calc(var(--i) * 10px), -28px) !important;
   }

@@ -1,25 +1,25 @@
-﻿<template>
+<template>
   <div class="absolute inset-0 flex items-center justify-center" style="z-index: 50">
     <div class="absolute inset-0 backdrop-blur-sm" style="background: rgba(42, 36, 32, 0.7)" @click="$emit('close')" />
 
     <div
-      class="flex flex-col relative w-full max-w-3xl mx-4 border overflow-hidden animate-fade-in-up"
+      class="flex flex-col relative w-full max-w-2xl portrait:max-w-xs mx-2 sm:mx-4 border overflow-hidden animate-fade-in-up"
       :style="panelStyle"
     >
       <div :style="decoTop" />
       <div :style="decoTopThin" />
 
       <!-- Header -->
-      <div class="flex items-center justify-between px-6 py-4" :style="headerBorder">
-        <div class="flex items-center gap-3">
-          <div class="stamp-effect">
+      <div class="flex items-center justify-between px-4 py-3 gap-2" :style="headerBorder">
+        <div class="flex items-center gap-2 sm:gap-3 min-w-0">
+          <div v-if="!store.settings.portraitMode" class="stamp-effect shrink-0">
             <span style="color: var(--theme-accent, var(--rust)); font-size: 0.75rem; font-weight: bold; letter-spacing: 0.15em"
               >WORLDBOOK</span
             >
           </div>
-          <h2 class="text-lg font-bold tracking-widest" style="color: var(--theme-text-main, rgba(212, 197, 160, 0.9))">世界书管理</h2>
+          <h2 class="text-sm sm:text-lg font-bold tracking-widest truncate" style="color: var(--theme-text-main, rgba(212, 197, 160, 0.9))">世界书管理</h2>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-2 shrink-0">
           <!-- Export -->
           <button
             class="px-2 py-1 text-xs border cursor-pointer flex items-center gap-1"
@@ -64,21 +64,23 @@
 
       <!-- Info Banner -->
       <div
-        class="px-6 py-3"
-        :style="{ borderBottom: '1px solid rgba(90,79,64,0.2)', background: 'rgba(139,69,19,0.1)' }"
+        class="px-4 py-2 border-bottom"
+        :style="{ paddingLeft: store.settings.portraitMode ? '0.75rem' : '1.5rem', paddingRight: store.settings.portraitMode ? '0.75rem' : '1.5rem', borderBottom: '1px solid rgba(90,79,64,0.2)', background: 'rgba(139,69,19,0.1)' }"
       >
-        <div class="text-xs" style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.8))">
-          <i class="fa-solid fa-circle-info mr-2" style="color: var(--theme-accent, var(--rust))" />
+        <div class="text-xs leading-relaxed" style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.8))">
+          <i class="fa-solid fa-circle-info mr-1 sm:mr-2" style="color: var(--theme-accent, var(--rust))" />
           管理世界书条目的启用状态、关联功能和 API 分配。
-          <strong style="color: var(--theme-text-main, rgba(212,197,160,0.9))">任务关联条目</strong>
-          （弹幕/生图）会按「API 任务配置」自动路由，受对应功能开关控制；
-          <strong style="color: var(--theme-text-main, rgba(212,197,160,0.9))">通用条目</strong>
-          按"发送给"决定。
+          <span v-if="!store.settings.portraitMode">
+            <strong style="color: var(--theme-text-main, rgba(212,197,160,0.9))">任务关联条目</strong>
+            （弹幕/生图）会按「API 任务配置」自动路由，受对应功能开关控制；
+            <strong style="color: var(--theme-text-main, rgba(212,197,160,0.9))">通用条目</strong>
+            按"发送给"决定。
+          </span>
         </div>
       </div>
 
       <!-- Content -->
-      <div class="px-6 py-4 overflow-y-auto no-scrollbar" style="max-height: calc(100vh - 180px)">
+      <div class="px-3 py-3 overflow-y-auto no-scrollbar" style="max-height: calc(100vh - 180px)">
         <!-- Loading -->
         <div v-if="loading" class="text-center py-8">
           <i class="fa-solid fa-spinner fa-spin text-2xl mb-3" style="color: rgba(90, 79, 64, 0.5)" />
@@ -116,9 +118,9 @@
               }"
             >
                 <!-- Entry Header -->
-              <div class="flex items-start justify-between mb-3">
-                <div class="flex-1 min-w-0 mr-3">
-                  <div class="flex items-center gap-2 mb-1">
+              <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-2 mb-3">
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2 mb-1 flex-wrap">
                     <span class="text-sm font-bold" style="color: var(--theme-text-main, rgba(212, 197, 160, 0.9))">
                       {{ entry.name || `条目 #${entry.uid}` }}
                     </span>
@@ -138,7 +140,7 @@
                     {{ entry.content.slice(0, 80) }}{{ entry.content.length > 80 ? '…' : '' }}
                   </p>
                 </div>
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 sm:self-start">
                   <button
                     class="shrink-0 px-3 py-1.5 text-xs border transition-all"
                     :disabled="entry.updating"
@@ -159,7 +161,7 @@
               </div>
 
               <!-- Entry Controls -->
-              <div class="grid grid-cols-2 gap-3">
+              <div :class="['grid gap-3', store.settings.portraitMode ? 'grid-cols-1' : 'grid-cols-2']">
                 <!-- 实际发送目标（任务关联条目：实时计算；通用条目：回显 targetApi） -->
                 <div>
                   <label class="block text-xs mb-1.5" style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.7))">
@@ -500,7 +502,7 @@ async function onImportFile(evt: Event) {
   try {
     const text = await file.text();
     config = JSON.parse(text) as ExportedConfig;
-    if (config.version !== 1 || typeof config.worldbooks !== 'object') throw new Error('格式不正确');
+    if (config.version !== 2 || typeof config.worldbooks !== 'object') throw new Error('格式不正确（期望 version: 2）');
   } catch (e: any) {
     alert(`导入失败：${e.message || '文件格式错误'}`);
     return;

@@ -34,7 +34,7 @@
       :is-portrait-mode="isPortraitMode"
     />
 
-    <SettingsPanel v-if="store.activeOverlay === 'settings'" :is-portrait-mode="isPortraitMode" />
+    <SettingsPanel v-if="store.activeOverlay === 'settings'" />
     <HistoryPanel v-if="store.activeOverlay === 'history'" @go-to-line="handleGoToLine" />
     <CharacterPanel v-if="store.activeOverlay === 'character'" />
     <GameplayPanel v-if="store.activeOverlay === 'gameplay'" />
@@ -165,11 +165,6 @@ function syncUserCss() {
 // 竖屏模式判断
 const isPortraitMode = computed(() => store.settings.portraitMode);
 
-// 监听竖屏模式开关，切换 HTML class 以触发 CSS 中的 -portrait 变量覆盖
-watch(isPortraitMode, isPortrait => {
-  document.documentElement.classList.toggle('portrait-mode', isPortrait);
-}, { immediate: true });
-
 // 主容器样式：仅用 width + aspect-ratio 决定高度（iframe 内禁止 vh，避免与比例冲突把宽度压成细条）
 /** 从用户 CSS 文本中提取 --var(--xxx) 变量声明为 key-value 映射，支持：
  *  - 顶层变量声明：`--var: value;`
@@ -223,9 +218,15 @@ const mainStyle = computed(() => {
   logThemeVarDiff('theme vars updated', THEME_KEYS, before, after);
   lastThemeSnapshot = after;
 
+  if (isPortraitMode.value) {
+    return {
+      ...base,
+      aspectRatio: '3 / 4',
+    };
+  }
   return {
     ...base,
-    aspectRatio: isPortraitMode.value ? '3 / 4' : '16 / 9',
+    aspectRatio: '16 / 9',
   };
 });
 
@@ -237,13 +238,20 @@ const overlayContainerStyle = computed(() => {
   return { zIndex: 20, minHeight: 0 };
 });
 
-// 对话框样式：竖屏模式下通过 .portrait-mode class 自动切换 -portrait 变量
-const dialogueBoxStyle = computed(() => ({
-  paddingBottom: 'var(--theme-dialogue-bottom, 1.5rem)',
-  paddingLeft: 'var(--theme-dialogue-portrait-padding-x, 1rem)',
-  paddingRight: 'var(--theme-dialogue-portrait-padding-x, 1rem)',
-  transform: 'translate(var(--theme-dialogue-translate-x, 0px), var(--theme-dialogue-translate-y, 0px))',
-}));
+// 对话框样式：竖屏模式下调整位置到底部中央
+const dialogueBoxStyle = computed(() => {
+  const style: Record<string, string> = {
+    paddingBottom: isPortraitMode.value
+      ? 'var(--theme-dialogue-bottom-portrait, 0.8vmin)'
+      : 'var(--theme-dialogue-bottom, 1.5rem)',
+    transform: 'translate(var(--theme-dialogue-translate-x, 0px), var(--theme-dialogue-translate-y, 0px))',
+  };
+  if (isPortraitMode.value) {
+    style.paddingLeft = 'var(--theme-dialogue-portrait-padding-x, 1rem)';
+    style.paddingRight = 'var(--theme-dialogue-portrait-padding-x, 1rem)';
+  }
+  return style;
+});
 
 // 显示扇形卡牌队列由 ImageDeck 组件自身控制（仅依赖开关）
 
