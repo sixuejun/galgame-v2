@@ -204,7 +204,7 @@
                   >
                   <p
                     class="mt-0.5 text-sm leading-relaxed"
-                    style="color: var(--theme-history-text-color, var(--theme-text-soft, rgba(212, 197, 160, 0.8)))"
+                    style="color: var(--theme-history-text-color, var(--theme-text-soft, rgba(212, 197, 160, 0.8))); white-space: pre-line; word-break: break-word"
                   >
                     {{ line.text }}
                   </p>
@@ -212,7 +212,7 @@
                 <p
                   v-else
                   class="text-sm leading-relaxed italic"
-                  style="color: var(--theme-history-narration-color, rgba(212, 197, 160, 0.6)); padding-left: 2em"
+                  style="color: var(--theme-history-narration-color, rgba(212, 197, 160, 0.6)); padding-left: 2em; white-space: pre-line; word-break: break-word"
                 >
                   {{ line.text }}
                 </p>

@@ -162,6 +162,9 @@ function handleClick(event: MouseEvent) {
   color: var(--theme-blacktext-color, rgba(250, 248, 240, 0.95));
   font-family: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'SimSun', serif;
   text-shadow: 0 0 1.5em rgba(0, 0, 0, 0.5);
+  /* 块内换行：保留黑屏文字中由 \n 字符产生的换行
+   * （参见 messageParser.ts parseBlock 的行为变更） */
+  white-space: pre-line;
 }
 
 .vn-blacktext-hint {

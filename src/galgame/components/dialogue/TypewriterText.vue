@@ -183,6 +183,9 @@ watch(
   padding: 0;
   word-wrap: break-word;
   overflow-wrap: break-word;
+  /* 块内换行：保留台词/旁白中由 \n 字符产生的换行，让 AI 输出的多行内容表现为块内换行
+   * （参见 messageParser.ts parseBlock 的行为变更） */
+  white-space: pre-line;
 }
 
 /* 心理描写：灰色斜体，与普通文字有间距 */

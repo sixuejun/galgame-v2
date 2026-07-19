@@ -146,37 +146,43 @@ function resolveSpriteDisplayName(character: string, resources: WorldbookResourc
 }
 
 /**
- * 将 \n 转义序列转换为真实换行，并按换行拆分文本
- */
-function splitByNewline(text: string): string[] {
-  if (!text) return [];
-  // 将 \n 转义序列转换为真实换行
-  const normalized = text.replace(/\\n/g, '\n');
-  return normalized
-    .split(/\n+/)
-    .map(s => s.trim())
-    .filter(s => s.length > 0);
-}
-
-/**
  * 匹配嵌套的 [[...]] 块
  * 用于正确处理多行内容的格式块
  * 匹配规则：[[ 开头，对应数量（不嵌套）的 ]] 结尾
+ *
+ * 分隔符兼容：
+ * - 标准：[[type||key：value||key2：value2]]
+ * - 容错：AI 可能漏写一个 | 写成 [[type|key：value|key2：value2]]，
+ *   此时优先使用 || 作为分隔符；若只有 | 才使用 | 作为分隔符。
  */
 function matchBlock(text: string, startIndex: number): { type: string; content: string; endIndex: number } | null {
   // 检查是否以 [[ 开头
   if (text.slice(startIndex, startIndex + 2) !== '[[') return null;
 
-  // 找到第一个 || 的位置（在 [[ 之后）
-  const firstBarBar = text.indexOf('||', startIndex + 2);
-  if (firstBarBar === -1) return null;
+  const afterBrackets = startIndex + 2;
 
-  // 提取 type（在 [[ 和第一个 || 之间）
-  const type = text.slice(startIndex + 2, firstBarBar).trim();
+  // 优先找 ||，找不到再找 |（AI 漏写一个 | 的容错）
+  const doubleBarIdx = text.indexOf('||', afterBrackets);
+  const singleBarIdx = text.indexOf('|', afterBrackets);
+
+  let separatorIdx: number;
+  let separatorLen: number;
+  if (doubleBarIdx !== -1 && (singleBarIdx === -1 || doubleBarIdx <= singleBarIdx)) {
+    separatorIdx = doubleBarIdx;
+    separatorLen = 2;
+  } else if (singleBarIdx !== -1) {
+    separatorIdx = singleBarIdx;
+    separatorLen = 1;
+  } else {
+    return null;
+  }
+
+  // 提取 type（在 [[ 和分隔符之间）
+  const type = text.slice(afterBrackets, separatorIdx).trim();
   if (!type) return null;
 
-  // 从第一个 || 之后开始搜索对应的 ]] 结尾
-  const contentStart = firstBarBar + 2;
+  // 从分隔符之后开始搜索对应的 ]] 结尾
+  const contentStart = separatorIdx + separatorLen;
   let depth = 1; // 遇到的第一个 [[ 增加深度，之后的每个 [[ 增加， 每个 ]] 减少
   let i = contentStart;
 
@@ -228,12 +234,18 @@ function matchAllBlocks(text: string): Array<{ type: string; content: string }> 
 
 /**
  * 解析键值对字符串
- * 支持 || 分隔多对键值，支持值中包含换行
- * 支持 key：value 和 key：value 两种冒号格式
+ *
+ * 支持：
+ * - || 分隔多对键值（标准）
+ * - | 分隔（AI 漏写一个 | 的容错）—— 当 || 不存在时才用 | 分隔，避免误切值中的 |
+ * - 值中包含换行（\\n 会保留为真实换行字符，供块内换行渲染）
+ * - 多种冒号变体：英文 :（U+003A）、中文 / 日文 全角 ：（U+FF1A）、
+ *   其他常见全角冒号变体（U+FE13 / U+2236 等）
  */
 function parsePairs(content: string): { key: string; value: string }[] {
-  // 优先按 || 分隔成多段，再从每段中提取键值对
-  const segments = content.split(/\|\|\s*/);
+  // 优先按 || 分隔成多段；若只有 1 段（AI 漏写 |），则按 | 分隔
+  const doubleSegments = content.split('||');
+  const segments = doubleSegments.length > 1 ? doubleSegments : content.split('|');
   const pairs: { key: string; value: string }[] = [];
 
   for (const segment of segments) {
@@ -241,10 +253,12 @@ function parsePairs(content: string): { key: string; value: string }[] {
     if (!trimmed) continue;
 
     // 在每个 segment 中用冒号分隔键和值
-    const colonIdx = trimmed.search(/[:：]/);
+    // 兼容冒号变体：英文 :（U+003A）、全角 ：（U+FF1A，中文/日文）、其他少见变体
+    const colonIdx = trimmed.search(/[:：︓∶]/);
     if (colonIdx > 0) {
       const key = trimmed.slice(0, colonIdx).trim();
-      const value = trimmed.slice(colonIdx + 1).trim();
+      // 不 trim value 中的换行符，只去掉首尾空白；并把字面 \\n 转为真实换行
+      const value = trimmed.slice(colonIdx + 1).replace(/^\s+/, '').replace(/\s+$/, '').replace(/\\n/g, '\n');
       if (key) {
         pairs.push({ key, value });
       }
@@ -254,18 +268,203 @@ function parsePairs(content: string): { key: string; value: string }[] {
   return pairs;
 }
 
+/**
+ * 标准化块类型字符串以用于模糊匹配
+ * 去除非字母数字字符并转小写
+ */
+function normalizeForBlockTypeMatch(text: string): string {
+  return text.replace(/[^a-z0-9]/gi, '').toLowerCase();
+}
+
+/**
+ * 计算 Levenshtein 编辑距离（越小越相似）
+ * 用于容忍 AI 写错的块类型（如 'charcter' / 'narrtion' / 'blakctext'）
+ */
+function levenshteinDistance(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+
+  // 单行滚动数组版，空间 O(min(a,b))
+  const shorter = a.length <= b.length ? a : b;
+  const longer = a.length <= b.length ? b : a;
+  const m = shorter.length;
+  const n = longer.length;
+
+  let prev = new Array<number>(m + 1);
+  let curr = new Array<number>(m + 1);
+  for (let i = 0; i <= m; i++) prev[i] = i;
+
+  for (let j = 1; j <= n; j++) {
+    curr[0] = j;
+    for (let i = 1; i <= m; i++) {
+      const cost = shorter[i - 1] === longer[j - 1] ? 0 : 1;
+      curr[i] = Math.min(
+        prev[i] + 1, // 删除
+        curr[i - 1] + 1, // 插入
+        prev[i - 1] + cost, // 替换
+      );
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[m];
+}
+
+/**
+ * 规范化块类型为标准类型，支持拼写错误容忍
+ *
+ * 容忍策略：
+ * 1. 精确匹配：与已知中英文别名完全一致（不区分大小写）
+ * 2. 常见拼写错误查表：内置一组高频 LLM 拼写错误 → 标准类型的映射
+ * 3. 模糊匹配：当 (3) 长度差 ≤ 2 且 Levenshtein 距离 ≤ 2 时，认为是该标准类型的拼写错误
+ * 4. 兜底：返回原始字符串作为类型
+ */
 function normalizeBlockType(type: string): MessageBlock['type'] {
-  const normalized = type.trim().toLowerCase();
+  const trimmed = type.trim();
+  if (!trimmed) return 'narration';
+
+  const normalized = trimmed.toLowerCase();
+
+  // 1. 精确匹配
   if (['character', '角色', '人物', '对话', '台词'].includes(normalized)) return 'character';
-  if (['narration', '旁白', '叙述'].includes(normalized)) return 'narration';
+  if (['narration', '旁白', '叙述', '叙述者'].includes(normalized)) return 'narration';
   if (
     ['blacktext', 'black', 'black_screen', 'black-screen', '黑屏', '黑屏文字', '黑幕', '黑幕文字'].includes(normalized)
   ) {
     return 'blacktext';
   }
-  if (['choice', 'choices', '选项', '选择'].includes(normalized)) return 'choice';
+  if (['choice', 'choices', '选项', '选择', '抉择'].includes(normalized)) return 'choice';
+  if (['user', '<user>'].includes(normalized)) return 'user';
+
+  // 2. 常见拼写错误查表（高频 LLM 输出错误）
+  const misspellingMap: Record<string, MessageBlock['type']> = {
+    // character 常见错误
+    charcter: 'character',
+    caracter: 'character',
+    charecter: 'character',
+    charactar: 'character',
+    charater: 'character',
+    charactor: 'character',
+    charectr: 'character',
+    chracater: 'character',
+    characte: 'character',
+    charactr: 'character',
+    characterr: 'character',
+    charactes: 'character',
+    charaterr: 'character',
+    charechter: 'character',
+    charactrer: 'character',
+    charact: 'character',
+    chr: 'character',
+    chare: 'character',
+    dialogue: 'character',
+    dialog: 'character',
+    speaker: 'character',
+    speakers: 'character',
+    voice: 'character',
+    line: 'character',
+    speech: 'character',
+    char: 'character',
+    chars: 'character',
+
+    // narration 常见错误
+    narrtion: 'narration',
+    naration: 'narration',
+    naratration: 'narration',
+    narrration: 'narration',
+    narraion: 'narration',
+    narratoin: 'narration',
+    narative: 'narration',
+    naratives: 'narration',
+    narrate: 'narration',
+    narates: 'narration',
+    narrat: 'narration',
+    narratn: 'narration',
+    nara: 'narration',
+    narr: 'narration',
+    description: 'narration',
+    desc: 'narration',
+    narrative: 'narration',
+    narrtive: 'narration',
+
+    // blacktext 常见错误
+    blakctext: 'blacktext',
+    blcktext: 'blacktext',
+    balcktext: 'blacktext',
+    blacktxt: 'blacktext',
+    blactext: 'blacktext',
+    blacktex: 'blacktext',
+    blackext: 'blacktext',
+    blecktext: 'blacktext',
+    blackscren: 'blacktext',
+    blackcreen: 'blacktext',
+    black: 'blacktext',
+    bkack: 'blacktext',
+    blakc: 'blacktext',
+    blck: 'blacktext',
+
+    // choice 常见错误
+    choise: 'choice',
+    coice: 'choice',
+    chose: 'choice',
+    chocies: 'choice',
+    chioce: 'choice',
+    option: 'choice',
+    options: 'choice',
+    select: 'choice',
+  };
+  if (misspellingMap[normalized]) return misspellingMap[normalized];
+
+  // 3. 模糊匹配（编辑距离 ≤ 2 且长度差 ≤ 2）
+  const cleanInput = normalizeForBlockTypeMatch(normalized);
+  if (cleanInput.length >= 3) {
+    const candidates: Array<{ name: string; type: MessageBlock['type'] }> = [
+      { name: 'character', type: 'character' },
+      { name: 'narration', type: 'narration' },
+      { name: 'blacktext', type: 'blacktext' },
+      { name: 'black', type: 'blacktext' },
+      { name: 'choice', type: 'choice' },
+      { name: 'choices', type: 'choice' },
+    ];
+    let bestMatch: { name: string; type: MessageBlock['type']; distance: number } | null = null;
+    for (const c of candidates) {
+      const lenDiff = Math.abs(cleanInput.length - c.name.length);
+      if (lenDiff > 2) continue;
+      const distance = levenshteinDistance(cleanInput, c.name);
+      if (distance <= 2 && (!bestMatch || distance < bestMatch.distance)) {
+        bestMatch = { name: c.name, type: c.type, distance };
+      }
+    }
+    if (bestMatch) {
+      console.info(
+        `[MessageParser] 模糊匹配块类型: "${type}" -> "${bestMatch.name}" (距离=${bestMatch.distance})`,
+      );
+      return bestMatch.type;
+    }
+  }
+
+  // 4. 兜底：原样返回（后续会被识别为无法识别的块并过滤掉）
   return normalized as MessageBlock['type'];
 }
+
+/**
+ * 文本字段的候选键名（按优先级匹配）
+ * - 用于兼容 AI 把台词误输出成"旁白"、把旁白误输出成"台词"等情况
+ * - 中文别名 → 英文别名 → 通用字段名（text/line 等）
+ */
+const NARRATION_TEXT_KEYS = ['旁白', '台词', '叙述', '内容', '文字', 'narration', 'line', 'text', 'description'];
+const CHARACTER_TEXT_KEYS = ['台词', '旁白', '对话', '内容', '文字', 'line', 'text', 'speech', 'dialogue'];
+const BLACKTEXT_TEXT_KEYS = [
+  '黑屏文字',
+  '黑屏',
+  '黑幕',
+  '黑幕文字',
+  '台词内容',
+  '台词',
+  '文字',
+  '内容',
+  'text',
+];
 
 /**
  * 根据键值对数组创建消息块
@@ -279,11 +478,15 @@ function createBlock(
   const block: MessageBlock = { type };
 
   if (type === 'character') {
-    block.character = pairs.find(p => p.key === '角色名' || p.key === '角色')?.value || '';
+    block.character = pairs.find(p => p.key === '角色名' || p.key === '角色' || p.key === '人物' || p.key === 'name')
+      ?.value || '';
     block.scene = pairs.find(p => p.key === '场景')?.value || '';
     block.motion = pairs.find(p => p.key === '动作')?.value || '';
     block.expression = pairs.find(p => p.key === '表情')?.value || '';
-    block.text = pairs.find(p => p.key === '台词')?.value || '';
+    // 台词字段兼容：AI 偶尔会写成"对白/对话/line/speech"等
+    block.text =
+      pairs.find(p => CHARACTER_TEXT_KEYS.includes(p.key))?.value ||
+      '';
 
     console.info(
       `[MessageParser] 创建 character 块: 角色="${block.character}", 场景="${block.scene}", 台词="${block.text}"`,
@@ -303,17 +506,16 @@ function createBlock(
     }
   } else if (type === 'narration') {
     block.scene = pairs.find(p => p.key === '场景')?.value || '';
-    block.message = pairs.find(p => p.key === '旁白')?.value || '';
+    // 旁白字段兼容：AI 偶尔会把台词误输出到旁白块（如 [[narration||台词：xxx]]），
+    // 这里按 NARRATION_TEXT_KEYS 优先级依次匹配
+    block.message =
+      pairs.find(p => NARRATION_TEXT_KEYS.includes(p.key))?.value ||
+      '';
     console.info(`[MessageParser] 创建 narration 块: 场景="${block.scene}", 旁白="${block.message}"`);
     if (block.scene) block.sceneImageUrl = matchBackground(block.scene, resources);
   } else if (type === 'blacktext') {
     block.message =
-      pairs.find(p => p.key === '黑屏文字')?.value ||
-      pairs.find(p => p.key === '台词内容')?.value ||
-      pairs.find(p => p.key === '台词')?.value ||
-      pairs.find(p => p.key === '文字')?.value ||
-      pairs.find(p => p.key === 'text')?.value ||
-      '';
+      pairs.find(p => BLACKTEXT_TEXT_KEYS.includes(p.key))?.value || '';
     console.info(`[MessageParser] 创建 blacktext 块: "${block.message}"`);
   } else if (type === 'choice') {
     // 格式：[[choice||选项1：xxx||选项2：yyy||选项3：zzz]]
@@ -335,55 +537,25 @@ function createBlock(
 
 /**
  * 解析单个消息块
- * 如果文本字段中包含换行，会自动拆分成多个块
+ *
+ * 行为变更：
+ * - 旧行为：如果文本字段中包含换行，会自动拆分成多个块
+ * - 新行为：保留文本中的换行符（\n），输出为单个块，由 UI 层渲染为"块内换行"
+ *
+ * 理由：AI 经常在台词/旁白字段中输出多行内容（如多句对白、多行描述），
+ *       拆成多个块会导致：
+ *       1. 多个 character 块被分到不同的场景继承上下文
+ *       2. 多次刷新头像/立绘
+ *       3. UI 翻页节奏被打断
+ *       改为块内换行后，这些问题消失，UI 渲染层只需 `white-space: pre-line` 即可显示。
  */
 function parseBlock(blockInfo: { type: string; content: string }, resources: WorldbookResources): MessageBlock[] {
   const { type, content } = blockInfo;
   const pairs = parsePairs(content);
 
-  const normalizedType = normalizeBlockType(type);
-
-  // 找出文本字段（不处理转义）
-  let textField = '';
-  if (normalizedType === 'character') {
-    textField = pairs.find(p => p.key === '台词')?.value || '';
-  } else if (normalizedType === 'narration') {
-    textField = pairs.find(p => p.key === '旁白')?.value || '';
-  } else if (normalizedType === 'blacktext') {
-    textField =
-      pairs.find(p => p.key === '黑屏文字')?.value ||
-      pairs.find(p => p.key === '台词内容')?.value ||
-      pairs.find(p => p.key === '台词')?.value ||
-      pairs.find(p => p.key === '文字')?.value ||
-      pairs.find(p => p.key === 'text')?.value ||
-      '';
-  }
-
-  // 使用 splitByNewline 处理 \n 转义和换行拆分
-  const lines = splitByNewline(textField);
-
-  // 如果拆分后只有一个片段，直接返回一个块
-  if (lines.length <= 1) {
-    return [createBlock(type, pairs, resources)];
-  }
-
-  // 拆分成多个块
-  return lines.map(line => {
-    const newPairs = pairs.map(p => {
-      if (
-        p.key === '台词' ||
-        p.key === '旁白' ||
-        p.key === '黑屏文字' ||
-        p.key === '台词内容' ||
-        p.key === '文字' ||
-        p.key === 'text'
-      ) {
-        return { key: p.key, value: line };
-      }
-      return { ...p };
-    });
-    return createBlock(type, newPairs, resources);
-  });
+  // 直接返回单个块；文本字段的 \n 转义已由 parsePairs 处理为真实换行符，
+  // UI 层使用 white-space: pre-line 渲染为块内换行。
+  return [createBlock(type, pairs, resources)];
 }
 
 /**
@@ -506,7 +678,8 @@ export function extractFormattedPlotText(message: string): string {
         // 选项不进入剧情文本
       } else if (blockType === 'character') {
         const characterName = extractCharacterNameFromPairs(pairs);
-        const linePair = pairs.find(p => ['台词', 'line'].includes(p.key));
+        // 兼容多种台词字段名（与 createBlock 中的 CHARACTER_TEXT_KEYS 对齐）
+        const linePair = pairs.find(p => CHARACTER_TEXT_KEYS.includes(p.key));
         if (linePair && linePair.value) {
           const lineParts = splitByNewlineForPlainText(linePair.value);
           for (const part of lineParts) {
@@ -515,12 +688,14 @@ export function extractFormattedPlotText(message: string): string {
           }
         }
       } else if (blockType === 'narration') {
-        const narrationPair = pairs.find(p => ['旁白', 'narration'].includes(p.key));
+        // 兼容多种旁白字段名（与 createBlock 中的 NARRATION_TEXT_KEYS 对齐）
+        const narrationPair = pairs.find(p => NARRATION_TEXT_KEYS.includes(p.key));
         if (narrationPair && narrationPair.value) {
           lines.push(...splitByNewlineForPlainText(narrationPair.value));
         }
       } else if (blockType === 'blacktext') {
-        const blackPair = pairs.find(p => ['黑屏文字', '黑屏'].includes(p.key));
+        // 兼容多种黑屏文字字段名
+        const blackPair = pairs.find(p => BLACKTEXT_TEXT_KEYS.includes(p.key));
         if (blackPair && blackPair.value) {
           lines.push(...splitByNewlineForPlainText(blackPair.value));
         }
@@ -599,10 +774,17 @@ export function extractPlainTextFromContent(message: string): string {
     });
     if (block && normalizeBlockType(block.type) !== 'choice') {
       const pairs = parsePairs(block.content);
+      // 兼容多种文本字段名（与 createBlock 中的 KEY 列表对齐）
       for (const pair of pairs) {
-        if (['台词', '旁白', '黑屏文字'].includes(pair.key) && pair.value) {
-          const lineParts = splitByNewlineForPlainText(pair.value);
-          lines.push(...lineParts);
+        if (
+          CHARACTER_TEXT_KEYS.includes(pair.key) ||
+          NARRATION_TEXT_KEYS.includes(pair.key) ||
+          BLACKTEXT_TEXT_KEYS.includes(pair.key)
+        ) {
+          if (pair.value) {
+            const lineParts = splitByNewlineForPlainText(pair.value);
+            lines.push(...lineParts);
+          }
         }
       }
     }

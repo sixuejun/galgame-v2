@@ -821,6 +821,27 @@ export const useVNStore = defineStore('vn', () => {
   const toastMessage = ref<string | null>(null);
   const toastVisible = ref(false);
 
+  // --- 版本检查状态（由 index.ts 中的 startVersionChecker 驱动） ---
+  // 这里只暴露响应式 ref；fetch/reload 的副作用由 index.ts 协调，
+  // 让 store 保持纯粹的"数据层"职责。
+  const versionState = ref<{
+    local: string;
+    remote: { version: string; buildTime?: string; commit?: string } | null;
+    status: 'unknown' | 'synced' | 'outdated' | 'failed';
+    lastCheckedAt: number | null;
+    lastError: string | null;
+  }>({
+    local: '0.0.0',
+    remote: null,
+    status: 'unknown',
+    lastCheckedAt: null,
+    lastError: null,
+  });
+
+  function setVersionState(next: typeof versionState.value): void {
+    versionState.value = next;
+  }
+
   // --- Persisted settings (localStorage, key固定避免流式楼层iframe id不一致) ---
   function loadSettingsFromStorage(): z.infer<typeof VNSettings> {
     try {
@@ -6115,5 +6136,8 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
     getWorkshopStats,
     // MVU 楼层变量写入
     writeMvuMessageField,
+    // 版本检查
+    versionState,
+    setVersionState,
   };
 });

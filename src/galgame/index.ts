@@ -13,7 +13,23 @@ import {
   wrapContentTag,
 } from './utils/messageParser';
 import { initRoleScanner, manualFullScan } from './utils/roleScanner';
+import { startVersionChecker } from './utils/versionChecker';
 import { createVNLogger } from './utils/vnLogger';
+
+/**
+ * 当前脚本构建版本号。
+ *
+ * 每次发布到 GitHub 之前手动改一下这个常量（或在 build 钩子里自动写入）。
+ * 远端的 jsDelivr 上需要有一个 dist/galgame/version.json，其内容形如：
+ *   { "version": "2026-07-20-r3" }
+ *
+ * 脚本启动时会去 fetch 这个 JSON，与本常量对比：
+ * - 不一致 → 说明 jsDelivr 已经同步了新代码，window.location.reload() 拉取最新代码
+ * - 一致   → 已是最新
+ *
+ * 这给开发者提供了一个简单可靠的方式去诊断"jsDelivr 是否已经同步我的最新 commit"。
+ */
+const BUILD_VERSION = '2026-07-20-r3';
 const vnLog = createVNLogger('[VN]');
 
 // ============================================================
@@ -100,6 +116,67 @@ $(() => {
     // 其他楼层保持酒馆原生文本显示，不挂 streaming iframe / 不创建第二个 App.vue。
     filter: message_id => message_id === 0,
   });
+
+  // ====== 版本检查：远端 jsDelivr 上的版本与本地 BUILD_VERSION 对比 ======
+  // 把 store 初始化时把 local 写为 BUILD_VERSION，避免设置面板一开始就显示 'unknown'。
+  try {
+    const initialStore = (window as any).__galgameState?.mainStore;
+    if (initialStore?.setVersionState) {
+      initialStore.setVersionState({
+        local: BUILD_VERSION,
+        remote: null,
+        status: 'unknown',
+        lastCheckedAt: null,
+        lastError: null,
+      });
+    }
+  } catch {
+    // store 可能尚未挂载（mountStreamingMessages 是同步的，但保险起见这里包一层 try）
+  }
+
+  let _versionCheckerStop: (() => void) | null = null;
+  // 等 store 挂载后启动版本检查器。
+  // store 挂在 `setMainStore(...)` 调用时设置；通过反复检测兜底。
+  const tryStartVersionChecker = (attempts = 0): void => {
+    const storeRef = (window as any).__galgameState?.mainStore as
+      | {
+          setVersionState: (s: any) => void;
+          showToast?: (msg: string) => void;
+        }
+      | null;
+    if (storeRef?.setVersionState) {
+      _versionCheckerStop = startVersionChecker({
+        localVersion: BUILD_VERSION,
+        onState: state => storeRef.setVersionState(state),
+        onNeedReload: remote => {
+          // 远端版本更新 → 提示用户后整页刷新
+          console.info(
+            '[version-check] 检测到新版本，本地=%s 远端=%s，准备 reload',
+            BUILD_VERSION,
+            remote.version,
+          );
+          try {
+            storeRef.showToast?.(`检测到新版本 ${remote.version}，正在刷新以加载最新代码…`);
+          } catch {}
+          // 1.2 秒延迟，让 toast 有机会被玩家看到
+          setTimeout(() => {
+            try {
+              window.location.reload();
+            } catch (err) {
+              console.error('[version-check] reload 失败：', err);
+            }
+          }, 1200);
+        },
+      });
+      return;
+    }
+    if (attempts < 50) {
+      setTimeout(() => tryStartVersionChecker(attempts + 1), 100);
+    } else {
+      console.warn('[version-check] store 长时间未挂载，放弃启动版本检查器');
+    }
+  };
+  tryStartVersionChecker();
 
   // Initialize role system scanner after streaming and store are ready
   function initRoleSystem(): void {
@@ -1017,5 +1094,13 @@ $(() => {
     },
   };
 
-  $(window).on('pagehide', () => unmount());
+  $(window).on('pagehide', () => {
+    unmount();
+    if (_versionCheckerStop) {
+      try {
+        _versionCheckerStop();
+      } catch {}
+      _versionCheckerStop = null;
+    }
+  });
 });
