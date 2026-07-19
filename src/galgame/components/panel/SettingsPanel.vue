@@ -52,71 +52,6 @@
 
         <!-- Content -->
         <div class="no-scrollbar min-h-0 flex-1 overflow-y-auto px-6 py-5">
-          <!-- Version 信息：用于诊断 jsDelivr 同步状态 -->
-          <SectionHeader icon="fa-code-branch" title="版本信息" />
-          <div class="mb-6 pl-2">
-            <div
-              class="rounded border p-3"
-              style="border-color: rgba(90, 79, 64, 0.3); border-radius: 2px"
-            >
-              <div class="mb-2 flex items-center justify-between">
-                <div class="flex items-center gap-2">
-                  <i :class="versionIconClass" :style="{ color: versionIconColor, fontSize: '0.7rem' }" />
-                  <span class="text-xs" :style="{ color: versionIconColor, fontWeight: 'bold' }">
-                    {{ versionStatusLabel }}
-                  </span>
-                </div>
-                <button
-                  class="cursor-pointer border px-2 py-1 text-xs"
-                  style="
-                    border-color: rgba(90, 79, 64, 0.4);
-                    border-radius: 2px;
-                    color: var(--theme-text-muted, var(--vn-muted));
-                  "
-                  :disabled="store.versionState.status === 'unknown' && !store.versionState.lastCheckedAt"
-                  @click="forceReload"
-                >
-                  <i class="fa-solid fa-rotate" style="font-size: 0.6rem" />
-                  立即刷新
-                </button>
-              </div>
-              <div class="flex flex-col gap-1 text-[11px]" style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.7))">
-                <div class="flex items-center justify-between">
-                  <span style="color: var(--theme-text-muted, var(--vn-muted))">本地已加载</span>
-                  <span class="font-mono">{{ store.versionState.local }}</span>
-                </div>
-                <div class="flex items-center justify-between">
-                  <span style="color: var(--theme-text-muted, var(--vn-muted))">jsDelivr 远端</span>
-                  <span class="font-mono">{{ store.versionState.remote?.version ?? '—' }}</span>
-                </div>
-                <div
-                  v-if="store.versionState.remote?.buildTime"
-                  class="flex items-center justify-between"
-                >
-                  <span style="color: var(--theme-text-muted, var(--vn-muted))">远端构建时间</span>
-                  <span class="font-mono">{{ store.versionState.remote?.buildTime }}</span>
-                </div>
-                <div
-                  v-if="store.versionState.lastCheckedAt"
-                  class="flex items-center justify-between"
-                >
-                  <span style="color: var(--theme-text-muted, var(--vn-muted))">上次检查</span>
-                  <span class="font-mono">{{ formatCheckedAt(store.versionState.lastCheckedAt) }}</span>
-                </div>
-              </div>
-              <p
-                style="
-                  font-size: 9px;
-                  color: var(--theme-text-muted, var(--vn-muted));
-                  margin-top: 8px;
-                  line-height: 1.5;
-                "
-              >
-                脚本会每 5 分钟去 jsDelivr 拉取一次版本号；远端新版本就绪后将自动刷新页面以加载最新代码。
-                <br />本地版本号 = 浏览器当前已加载的代码；jsDelivr 远端 = GitHub 仓库根目录 <code>version.json</code> 中的 <code>version</code> 字段。
-              </p>
-            </div>
-          </div>
           <!-- Portrait -->
           <SectionHeader icon="fa-user" title="立绘设置" />
           <div class="mb-6 pl-2">
@@ -916,6 +851,28 @@
 
           <!-- Reset -->
           <div class="pt-4" :style="{ borderTop: '1px solid rgba(90,79,64,0.2)' }">
+            <!-- 版本信息 -->
+            <div class="mb-4 flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <i :class="versionIconClass" :style="{ color: versionIconColor, fontSize: '0.65rem' }" />
+                <span class="text-xs" :style="{ color: versionIconColor }">
+                  当前版本 {{ store.versionState.local }} · {{ versionStatusLabel }}
+                </span>
+              </div>
+              <button
+                class="cursor-pointer border px-2 py-0.5 text-[11px]"
+                style="
+                  border-color: rgba(90,79,64,0.4);
+                  border-radius: 2px;
+                  color: var(--theme-text-muted, var(--vn-muted));
+                "
+                :disabled="store.versionState.status === 'unknown' && !store.versionState.lastCheckedAt"
+                @click="forceReload"
+              >
+                <i class="fa-solid fa-rotate" style="font-size: 0.55rem" />
+                立即刷新
+              </button>
+            </div>
             <button
               class="flex cursor-pointer items-center gap-2 text-xs transition-colors"
               style="color: var(--theme-text-muted, var(--vn-muted))"
@@ -1162,26 +1119,16 @@ const versionIconColor = computed(() => {
 const versionStatusLabel = computed(() => {
   switch (store.versionState.status) {
     case 'synced':
-      return '已是最新版本';
+      return '已是最新';
     case 'outdated':
-      return '检测到新版本，即将自动刷新';
+      return '需要更新';
     case 'failed':
-      return '拉取失败（网络或 CDN 问题）';
+      return '检查失败';
     case 'unknown':
     default:
-      return '检查中…';
+      return '检查中';
   }
 });
-
-function formatCheckedAt(ts: number): string {
-  try {
-    const d = new Date(ts);
-    const pad = (n: number) => String(n).padStart(2, '0');
-    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-  } catch {
-    return '—';
-  }
-}
 
 function forceReload(): void {
   store.showToast?.('正在刷新以重新加载脚本…');
