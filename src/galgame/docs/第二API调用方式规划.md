@@ -201,8 +201,30 @@ export interface WorldbookEntryEnhanced {
 | 启用/禁用  | `enabled`            | 条目开关      |
 | 目标 API  | `targetApi`          | 主 API / 第二 API / 两者都 |
 | 关联功能   | `tags`               | 多选标签，决定条目在哪些 task 下生效 |
+| **排除任务** | `excludeFromTasks` | **新增**：多选标签，决定条目**不**在哪些 task 下注入 |
 
-### 演进方向：标签系统
+### 排除任务功能（excludeFromTasks）
+
+`excludeFromTasks` 字段用于**排除特定任务**的注入。与"关联功能"（决定在哪些 task 下生效）相反，它用于排除特定任务不需要的条目。
+
+**典型使用场景**：
+- 剧情详细内容不想泄露给生图任务（排除 `imageTag`）
+- 敏感信息不想出现在某些特定任务中
+- 生图时需要风格指引，但不需要详细的剧情设定
+
+**支持的排除任务标识符**：
+| 排除值      | 含义                  | 对应生图相关任务 |
+| --------- | ------------------- | ---------- |
+| `danmaku` / `弹幕` | 弹幕生成              | -          |
+| `imageTag` / `生图` | 生图标签生成            | ✅ 主要排除目标 |
+| `shop` / `商店` | 商店商品生成            | -          |
+| `workshopOrder` / `工坊订单` | 工坊技能订单生成 | -          |
+| `boardGameEvent` / `行路事件` | 废土行路事件卡生成 | -          |
+| `roleProfile` / `角色生成` | 角色档案生成        | -          |
+| `dispatchStory` / `派遣总结` | 派遣结算叙事生成    | -          |
+| `system` / `末世通讯` | NPC 聊天人设语气         | -          |
+
+**过滤优先级**：`excludeFromTasks` 在标签匹配之后执行，确保排除逻辑不会干扰正常的任务关联功能。
 
 将现有的 `linkedFeature` 字段（仅支持 `'danmaku' | 'imageGen'` 二选一）扩展为**标签多选** `tags: string[]`，支持用户为每条世界书条目打上任意多个标签。扩展后的标签列表如下：
 
@@ -287,20 +309,28 @@ function filterSecondApiWorldbook(
     if (tags.length === 0) return true;     // 无标签等价于通用
     if (!tags.includes(getTagForTask(task))) return false;  // 有标签则必须匹配当前 task
 
-    // 3. 确定该条目扫描的范围：取 entry.scanDepth 与 maxChatHistory 的较小值
+    // 2.5 排除任务检查（excludeFromTasks）
+    // 如果条目配置了 excludeFromTasks，且当前 task 在排除列表中，则不激活
+    if (entry.excludeFromTasks && entry.excludeFromTasks.length > 0) {
+      const excludeNormalized = entry.excludeFromTasks.map(t => normalizeTaskId(t));
+      const taskNormalized = normalizeTaskId(task);
+      if (excludeNormalized.includes(taskNormalized)) return false;
+    }
+
+    // 4. 确定该条目扫描的范围：取 entry.scanDepth 与 maxChatHistory 的较小值
     //    entry.scanDepth 控制"该条目激活前最多扫描多少条聊天历史"
     //    maxChatHistory 是本次 API 调用最多发送的历史条数上限
     const scanDepth = Math.min(entry.scanDepth ?? maxChatHistory, maxChatHistory);
     const textToScan = getChatHistoryText(scanDepth);
 
-    // 4. 常驻条目（无 key）直接激活
+    // 5. 常驻条目（无 key）直接激活
     if (!entry.key || entry.key.length === 0) return true;
 
-    // 5. 关键词匹配（在 entry 自己的扫描范围内）
+    // 6. 关键词匹配（在 entry 自己的扫描范围内）
     const keyMatched = entry.key.some((k: string) => textToScan.includes(k));
     if (!keyMatched) return false;
 
-    // 6. 次要关键词匹配
+    // 7. 次要关键词匹配
     if (entry.keysecondary?.length > 0) {
       const secondaryMatched = entry.keysecondary.some((k: string) =>
         textToScan.includes(k)
@@ -308,7 +338,7 @@ function filterSecondApiWorldbook(
       if (!secondaryMatched) return false;
     }
 
-    // 7. 概率控制
+    // 8. 概率控制
     if (entry.probability !== undefined && entry.probability < 100) {
       if (Math.random() * 100 > entry.probability) return false;
     }

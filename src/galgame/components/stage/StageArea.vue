@@ -119,7 +119,10 @@ const danmakuTopOffset = computed(() => {
 });
 
 const currentBackgroundImage = computed(() => {
-  return store.currentBlock?.sceneImageUrl || store.getCurrentDisplayBackground();
+  // 修复3：绑定图（stageBackgroundImage）优先级高于世界书资源图
+  const bindingBg = store.getCurrentDisplayBackground();
+  if (bindingBg) return bindingBg;
+  return store.currentBlock?.sceneImageUrl ?? null;
 });
 
 const currentSpriteImage = computed(() => {
@@ -127,7 +130,10 @@ const currentSpriteImage = computed(() => {
 });
 
 const currentCgImage = computed(() => {
-  return store.currentBlock?.cgImageUrl || store.getCurrentDisplayCg();
+  // 修复3：绑定图优先级高于世界书资源图
+  const bindingCg = store.getCurrentDisplayCg();
+  if (bindingCg) return bindingCg;
+  return store.currentBlock?.cgImageUrl ?? null;
 });
 
 const showPlayerSpriteOverlay = computed(() => {

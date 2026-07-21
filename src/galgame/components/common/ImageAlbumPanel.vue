@@ -8,9 +8,67 @@
           <span class="album-title">图片相册</span>
           <div class="header-right">
             <span class="album-count">{{ bgItems.length + cgItems.length }} 张绑定图片</span>
+            <button class="storage-btn" title="存储管理" @click="toggleStoragePanel">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                <path d="M2 20h20v-4H2v4zm2-3h2v2H4v-2zM2 4l4 4v3h2V4H2zm18 0v8h-6v2h8V4h-2zM6 8l4 4-4 4V8z" />
+              </svg>
+            </button>
             <button class="close-btn" title="关闭" @click="store.closeAlbumPanel()">✕</button>
           </div>
         </div>
+
+        <!-- 存储用量条 -->
+        <div v-if="storageStats" class="storage-bar">
+          <div class="storage-info">
+            <span class="storage-used">{{ formatBytes(storageStats.used) }}</span>
+            <span class="storage-label">已用 · {{ storageStats.count }} 张图</span>
+          </div>
+          <div v-if="storageWarning" class="storage-warning">{{ storageWarning }}</div>
+        </div>
+
+        <!-- 存储管理面板 -->
+        <Transition name="slide-down">
+          <div v-if="showStoragePanel" class="storage-panel">
+            <div class="storage-panel-header">
+              <span class="storage-panel-title">存储管理</span>
+              <button class="close-small" @click="showStoragePanel = false">✕</button>
+            </div>
+            <div class="storage-panel-content">
+              <div class="storage-detail">
+                <div class="detail-row">
+                  <span class="detail-label">绑定数量</span>
+                  <span class="detail-value">{{ storageStats?.count ?? 0 }} 张</span>
+                </div>
+                <div class="detail-row">
+                  <span class="detail-label">存储占用</span>
+                  <span class="detail-value">{{ storageStats ? formatBytes(storageStats.used) : '-' }}</span>
+                </div>
+              </div>
+              <div class="storage-actions">
+                <button class="action-btn" @click="onExportBackup">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor">
+                    <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
+                  </svg>
+                  导出备份
+                </button>
+                <label class="action-btn">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor">
+                    <path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z" />
+                  </svg>
+                  导入备份
+                  <input type="file" accept=".json" class="hidden-input" @change="onImportBackup" />
+                </label>
+                <button class="action-btn danger" @click="onClearAll">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor">
+                    <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                  </svg>
+                  清空存储
+                </button>
+              </div>
+              <p class="storage-tip">清空后绑定数据将无法恢复，建议先导出备份</p>
+            </div>
+          </div>
+        </Transition>
 
         <!-- 标签页 -->
         <div class="album-tabs">
@@ -121,6 +179,85 @@ const bgItems = computed(() => store.getBindingAlbum('background'));
 const cgItems = computed(() => store.getBindingAlbum('cg'));
 const currentItems = computed(() => (activeTab.value === 'background' ? bgItems.value : cgItems.value));
 
+// 存储管理
+const showStoragePanel = ref(false);
+const storageStats = computed(() => store.storageStats);
+
+// 打开相册时刷新存储统计
+watch(
+  () => store.albumPanelOpen,
+  (open) => {
+    if (open) {
+      store.refreshStorageStats();
+    }
+  },
+);
+
+const STORAGE_WARNING_THRESHOLD = 200 * 1024 * 1024; // 200MB
+const storageWarning = computed(() => {
+  if (!storageStats.value) return null;
+  if (storageStats.value.used > STORAGE_WARNING_THRESHOLD) {
+    return '存储接近上限，建议导出备份或清理不需要的绑定';
+  }
+  return null;
+});
+
+function toggleStoragePanel() {
+  showStoragePanel.value = !showStoragePanel.value;
+  if (showStoragePanel.value && !storageStats.value) {
+    store.refreshStorageStats();
+  }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+}
+
+async function onExportBackup() {
+  try {
+    const json = await store.exportBindingsBackup();
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `galgame-bindings-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toastr.success('备份已导出');
+  } catch (e) {
+    toastr.error('导出失败: ' + e);
+  }
+}
+
+async function onImportBackup(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+
+  try {
+    const text = await file.text();
+    const result = await store.importBindingsBackup(text);
+    toastr.success(`导入完成：新增 ${result.imported} 张，跳过 ${result.skipped} 张`);
+  } catch (e) {
+    toastr.error('导入失败: ' + e);
+  }
+  input.value = '';
+}
+
+async function onClearAll() {
+  if (!confirm('确定要清空所有绑定图片吗？此操作不可恢复！')) return;
+  try {
+    await store.clearAllStorage();
+    toastr.success('已清空所有存储');
+    showStoragePanel.value = false;
+  } catch (e) {
+    toastr.error('清空失败: ' + e);
+  }
+}
+
 // 大图预览
 interface AlbumItem {
   title: string;
@@ -148,7 +285,7 @@ function formatTime(ts: number) {
 }
 
 // 编辑标题
-function confirmEditTitle() {
+async function confirmEditTitle() {
   const item = previewItem.value;
   if (!item || !editTitle.value.trim()) return;
   const newTitle = editTitle.value.trim();
@@ -159,8 +296,8 @@ function confirmEditTitle() {
   const oldBinding = bindings[item.title];
   if (oldBinding) {
     // 重命名：新增新key，删除旧key
-    store.bindSceneImage(newTitle, oldBinding.imageData, oldBinding.type);
-    store.unbindSceneImage(item.title);
+    await store.bindSceneImage(newTitle, oldBinding.imageData, oldBinding.type);
+    await store.unbindSceneImage(item.title);
     toastr.success(`已重命名为「${newTitle}」`);
   }
   closePreview();
@@ -227,10 +364,10 @@ function onInsertToQueue() {
 }
 
 // 删除绑定
-function onDeleteBinding() {
+async function onDeleteBinding() {
   const item = previewItem.value;
   if (!item) return;
-  store.unbindSceneImage(item.title);
+  await store.unbindSceneImage(item.title);
   toastr.success(`「${item.title}」绑定已删除`);
   closePreview();
 }
@@ -317,6 +454,145 @@ function onDeleteBinding() {
 .close-btn:hover {
   background: rgba(139, 69, 19, 0.3);
   border-color: var(--theme-accent, var(--rust));
+}
+
+.storage-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid rgba(196, 162, 101, 0.3);
+  background: transparent;
+  color: var(--theme-text-muted, var(--vn-muted));
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+
+.storage-btn:hover {
+  background: rgba(139, 69, 19, 0.3);
+  border-color: var(--theme-accent, var(--rust));
+  color: var(--theme-text-main, var(--vn-fg));
+}
+
+/* ====== 存储用量条 ====== */
+.storage-bar {
+  padding: 8px 20px;
+  background: rgba(42, 36, 32, 0.4);
+  border-bottom: 1px solid rgba(196, 162, 101, 0.1);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.storage-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.storage-used {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--theme-accent, var(--rust));
+}
+
+.storage-label {
+  font-size: 0.75rem;
+  color: var(--theme-text-muted, var(--vn-muted));
+}
+
+.storage-warning {
+  font-size: 0.72rem;
+  color: rgba(220, 120, 60, 0.9);
+  max-width: 200px;
+}
+
+/* ====== 存储管理面板 ====== */
+.storage-panel {
+  background: rgba(42, 36, 32, 0.6);
+  border-bottom: 1px solid rgba(196, 162, 101, 0.15);
+  flex-shrink: 0;
+}
+
+.storage-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  border-bottom: 1px solid rgba(196, 162, 101, 0.08);
+}
+
+.storage-panel-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--theme-text-main, var(--vn-fg));
+}
+
+.close-small {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--theme-text-muted, var(--vn-muted));
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  transition: color 0.2s;
+}
+
+.close-small:hover {
+  color: var(--theme-text-main, var(--vn-fg));
+}
+
+.storage-panel-content {
+  padding: 12px 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.storage-detail {
+  display: flex;
+  gap: 24px;
+}
+
+.detail-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.detail-label {
+  font-size: 0.68rem;
+  color: var(--theme-text-muted, var(--vn-muted));
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.detail-value {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--theme-text-main, var(--vn-fg));
+}
+
+.storage-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.storage-tip {
+  font-size: 0.7rem;
+  color: var(--theme-text-muted, var(--vn-muted));
+  margin: 0;
+  opacity: 0.7;
 }
 
 /* ====== 标签页 ====== */
@@ -602,4 +878,17 @@ function onDeleteBinding() {
 
 .preview-fade-enter-active, .preview-fade-leave-active { transition: opacity 0.2s; }
 .preview-fade-enter-from, .preview-fade-leave-to { opacity: 0; }
+
+.slide-down-enter-active, .slide-down-leave-active {
+  transition: max-height 0.25s ease, opacity 0.2s ease;
+  overflow: hidden;
+}
+.slide-down-enter-from, .slide-down-leave-to {
+  max-height: 0;
+  opacity: 0;
+}
+.slide-down-enter-to, .slide-down-leave-from {
+  max-height: 300px;
+  opacity: 1;
+}
 </style>

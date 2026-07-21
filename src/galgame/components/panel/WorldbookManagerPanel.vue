@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="absolute inset-0 flex items-center justify-center" style="z-index: 50">
     <div class="absolute inset-0 backdrop-blur-sm" style="background: rgba(42, 36, 32, 0.7)" @click="$emit('close')" />
 
@@ -20,6 +20,30 @@
           <h2 class="text-sm sm:text-lg font-bold tracking-widest truncate" style="color: var(--theme-text-main, rgba(212, 197, 160, 0.9))">世界书管理</h2>
         </div>
         <div class="flex items-center gap-2 shrink-0">
+          <!-- Snapshot -->
+          <button
+            class="px-2 py-1 text-xs border cursor-pointer flex items-center gap-1"
+            style="border-color: rgba(90, 79, 64, 0.4); border-radius: 2px; color: var(--theme-text-muted, var(--vn-muted))"
+            :disabled="loading || entries.length === 0"
+            :title="hasSnapshot ? '已保存快照，可用于恢复' : '保存当前世界书条目的启用状态为快照'"
+            @click="createSnapshot"
+          >
+            <i class="fa-solid fa-camera" style="font-size: 0.65rem" />
+            <span>快照</span>
+            <span v-if="hasSnapshot" class="text-accent" style="color: var(--theme-accent, var(--rust)); font-size: 0.6rem">●</span>
+          </button>
+          <!-- Restore Snapshot -->
+          <button
+            v-if="hasSnapshot"
+            class="px-2 py-1 text-xs border cursor-pointer flex items-center gap-1"
+            style="border-color: rgba(90, 79, 64, 0.4); border-radius: 2px; color: var(--theme-text-muted, var(--vn-muted))"
+            :disabled="loading"
+            title="将所有世界书条目恢复到快照时的启用状态"
+            @click="restoreSnapshot"
+          >
+            <i class="fa-solid fa-rotate-left" style="font-size: 0.65rem" />
+            <span>恢复</span>
+          </button>
           <!-- Export -->
           <button
             class="px-2 py-1 text-xs border cursor-pointer flex items-center gap-1"
@@ -253,6 +277,69 @@
                     即使关掉对应功能开关，此条目也不会被发送。
                   </span>
                 </div>
+
+                <!-- 排除任务配置（可折叠） -->
+                <div>
+                  <button
+                    class="flex items-center gap-2 text-xs w-full cursor-pointer transition-opacity hover:opacity-80"
+                    style="color: var(--theme-text-soft, rgba(212, 197, 160, 0.7))"
+                    @click="toggleExcludeSection(entry)"
+                  >
+                    <i
+                      :class="entry._excludeExpanded
+                        ? 'fa-solid fa-chevron-down'
+                        : 'fa-solid fa-chevron-right'"
+                      style="font-size: 0.6rem"
+                    />
+                    <span>排除任务</span>
+                    <span
+                      v-if="entry.excludeFromTasks.length > 0"
+                      class="px-1.5 py-0.5 text-xs"
+                      style="background: rgba(139,69,19,0.3); color: var(--theme-accent, var(--rust))"
+                    >
+                      已排除 {{ entry.excludeFromTasks.length }} 个
+                    </span>
+                    <span
+                      v-else
+                      class="text-xs"
+                      style="color: var(--theme-text-faint, rgba(139, 125, 107, 0.5))"
+                    >
+                      （点击展开）
+                    </span>
+                  </button>
+                  <div v-show="entry._excludeExpanded" class="mt-2 flex flex-wrap gap-1.5">
+                    <button
+                      v-for="task in AVAILABLE_TASKS"
+                      :key="task.id"
+                      class="px-2 py-1 text-xs border transition-all"
+                      :style="{
+                        borderColor: isTaskExcluded(entry, task.id)
+                          ? 'rgba(180,60,60,0.6)'
+                          : 'rgba(90,79,64,0.3)',
+                        background: isTaskExcluded(entry, task.id)
+                          ? 'rgba(180,60,60,0.2)'
+                          : 'rgba(42,36,32,0.3)',
+                        color: isTaskExcluded(entry, task.id)
+                          ? 'rgba(220,140,140,0.9)'
+                          : 'var(--theme-text-muted, var(--vn-muted))',
+                      }"
+                      :title="isTaskExcluded(entry, task.id)
+                        ? `点击取消排除「${task.label}」`
+                        : `点击排除「${task.label}」`"
+                      @click="
+                        toggleTaskExclude(entry, group.worldbookName, task.id)
+                      "
+                    >
+                      <i
+                        :class="isTaskExcluded(entry, task.id)
+                          ? 'fa-solid fa-ban mr-1'
+                          : 'fa-solid fa-plus mr-1'"
+                        style="font-size: 0.6rem"
+                      />
+                      {{ task.label }}
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           </template>
@@ -279,6 +366,10 @@ interface EnhancedEntry {
   content: string;
   targetApi: 'main' | 'second' | 'both';
   linkedFeature?: string;
+  /** 排除的任务列表，这些任务调用时该条目不会被注入 */
+  excludeFromTasks: string[];
+  /** UI 状态：排除任务区域是否展开 */
+  _excludeExpanded?: boolean;
   updating?: boolean;
 }
 
@@ -293,8 +384,69 @@ const loading = ref(false);
 const entryGroups = ref<EntryGroup[]>([]);
 const importInputRef = ref<HTMLInputElement>();
 const store = useVNStore();
+/** 当前是否已有持久化稳定快照（决定「快照」按钮的提示文案） */
+const hasSnapshot = ref(false);
 
 const entries = computed(() => entryGroups.value.flatMap(g => g.entries));
+
+/** 可用的任务列表，用于排除配置 */
+const AVAILABLE_TASKS = [
+  { id: 'danmaku', label: '弹幕生成', color: 'rgba(139,69,19,0.6)' },
+  { id: 'imageTag', label: '生图标签', color: 'rgba(212,197,160,0.6)' },
+  { id: 'shop', label: '商店商品', color: 'rgba(120,140,160,0.6)' },
+  { id: 'workshopOrder', label: '工坊订单', color: 'rgba(100,180,100,0.6)' },
+  { id: 'boardGameEvent', label: '行路事件', color: 'rgba(180,120,180,0.6)' },
+  { id: 'roleProfile', label: '角色生成', color: 'rgba(200,150,100,0.6)' },
+  { id: 'dispatchStory', label: '派遣总结', color: 'rgba(100,150,200,0.6)' },
+  { id: 'system', label: '末世通讯', color: 'rgba(150,100,150,0.6)' },
+];
+
+/** 规范化任务标识符（与 store.ts 中的 normalizeTaskId 保持一致） */
+function normalizeTaskId(taskId: string): string {
+  const normalized = taskId.toLowerCase().trim();
+  const aliasMap: Record<string, string> = {
+    imagetag: 'imagetag',
+    'image tag': 'imagetag',
+    imagetagonly: 'imagetag',
+    生图: 'imagetag',
+    生图标签: 'imagetag',
+    cg: 'imagetag',
+    background: 'imagetag',
+    danmaku: 'danmaku',
+    弹幕: 'danmaku',
+    弹幕生成: 'danmaku',
+    shop: 'shop',
+    商店: 'shop',
+    商店商品: 'shop',
+    workshoporder: 'workshoporder',
+    workshop_order: 'workshoporder',
+    工坊订单: 'workshoporder',
+    工坊: 'workshoporder',
+    boardgameevent: 'boardgameevent',
+    board_game_event: 'boardgameevent',
+    行路事件: 'boardgameevent',
+    事件: 'boardgameevent',
+    roleprofile: 'roleprofile',
+    role_profile: 'roleprofile',
+    角色生成: 'roleprofile',
+    角色档案: 'roleprofile',
+    dispatchstory: 'dispatchstory',
+    dispatch_story: 'dispatchstory',
+    派遣总结: 'dispatchstory',
+    派遣: 'dispatchstory',
+    system: 'system',
+    末世通讯: 'system',
+    npc聊天: 'system',
+  };
+  return aliasMap[normalized] ?? normalized;
+}
+
+/** 检查条目是否排除了指定任务 */
+function isTaskExcluded(entry: EnhancedEntry, taskId: string): boolean {
+  if (!entry.excludeFromTasks || entry.excludeFromTasks.length === 0) return false;
+  const normalizedExclude = entry.excludeFromTasks.map(t => normalizeTaskId(t));
+  return normalizedExclude.includes(normalizeTaskId(taskId));
+}
 
 /**
  * 计算条目在当前设置下**实际**会被发往哪个 API。
@@ -390,6 +542,7 @@ async function loadEntries() {
             content: entry.content ?? '',
             targetApi: (entry.extra?.targetApi as 'main' | 'second' | 'both') ?? 'main',
             linkedFeature: entry.extra?.linkedFeature,
+            excludeFromTasks: entry.extra?.excludeFromTasks ?? [],
           })),
         });
       } catch (e) {
@@ -420,7 +573,7 @@ async function toggleEntry(entry: EnhancedEntry, worldbookName: string) {
 }
 
 async function updateEntry(entry: EnhancedEntry, worldbookName: string, updates: Partial<EnhancedEntry>) {
-  const { targetApi, linkedFeature, enabled } = updates;
+  const { targetApi, linkedFeature, excludeFromTasks, enabled } = updates;
   try {
     await updateWorldbookWith(
       worldbookName,
@@ -430,6 +583,7 @@ async function updateEntry(entry: EnhancedEntry, worldbookName: string, updates:
           const extra = { ...e.extra };
           if (targetApi !== undefined) extra.targetApi = targetApi;
           if (linkedFeature !== undefined) extra.linkedFeature = linkedFeature;
+          if (excludeFromTasks !== undefined) extra.excludeFromTasks = excludeFromTasks;
           const result: any = { ...e, extra };
           if (enabled !== undefined) result.enabled = enabled;
           return result;
@@ -456,6 +610,24 @@ function getFeatureColor(feature: string): string {
   return colors[feature] || 'rgba(90,79,64,0.6)';
 }
 
+/** 切换任务的排除状态 */
+function toggleTaskExclude(entry: EnhancedEntry, worldbookName: string, taskId: string) {
+  const current = entry.excludeFromTasks ?? [];
+  const normalizedId = normalizeTaskId(taskId);
+  // 去除已有的规范化匹配项
+  const filtered = current.filter(t => normalizeTaskId(t) !== normalizedId);
+  // 如果之前没有被排除，则添加（使用原始输入的格式）
+  if (filtered.length === current.length) {
+    filtered.push(taskId);
+  }
+  updateEntry(entry, worldbookName, { excludeFromTasks: filtered });
+}
+
+/** 切换排除任务区域的展开/折叠状态 */
+function toggleExcludeSection(entry: EnhancedEntry) {
+  entry._excludeExpanded = !entry._excludeExpanded;
+}
+
 // ====== Export / Import ======
 
 interface ExportedEntry {
@@ -463,20 +635,23 @@ interface ExportedEntry {
   name: string;
   targetApi: 'main' | 'second' | 'both';
   linkedFeature?: string;
+  /** 排除的任务列表 */
+  excludeFromTasks: string[];
 }
 interface ExportedConfig {
-  version: 2;
+  version: 3;
   worldbooks: Record<string, ExportedEntry[]>;
 }
 
 function exportConfig() {
-  const config: ExportedConfig = { version: 2, worldbooks: {} };
+  const config: ExportedConfig = { version: 3, worldbooks: {} };
   for (const group of entryGroups.value) {
     config.worldbooks[group.worldbookName] = group.entries.map(e => ({
       uid: e.uid,
       name: e.name,
       targetApi: e.targetApi,
       linkedFeature: e.linkedFeature,
+      excludeFromTasks: e.excludeFromTasks,
     }));
   }
   const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
@@ -502,7 +677,9 @@ async function onImportFile(evt: Event) {
   try {
     const text = await file.text();
     config = JSON.parse(text) as ExportedConfig;
-    if (config.version !== 2 || typeof config.worldbooks !== 'object') throw new Error('格式不正确（期望 version: 2）');
+    if (typeof config.worldbooks !== 'object') throw new Error('格式不正确');
+    // version 2 及以下不支持 excludeFromTasks，version 3 支持
+    if (config.version !== 2 && config.version !== 3) throw new Error('格式不正确（期望 version: 2 或 3）');
   } catch (e: any) {
     alert(`导入失败：${e.message || '文件格式错误'}`);
     return;
@@ -522,12 +699,18 @@ async function onImportFile(evt: Event) {
         const updates: Partial<EnhancedEntry> = {};
         if (ex.targetApi !== entry.targetApi) updates.targetApi = ex.targetApi;
         if (ex.linkedFeature !== entry.linkedFeature) updates.linkedFeature = ex.linkedFeature;
+        // version 3 才导入 excludeFromTasks
+        if (config.version === 3 && ex.excludeFromTasks) {
+          updates.excludeFromTasks = ex.excludeFromTasks;
+        }
         if (Object.keys(updates).length > 0) {
           await updateEntry(entry, wbName, updates);
           applied++;
         }
       }
     }
+    // 导入完成后自动创建持久化稳定快照
+    await createSnapshot();
     alert(`导入完成，已更新 ${applied} 个条目的增强配置。`);
   } catch (e: any) {
     alert(`导入出错：${e.message}`);
@@ -536,7 +719,75 @@ async function onImportFile(evt: Event) {
   }
 }
 
-onMounted(loadEntries);
+// ====== Snapshot ======
+
+/** 创建快照：调用 store 制作并持久化稳定快照 */
+async function createSnapshot() {
+  loading.value = true;
+  try {
+    await store.setWorldbookSnapshot();
+    hasSnapshot.value = true;
+  } catch (e) {
+    console.error('[WorldbookManager] 创建快照失败', e);
+    alert('创建快照失败');
+  } finally {
+    loading.value = false;
+  }
+}
+
+/** 恢复快照：将所有条目恢复到持久化快照时的 enabled 状态 */
+async function restoreSnapshot() {
+  if (!hasSnapshot.value) {
+    alert('没有可用的快照');
+    return;
+  }
+
+  const confirmed = confirm('确定要将所有世界书条目恢复到快照时的启用状态吗？');
+  if (!confirmed) return;
+
+  const snap = store.getWorldbookSnapshot() as Record<string, Record<number, boolean>> | null;
+  if (!snap || Object.keys(snap).length === 0) {
+    alert('没有可用的快照');
+    return;
+  }
+
+  loading.value = true;
+  let restored = 0;
+  let failed = 0;
+  try {
+    for (const [wbName, inner] of Object.entries(snap)) {
+      try {
+        await updateWorldbookWith(
+          wbName,
+          wb =>
+            wb.map(e => {
+              const expected = inner[e.uid];
+              if (expected === undefined) return e;
+              if (e.enabled === expected) return e;
+              restored++;
+              return { ...e, enabled: expected };
+            }),
+          { render: 'debounced' },
+        );
+      } catch (e) {
+        console.warn(`[WorldbookManager] 恢复快照时更新世界书 "${wbName}" 失败`, e);
+        failed++;
+      }
+    }
+    // 重新加载以刷新 UI
+    await loadEntries();
+    alert(`快照恢复完成：已恢复 ${restored} 个条目${failed > 0 ? `，${failed} 本书更新失败` : ''}`);
+  } catch (e: any) {
+    alert(`恢复快照出错：${e.message}`);
+  } finally {
+    loading.value = false;
+  }
+}
+
+onMounted(async () => {
+  hasSnapshot.value = !!store.getWorldbookSnapshot();
+  await loadEntries();
+});
 
 const panelStyle = {
   maxHeight: 'calc(100vh - 80px)',

@@ -85,6 +85,12 @@ declare global {
         endMainApi: () => void;
         requestNextBlockTransition: (origin?: 'navigateBlock' | 'generationEnded') => void;
         applyMainApiWorldbookFilter: () => Promise<() => Promise<void>>;
+        /** 用户在「世界书管理」界面手动按下「快照」或导入配置后调用，刷新稳定快照 */
+        setWorldbookSnapshot: () => Promise<unknown>;
+        /** 获取当前持久化的稳定快照（不存在时返回 null） */
+        getWorldbookSnapshot: () => unknown;
+        /** 清除稳定快照 */
+        clearWorldbookSnapshot: () => void;
       } | null;
       /** 角色系统就绪标志 */
       roleSystemReady?: boolean;
@@ -138,23 +144,17 @@ $(() => {
   // 等 store 挂载后启动版本检查器。
   // store 挂在 `setMainStore(...)` 调用时设置；通过反复检测兜底。
   const tryStartVersionChecker = (attempts = 0): void => {
-    const storeRef = (window as any).__galgameState?.mainStore as
-      | {
-          setVersionState: (s: any) => void;
-          showToast?: (msg: string) => void;
-        }
-      | null;
+    const storeRef = (window as any).__galgameState?.mainStore as {
+      setVersionState: (s: any) => void;
+      showToast?: (msg: string) => void;
+    } | null;
     if (storeRef?.setVersionState) {
       _versionCheckerStop = startVersionChecker({
         localVersion: BUILD_VERSION,
         onState: state => storeRef.setVersionState(state),
         onNeedReload: remote => {
           // 远端版本更新 → 提示用户后整页刷新
-          console.info(
-            '[version-check] 检测到新版本，本地=%s 远端=%s，准备 reload',
-            BUILD_VERSION,
-            remote.version,
-          );
+          console.info('[version-check] 检测到新版本，本地=%s 远端=%s，准备 reload', BUILD_VERSION, remote.version);
           try {
             storeRef.showToast?.(`检测到新版本 ${remote.version}，正在刷新以加载最新代码…`);
           } catch {}
@@ -208,7 +208,8 @@ $(() => {
   });
 
   // ====== 主 API 世界书过滤 ======
-  // 在主 API 生成前临时禁用"只发第二 API"的条目，生成后恢复。
+  // 在主 API 生成前临时禁用"只发第二 API"的条目，生成后恢复到用户在「世界书管理」
+  // 界面里手动制作的稳定快照（或自动从导入配置创建的快照）。
   //
   // 兜底机制：
   //   GENERATION_ENDED 是酒馆的标准事件，但在某些情况下（生成失败、用户直接关掉标签、

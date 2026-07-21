@@ -24,6 +24,19 @@ import {
   wrapContentTag,
 } from './utils/messageParser';
 import { createVNLogger } from './utils/vnLogger';
+import {
+  calculateStorageUsage,
+  cleanOrphanedBindings,
+  clearAllBindings,
+  deleteBindingImage,
+  exportAllBindings,
+  generateBindingId,
+  getBindingImage,
+  importBindings,
+  saveBindingImage,
+  type BindingData,
+  type ChatBindings,
+} from './utils/indexedDB';
 
 // ====== Types ======
 
@@ -230,6 +243,27 @@ export interface WorldbookEntryEnhanced {
    * 未设置（undefined）的历史条目按 "universal" 语义处理 —— 老数据无需迁移。
    */
   linkedFeature?: 'danmaku' | 'imageGen' | 'universal';
+  /**
+   * 排除的任务列表。在这些任务调用时，该条目不会被注入到上下文中。
+   * 用于排除特定任务不需要的世界书条目，例如：
+   * - 剧情详细内容不想泄露给生图任务
+   * - 敏感信息不想出现在某些特定任务中
+   *
+   * 支持的任务标识符：
+   * - 'danmaku' / '弹幕' → 弹幕生成
+   * - 'imageTag' / '生图' → 生图标签生成（包括 imageTagOnly、danmakuAndImageGen）
+   * - 'shop' / '商店' → 商店商品生成
+   * - 'workshopOrder' / '工坊订单' → 工坊技能订单生成
+   * - 'boardGameEvent' / '行路事件' → 废土行路事件卡生成
+   * - 'roleProfile' / '角色生成' → 角色档案生成
+   * - 'dispatchStory' / '派遣总结' → 派遣结算叙事生成
+   * - 'system' / '末世通讯' → NPC 聊天人设语气
+   *
+   * 示例：
+   * - ['imageTag'] → 生图任务不注入，其他任务正常
+   * - ['danmaku', 'imageTag'] → 弹幕和生图任务不注入
+   */
+  excludeFromTasks?: string[];
   /** Source worldbook name - set by getEnhancedWorldbook */
   _worldbookName?: string;
   // Original worldbook entry fields will be preserved
@@ -367,6 +401,7 @@ export type SecondApiTask =
   | 'system'
   | 'riddle'
   | 'imageTag'
+  | 'imageTagOnly'
   | 'danmakuAndImageGen'
   | 'boardGameEvent'
   | 'roleProfile'
@@ -1002,38 +1037,113 @@ export const useVNStore = defineStore('vn', () => {
   // 用于在主 API 调用时临时禁用"只应发到第二 API"的条目。
   // 每次调用都返回一个新的、不共享状态的恢复函数。
   //
+  // 快照策略（自 v2 起）：
+  //   不再在每次 GENERATION_STARTED 都制作一次临时快照 —— 因为如果之前的恢复失败了，
+  //   条目会停留在错误的 enabled 状态，每次新生成都会拿这个错误状态再快照，
+  //   错误永远得不到纠正。
+  //   改用**用户在「世界书管理」界面手动制作/导入后自动制作的稳定快照**作为恢复目标。
+  //   快照持久化在聊天变量 `vn_worldbook_snapshot`，跨页面刷新/聊天切换仍然有效。
+  //
   // 可靠性机制：
-  //   1. 应用过滤前对**所有**世界书条目（含 toBlock 之外的）做一次 enabled 快照，
-  //      这样恢复时不依赖"toBlock 时记录的 originalEnabled"这一窄窗口。
-  //   2. 恢复函数执行后再次读世界书，对比快照：
+  //   1. 应用过滤前先读取持久化的稳定快照（如果没有快照，则降级为"调用前全量快照"）。
+  //   2. 临时禁用"只发第二 API 且当前 enabled"的条目。
+  //   3. 恢复函数执行后再次读世界书，逐项对比快照：
   //      - 任何"快照中是 enabled 但当前是 disabled"的条目都视为恢复失败
-  //      - 只要有一个失败，整个世界书按快照强制重写（extra/uid/strategy 都不动，仅修正 enabled）
+  //      - 一旦发现失败，按快照对**整个世界书**做一次强制重写（extra/uid/strategy 都不动，仅修正 enabled）
   //   这样即便 store 里某次 updateWorldbookWith 写入失败、或者中途被其他逻辑改写 enabled，
   //   也能在恢复阶段被纠正。
 
+  /** 快照：worldbookName → (uid → enabled) */
+  type WorldbookSnapshot = Record<string, Record<number, boolean>>;
+
+  /** 读取持久化的稳定快照 */
+  function loadStableSnapshot(): WorldbookSnapshot | null {
+    try {
+      const raw = getVariables({ type: 'chat' })?.vn_worldbook_snapshot as WorldbookSnapshot | undefined;
+      if (!raw || typeof raw !== 'object') return null;
+      // 简单校验结构
+      for (const [, inner] of Object.entries(raw)) {
+        if (!inner || typeof inner !== 'object') return null;
+        for (const [, v] of Object.entries(inner)) {
+          if (typeof v !== 'boolean') return null;
+        }
+      }
+      return raw;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 将稳定快照持久化到聊天变量 */
+  function saveStableSnapshot(snap: WorldbookSnapshot): void {
+    try {
+      insertOrAssignVariables({ vn_worldbook_snapshot: klona(snap) }, { type: 'chat' });
+    } catch (e) {
+      console.error('[VN] 保存世界书稳定快照失败', e);
+    }
+  }
+
+  /**
+   * 读取当前所有世界书条目的 enabled 状态，制成快照对象。
+   * 供世界书管理面板在用户按下「快照」或导入配置后调用。
+   * @returns 序列化后的快照对象
+   */
+  async function buildStableSnapshot(): Promise<WorldbookSnapshot> {
+    const entries = await getEnhancedWorldbook();
+    const snap: WorldbookSnapshot = {};
+    for (const entry of entries) {
+      const wbName = entry._worldbookName ?? '';
+      if (!wbName) continue;
+      let inner = snap[wbName];
+      if (!inner) {
+        inner = {};
+        snap[wbName] = inner;
+      }
+      inner[entry.uid] = entry.enabled;
+    }
+    return snap;
+  }
+
+  /**
+   * 设置（覆盖）当前的世界书稳定快照。
+   * 由世界书管理面板在用户手动按下「快照」或导入配置后调用。
+   */
+  async function setWorldbookSnapshot(): Promise<WorldbookSnapshot> {
+    const snap = await buildStableSnapshot();
+    saveStableSnapshot(snap);
+    console.info(
+      `[VN] 世界书稳定快照已更新：${Object.keys(snap).length} 本书，${Object.values(snap).reduce((n, inner) => n + Object.keys(inner).length, 0)} 条目`,
+    );
+    return snap;
+  }
+
+  /**
+   * 清除已保存的稳定快照（保留以备未来扩展使用）。
+   */
+  function clearWorldbookSnapshot(): void {
+    try {
+      const vars = getVariables({ type: 'chat' }) || {};
+      delete (vars as any).vn_worldbook_snapshot;
+      insertOrAssignVariables({ vn_worldbook_snapshot: null }, { type: 'chat' });
+    } catch (e) {
+      console.warn('[VN] 清除世界书快照失败', e);
+    }
+  }
+
+  /** 获取当前稳定快照（如果存在） */
+  function getWorldbookSnapshot(): WorldbookSnapshot | null {
+    return loadStableSnapshot();
+  }
+
   /**
    * 在主 API 调用前，临时禁用所有"只发第二 API"的条目。
-   * 返回一个恢复函数，调用后恢复所有条目的原始状态，并在校验失败时强制按快照回写。
+   * 恢复时以**持久化的稳定快照**为目标，而非调用前临时快照。
+   * 如果没有稳定快照，则降级为"调用前全量快照"以保证功能不会完全失败。
    */
   async function applyMainApiWorldbookFilter(): Promise<() => Promise<void>> {
     const entries = await getEnhancedWorldbook();
 
-    // ① 全量快照：所有 (worldbookName, uid) → enabled，按当前世界书实际状态记录
-    // 不仅是 toBlock 列表里的条目，理论上本函数不会修改 toBlock 之外条目的 enabled，
-    // 但保留全量快照能在校验阶段发现"中途被其他代码/用户改动"的异常。
-    const enabledSnapshot = new Map<string, Map<number, boolean>>();
-    for (const entry of entries) {
-      const wbName = entry._worldbookName ?? '';
-      if (!wbName) continue;
-      let inner = enabledSnapshot.get(wbName);
-      if (!inner) {
-        inner = new Map();
-        enabledSnapshot.set(wbName, inner);
-      }
-      inner.set(entry.uid, entry.enabled);
-    }
-
-    // ② 计算 toBlock（只发第二 API 且当前 enabled 的条目）
+    // ① 计算 toBlock（只发第二 API 且当前 enabled 的条目）
     const toBlock: Array<{ worldbookName: string; uid: number }> = [];
     for (const entry of entries) {
       if (!shouldSendToMainApi(entry) && shouldSendToSecondApi(entry)) {
@@ -1046,10 +1156,34 @@ export const useVNStore = defineStore('vn', () => {
       }
     }
 
+    // ② 决定本次恢复的目标快照
+    //    优先使用持久化的稳定快照；如果没有（用户从未制作/导入过），则降级为本次全量快照
+    //    —— 行为与旧版兼容，确保不会因为没有快照就完全无法过滤。
+    let enabledSnapshot = loadStableSnapshot();
+    let usedFallbackSnapshot = false;
+    if (!enabledSnapshot || Object.keys(enabledSnapshot).length === 0) {
+      console.warn('[VN] 主 API 世界书过滤：未找到持久化快照，降级为本次调用前的临时快照');
+      usedFallbackSnapshot = true;
+      enabledSnapshot = {};
+      for (const entry of entries) {
+        const wbName = entry._worldbookName ?? '';
+        if (!wbName) continue;
+        let inner = enabledSnapshot[wbName];
+        if (!inner) {
+          inner = {};
+          enabledSnapshot[wbName] = inner;
+        }
+        inner[entry.uid] = entry.enabled;
+      }
+    }
+
+    // 转成 Map 以复用 createRestorer
+    const snapshotMap = snapshotToMap(enabledSnapshot);
+
     if (toBlock.length === 0) {
       // 没有需要临时禁用的条目，但仍然返回一个"保险"恢复函数：
       // 如果校验阶段发现快照中应该有 enabled 的条目被外部代码意外禁用了，也走强制恢复路径。
-      return createRestorer(enabledSnapshot, /* toBlockApplied= */ false);
+      return createRestorer(snapshotMap, /* toBlockApplied= */ false, usedFallbackSnapshot);
     }
 
     // 按世界书分组 toBlock
@@ -1076,7 +1210,21 @@ export const useVNStore = defineStore('vn', () => {
       );
     }
 
-    return createRestorer(enabledSnapshot, /* toBlockApplied= */ true);
+    return createRestorer(snapshotMap, /* toBlockApplied= */ true, usedFallbackSnapshot);
+  }
+
+  /** 把 WorldbookSnapshot（纯对象）转成 Map<string, Map<number, boolean>> */
+  function snapshotToMap(snap: WorldbookSnapshot): Map<string, Map<number, boolean>> {
+    const out = new Map<string, Map<number, boolean>>();
+    for (const [wbName, inner] of Object.entries(snap)) {
+      const m = new Map<number, boolean>();
+      for (const [uidStr, v] of Object.entries(inner)) {
+        const uid = Number(uidStr);
+        if (Number.isFinite(uid)) m.set(uid, v);
+      }
+      out.set(wbName, m);
+    }
+    return out;
   }
 
   /**
@@ -1085,10 +1233,15 @@ export const useVNStore = defineStore('vn', () => {
    *   2) 重新读世界书，逐项对比快照；任何 expectedEnabled=true 但当前仍 disabled 的视为恢复失败
    *   3) 一旦发现失败，按快照对**整个世界书**做一次强制重写（仅覆盖 enabled，其他字段保留）
    *   4) 重复校验；若再次失败，console.error 报警（极端情况：可能世界书本身被外部删除/改名）
+   *
+   *   @param usedFallbackSnapshot 标记此次恢复使用的是临时降级快照（无持久化快照时）。
+   *                              此时如果仍然失败，意味着世界书条目长期处于错误 enabled 状态，
+   *                              会更激进地重试（多一轮强制重写 + 校验）。
    */
   function createRestorer(
     enabledSnapshot: Map<string, Map<number, boolean>>,
     toBlockApplied: boolean,
+    usedFallbackSnapshot: boolean = false,
   ): () => Promise<void> {
     // 把整本书写一遍（按快照）的辅助函数；单个失败不影响其他书
     const writeBySnapshot = async (label: string): Promise<void> => {
@@ -1137,7 +1290,7 @@ export const useVNStore = defineStore('vn', () => {
 
         if (stillBroken.length === 0) {
           console.info(
-            `[VN] 主 API 世界书过滤已恢复：toBlock=${toBlockApplied ? '已应用' : '无需禁用'}，快照=${enabledSnapshot.size} 本书，全部条目 enabled 与快照一致`,
+            `[VN] 主 API 世界书过滤已恢复：toBlock=${toBlockApplied ? '已应用' : '无需禁用'}，快照=${enabledSnapshot.size} 本书（${usedFallbackSnapshot ? '临时降级快照' : '稳定快照'}），全部条目 enabled 与快照一致`,
           );
           return;
         }
@@ -1163,6 +1316,38 @@ export const useVNStore = defineStore('vn', () => {
             remainingBroken++;
           }
         }
+
+        // ⑤ 兜底重试：当使用临时降级快照时，再多一轮强制重写 + 校验。
+        //    旧版本机制遗留下来的"条目长期处于错误 enabled"问题，往往是因为恢复本身失败。
+        //    多一轮重试能在多数情况下纠正；只有极少数极端情况（外部删除/改名/权限）会真正失败。
+        if (remainingBroken > 0 && usedFallbackSnapshot) {
+          console.warn(
+            `[VN] 主 API 世界书过滤强制恢复后仍有 ${remainingBroken} 个条目异常，再做一轮强制重写`,
+          );
+          await writeBySnapshot('阶段 5 兜底重写');
+          let stillRemaining = 0;
+          for (const { worldbookName, uid } of stillBroken) {
+            try {
+              const currentEntries = await getWorldbook(worldbookName);
+              const e = currentEntries.find(x => x.uid === uid);
+              const expected = enabledSnapshot.get(worldbookName)?.get(uid);
+              if (expected === true && e && e.enabled === false) {
+                stillRemaining++;
+              }
+            } catch {
+              stillRemaining++;
+            }
+          }
+          if (stillRemaining > 0) {
+            console.error(
+              `[VN] 主 API 世界书过滤兜底重写后仍有 ${stillRemaining} 个条目处于禁用状态（可能世界书被外部删除/改名或权限不足）`,
+            );
+          } else {
+            remainingBroken = 0;
+            console.info(`[VN] 主 API 世界书过滤兜底重写成功：${stillBroken.length} 个条目已纠正`);
+          }
+        }
+
         if (remainingBroken > 0) {
           console.error(
             `[VN] 主 API 世界书过滤强制恢复后仍有 ${remainingBroken} 个条目处于禁用状态（可能世界书被外部删除/改名或权限不足）`,
@@ -2295,12 +2480,15 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
       // 如果已经标记为未解析，跳过
       if (!unit.parsed) return;
 
-      unit.parsed = false;
+      // 注意：不要把 unit.parsed 临时设为 false。
+      // 否则 allBlocksFlat 会立即把该楼层从扁平数组中剔除,
+      // 导致 currentBlockFlatIndex 暂时指向其他楼层(或越界),触发场景 watcher,
+      // 出现"编辑某楼层后舞台绑定图突然掉了"的问题。
+      // 这里直接重新解析赋值,parsed 状态保持不变。
       const blocks = await parseMessageBlocks(unit.message, currentScene.value, unit.role);
       unit.blocks = blocks;
       unit.danmaku = extractDanmakuBlock(unit.message);
       unit.imageTags = extractImageTagBlocks(unit.message);
-      unit.parsed = true;
 
       // 重新定位光标: swipe / 重新生成 / 编辑后,
       // 跳到被修改楼层的第一个块(blocks 数变化、顺序变了,继续停在原 inner 块意义不大)。
@@ -2795,13 +2983,17 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
     },
   );
 
-  // --- 场景 ↔ 图片绑定持久化（聊天变量） ---
-  // 存储结构：{ [sceneTitle]: { imageData, type, timestamp } }
-  // 内存缓存 + 持久化到聊天变量
+  // --- 场景 ↔ 图片绑定持久化（IndexedDB + 聊天变量元数据） ---
+  // 设计：
+  // - IndexedDB 存储实际图片数据（base64），避免聊天文件膨胀
+  // - 聊天变量只存储轻量元数据（id、type、timestamp）
+  // 内存缓存：{ [sceneTitle]: { id, imageData, type, timestamp } }
+
   const sceneImageBindings = ref<
     Record<
       string,
       {
+        id: string;
         imageData: string;
         type: 'background' | 'cg';
         timestamp: number;
@@ -2811,22 +3003,79 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
 
   const _bindingsLoaded = ref(false);
 
-  function _loadBindings() {
+  /**
+   * 加载绑定：从 IndexedDB 读取图片数据 + 从聊天变量读取元数据
+   */
+  async function _loadBindings() {
     try {
-      const raw = getVariables({ type: 'chat' })?.vn_scene_bindings;
-      if (raw && typeof raw === 'object') {
-        sceneImageBindings.value = raw as typeof sceneImageBindings.value;
+      const chatMeta = getVariables({ type: 'chat' })?.vn_scene_bindings as ChatBindings | undefined;
+      if (!chatMeta || typeof chatMeta !== 'object') {
         _bindingsLoaded.value = true;
-        console.info('[Bindings] 从聊天变量加载绑定:', Object.keys(sceneImageBindings.value).length, '个');
+        return;
       }
+
+      // 批量从 IndexedDB 获取图片数据
+      const entries = Object.entries(chatMeta);
+      if (entries.length === 0) {
+        _bindingsLoaded.value = true;
+        return;
+      }
+
+      // 并行加载所有图片（IndexedDB 查询）
+      const loadPromises = entries.map(async ([sceneTitle, meta]) => {
+        const data = await getBindingImage(meta.id);
+        if (data) {
+          return [sceneTitle, { id: meta.id, imageData: data.imageData, type: data.type, timestamp: meta.timestamp }] as const;
+        }
+        return null;
+      });
+
+      const results = await Promise.all(loadPromises);
+      for (const result of results) {
+        if (result) {
+          sceneImageBindings.value[result[0]] = result[1];
+        }
+      }
+
+      _bindingsLoaded.value = true;
+      console.info('[Bindings] 加载绑定完成:', Object.keys(sceneImageBindings.value).length, '个');
+
+      // 清理孤立数据（IndexedDB 中有但聊天变量中没有对应的）
+      await cleanOrphanedBindings(chatMeta);
     } catch (e) {
       console.warn('[Bindings] 加载绑定失败:', e);
+      _bindingsLoaded.value = true;
     }
   }
 
-  function _saveBindings() {
+  /**
+   * 保存绑定到 IndexedDB + 更新聊天变量元数据
+   */
+  async function _saveBindings() {
     try {
-      insertOrAssignVariables({ vn_scene_bindings: klona(sceneImageBindings.value) }, { type: 'chat' });
+      const chatMeta: ChatBindings = {};
+      const promises: Promise<void>[] = [];
+
+      for (const [sceneTitle, binding] of Object.entries(sceneImageBindings.value)) {
+        // 保存图片到 IndexedDB
+        const bindingData: BindingData = {
+          id: binding.id,
+          imageData: binding.imageData,
+          type: binding.type,
+          timestamp: binding.timestamp,
+        };
+        promises.push(saveBindingImage(bindingData));
+
+        // 聊天变量只存元数据（不含 imageData，避免膨胀）
+        chatMeta[sceneTitle] = {
+          id: binding.id,
+          type: binding.type,
+          timestamp: binding.timestamp,
+        };
+      }
+
+      await Promise.all(promises);
+      insertOrAssignVariables({ vn_scene_bindings: chatMeta }, { type: 'chat' });
     } catch (e) {
       console.warn('[Bindings] 保存绑定失败:', e);
     }
@@ -2840,29 +3089,25 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
   }
 
   /**
-   * 绑定场景 ↔ 图片（同一场景名只保留一张，后覆盖前）
-   * @param sceneTitle 场景名
-   * @param imageData 完整 base64
-   * @param type 图片类型
-   */
-  /**
    * 设置场景绑定图。仅当该 title 还未绑定时写入；已有绑定则不覆盖。
    * 这是自动流程（如生图完成、刷新恢复）使用的安全版本，避免破坏已有图。
    * 替换现有绑定请使用 replaceSceneImageBinding（仅供用户手动切换调用）。
    */
-  function bindSceneImage(sceneTitle: string, imageData: string, type: 'background' | 'cg') {
+  async function bindSceneImage(sceneTitle: string, imageData: string, type: 'background' | 'cg') {
     const key = sceneTitle.trim();
     if (!key) return;
     if (sceneImageBindings.value[key]) {
       console.info('[Bindings] bindSceneImage 跳过（已有绑定）:', key);
       return;
     }
+    const id = generateBindingId();
     sceneImageBindings.value[key] = {
+      id,
       imageData,
       type,
       timestamp: Date.now(),
     };
-    _saveBindings();
+    await _saveBindings();
     console.info('[Bindings] 绑定场景:', key, 'type=', type);
   }
 
@@ -2870,27 +3115,69 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
    * 替换场景绑定图。强制覆盖现有绑定。
    * 仅供用户手动切换（如点击卡牌）使用，自动流程不应调用此函数。
    */
-  function replaceSceneImageBinding(sceneTitle: string, imageData: string, type: 'background' | 'cg') {
+  async function replaceSceneImageBinding(sceneTitle: string, imageData: string, type: 'background' | 'cg') {
     const key = sceneTitle.trim();
     if (!key) return;
+    const existingId = sceneImageBindings.value[key]?.id || generateBindingId();
     sceneImageBindings.value[key] = {
+      id: existingId,
       imageData,
       type,
       timestamp: Date.now(),
     };
-    _saveBindings();
+    await _saveBindings();
     console.info('[Bindings] 替换绑定场景:', key, 'type=', type);
   }
 
   /**
-   * 解除绑定
+   * 解除绑定（彻底清理）
+   * 清理范围：
+   *   - 内存中的 sceneImageBindings
+   *   - IndexedDB 中的图片数据
+   *   - 聊天变量中的元数据（vn_scene_bindings，由 _saveBindings 写入）
+   *   - imageCardQueue 中仍引用此图片的卡（按 base64 匹配）
+   *   - 舞台图片引用（如果舞台正显示这张图则清空）
    */
-  function unbindSceneImage(sceneTitle: string) {
-    if (sceneImageBindings.value[sceneTitle]) {
-      delete sceneImageBindings.value[sceneTitle];
-      _saveBindings();
-      console.info('[Bindings] 解除绑定:', sceneTitle);
+  async function unbindSceneImage(sceneTitle: string) {
+    const binding = sceneImageBindings.value[sceneTitle];
+    if (!binding) return;
+
+    const removedImageData = binding.imageData;
+    const removedType = binding.type;
+
+    // 1. 从内存中删除绑定
+    delete sceneImageBindings.value[sceneTitle];
+
+    // 2. 删除 IndexedDB 中的图片数据
+    try {
+      await deleteBindingImage(binding.id);
+    } catch (e) {
+      console.warn('[Bindings] 删除 IndexedDB 图片失败:', e);
     }
+
+    // 3. 清理卡牌队列中仍引用此图片的卡（按 base64 完全匹配）
+    const beforeLen = imageCardQueue.value.length;
+    imageCardQueue.value = imageCardQueue.value.filter(
+      (card) => card.imageData !== removedImageData,
+    );
+    const removedCards = beforeLen - imageCardQueue.value.length;
+    if (removedCards > 0) {
+      console.info('[Bindings] 清理了', removedCards, '张卡牌队列中仍引用被解绑图片的卡');
+    }
+
+    // 4. 如果舞台正显示这张图，清空舞台引用（让大气背景生效）
+    if (removedType === 'background' && stageBackgroundImage.value === removedImageData) {
+      stageBackgroundImage.value = null;
+      console.info('[Bindings] 清空舞台背景引用');
+    } else if (removedType === 'cg' && stageCgImage.value === removedImageData) {
+      stageCgImage.value = null;
+      console.info('[Bindings] 清空舞台CG引用');
+    }
+
+    // 5. 保存到聊天变量（vn_scene_bindings 同步）
+    await _saveBindings();
+
+    console.info('[Bindings] 解除绑定（彻底清理）:', sceneTitle);
   }
 
   /**
@@ -2908,6 +3195,16 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
         existing.title = sceneTitle;
         console.info('[Bindings] 绑定图已在队列中，更新 title:', sceneTitle, '旧title=', existing.title);
       }
+      // 修复3：如果当前场景匹配这张绑定图的 title，更新舞台显示
+      const currentScene = (currentBlock.value?.scene || '').trim();
+      if (currentScene && fuzzyMatchTitle(currentScene, sceneTitle)) {
+        if (binding.type === 'background') {
+          stageBackgroundImage.value = binding.imageData;
+        } else {
+          stageCgImage.value = binding.imageData;
+        }
+        console.info('[Bindings] 插入队列时同步舞台:', sceneTitle, 'type=', binding.type);
+      }
       return true;
     }
 
@@ -2923,6 +3220,18 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
       imageCardQueue.value.shift();
     }
     console.info('[Bindings] 绑定图已插入队列:', sceneTitle, 'tempId=', tempId);
+
+    // 修复3：如果当前场景匹配这张绑定图的 title，更新舞台显示
+    const currentScene = (currentBlock.value?.scene || '').trim();
+    if (currentScene && fuzzyMatchTitle(currentScene, sceneTitle)) {
+      if (binding.type === 'background') {
+        stageBackgroundImage.value = binding.imageData;
+      } else {
+        stageCgImage.value = binding.imageData;
+      }
+      console.info('[Bindings] 插入队列时同步舞台:', sceneTitle, 'type=', binding.type);
+    }
+
     return true;
   }
 
@@ -2933,14 +3242,49 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
     return imageCardQueue.value.find(c => c.title === sceneTitle) ?? null;
   }
 
-  // 聊天切换时清空绑定
+  // 聊天切换时清空绑定，重新加载
   eventOn(tavern_events.CHAT_CHANGED, () => {
     sceneImageBindings.value = {};
     _bindingsLoaded.value = false;
+    _loadBindings();
   });
 
   // 初始加载绑定
   _loadBindings();
+
+  // --- 存储管理 API（供相册 UI 调用） ---
+  const storageStats = ref<{ used: number; count: number } | null>(null);
+
+  async function refreshStorageStats() {
+    // 先清理孤立数据，确保统计和相册显示一致
+    const chatMeta = getVariables({ type: 'chat' })?.vn_scene_bindings as ChatBindings | undefined;
+    if (chatMeta) {
+      await cleanOrphanedBindings(chatMeta);
+    }
+    storageStats.value = await calculateStorageUsage();
+  }
+
+  async function clearAllStorage() {
+    await clearAllBindings();
+    // 同时清空聊天变量中的元数据
+    sceneImageBindings.value = {};
+    insertOrAssignVariables({ vn_scene_bindings: {} }, { type: 'chat' });
+    await refreshStorageStats();
+  }
+
+  async function exportBindingsBackup(): Promise<string> {
+    return await exportAllBindings();
+  }
+
+  async function importBindingsBackup(jsonString: string) {
+    const result = await importBindings(jsonString);
+    // 重新加载绑定
+    sceneImageBindings.value = {};
+    _bindingsLoaded.value = false;
+    await _loadBindings();
+    await refreshStorageStats();
+    return result;
+  }
 
   // 图片卡牌队列（最多10张）
   const imageCardQueue = ref<ImageCard[]>([]);
@@ -3420,8 +3764,8 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
 
   /**
    * 将用户本地上传的图片（base64）直接追加到 retryGeneratedImages，
-   * 无需调用生图 API，直接可确认插入到舞台。
-   * 同时自动以当前场景名为 title，并追加到绑定存储。
+   * 无需调用生图 API，直接可确认插入到卡牌队列。
+   * 用户确认后需要点击卡牌才会绑定到场景。
    * @param base64Data 图片 base64 数据（data:image/...;base64,xxx 格式）
    */
   function importImageToRetry(base64Data: string) {
@@ -3429,7 +3773,6 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
     if (!type) return;
 
     const tempId = `import-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const scene = currentBlock.value?.scene?.trim() ?? '';
     retryGeneratedImages.value.push({
       tempId,
       requestId: tempId,
@@ -3440,12 +3783,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
     // 自动选中新导入的那张（替换之前的选中）
     retrySelectedIndices.value = new Set([retryGeneratedImages.value.length - 1]);
 
-    // 自动以当前场景名为 title，并追加到绑定
-    if (scene) {
-      bindSceneImage(scene, base64Data, type);
-    }
-
-    console.info('[RetryPanel] 导入图片完成, tempId=', tempId, 'type=', type, 'scene=', scene);
+    console.info('[RetryPanel] 导入图片完成, tempId=', tempId, 'type=', type);
   }
 
   /**
@@ -3476,6 +3814,12 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
    */
   async function processImageTagBlocks(blocks: ImageTagBlock[]): Promise<void> {
     if (!settings.value.imageGenEnabled) return;
+
+    // 等待绑定数据加载完成（最多等5秒，防止 IndexedDB 异常导致永久阻塞）
+    const deadline = Date.now() + 5000;
+    while (!_bindingsLoaded.value && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
 
     const currentTitleAnchor = (currentBlock.value?.scene || '').trim();
 
@@ -3574,26 +3918,46 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
       const stageOccupied = card.type === 'background' ? !!stageBackgroundImage.value : !!stageCgImage.value;
 
       // 第一张图且开启了自动上舞台：绑定到当前场景并显示到舞台
-      // 条件：场景非空 + 当前舞台该类型为空（已被占则不动）
+      // 修复1：必须有 title 才能自动上舞台（无 title 的图不应干扰场景）
+      // 修复2：当前场景已有绑定时跳过自动绑定（避免覆盖用户手动绑定）
+      // 条件：场景非空 + 有 title + 当前舞台该类型为空 + 场景无绑定
       if (isFirstImage && settings.value.autoStageGeneratedImage && !stageOccupied) {
         const scene = (currentBlock.value?.scene || '').trim();
-        if (scene) {
-          // 写入绑定存储（bindSceneImage 在已有绑定时不会覆盖，符合"无则写"语义）
-          bindSceneImage(scene, card.imageData, card.type);
-          // 让队列中这张卡的 title 与绑定场景一致（便于 UI 显示"已绑定"）
-          card.title = scene;
-          // 更新舞台显示
-          if (card.type === 'background') stageBackgroundImage.value = card.imageData;
-          else stageCgImage.value = card.imageData;
-          // 同时加入队列（备选）
+        if (scene && title) {
+          // 修复2：检查当前场景是否已有绑定，避免覆盖
+          const existingBinding = sceneImageBindings.value[scene];
+          if (existingBinding && existingBinding.type === card.type) {
+            // 场景已有绑定，只入队列不上舞台
+            imageCardQueue.value.push(card);
+            if (imageCardQueue.value.length > MAX_IMAGE_CARDS) {
+              imageCardQueue.value.shift();
+            }
+            console.info('[ImageGen] 自动上舞台跳过（场景已有绑定）:', scene, 'title=', title);
+          } else {
+            // 无绑定，正常写入
+            bindSceneImage(scene, card.imageData, card.type);
+            // 让队列中这张卡的 title 与绑定场景一致（便于 UI 显示"已绑定"）
+            card.title = scene;
+            // 更新舞台显示
+            if (card.type === 'background') stageBackgroundImage.value = card.imageData;
+            else stageCgImage.value = card.imageData;
+            // 同时加入队列（备选）
+            imageCardQueue.value.push(card);
+            if (imageCardQueue.value.length > MAX_IMAGE_CARDS) {
+              imageCardQueue.value.shift();
+            }
+            console.info('[ImageGen] 自动绑定第一张图到场景:', scene);
+            showToast(`${card.type === 'background' ? '背景' : 'CG'}已自动进入舞台：${scene}`);
+          }
+        } else if (title && !scene) {
+          // 有 title 但无场景锚点：只入队列不上舞台
           imageCardQueue.value.push(card);
           if (imageCardQueue.value.length > MAX_IMAGE_CARDS) {
             imageCardQueue.value.shift();
           }
-          console.info('[ImageGen] 自动绑定第一张图到场景:', scene);
-          showToast(`${card.type === 'background' ? '背景' : 'CG'}已自动进入舞台：${scene}`);
+          console.info('[ImageGen] 自动上舞台跳过（无场景锚点）:', title);
         } else {
-          // 无场景锚点时只入队列
+          // 无场景且无 title：只入队列
           imageCardQueue.value.push(card);
           if (imageCardQueue.value.length > MAX_IMAGE_CARDS) {
             imageCardQueue.value.shift();
@@ -3748,11 +4112,9 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
     return card?.title ?? '';
   }
 
-  // 清空卡牌队列
+  // 清空卡牌队列（舞台图片来自绑定存储或世界书，与队列无关）
   function clearImageCardQueue() {
     imageCardQueue.value = [];
-    stageBackgroundImage.value = null;
-    stageCgImage.value = null;
   }
 
   // --- Module locking ---
@@ -3811,6 +4173,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
         const { contentText } = config as DanmakuConfig;
         // 只注入 linkedFeature='danmaku' 的世界书条目
         const context = await buildSecondApiContext({
+          task: 'danmaku',
           includeChatHistory: false,
           includeWorldbook: true,
           respectEnabled: false,
@@ -3851,6 +4214,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
         // 注入 linkedFeature='danmaku' 或 'imageGen' 的条目 + 通用条目
         const allowedFeatures: WorldbookEntryEnhanced['linkedFeature'][] = ['danmaku', 'imageGen'];
         const context = await buildSecondApiContext({
+          task: 'imageTag', // 归一化到 imageTag，因为同时生成弹幕和图片标签
           includeChatHistory: false,
           includeWorldbook: true,
           respectEnabled: false,
@@ -3886,6 +4250,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
         const { contentText } = config as ImageTagOnlyConfig;
         // 只注入 linkedFeature='imageGen' 的条目，不注入弹幕条目
         const context = await buildSecondApiContext({
+          task: 'imageTag',
           includeChatHistory: false,
           includeWorldbook: true,
           respectEnabled: false,
@@ -3918,7 +4283,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
       }
 
       case 'shop': {
-        const context = await buildSecondApiContext({ maxChatHistory: 20 });
+        const context = await buildSecondApiContext({ task: 'shop', maxChatHistory: 20 });
         const ordered_prompts: OrderedPrompt[] = [
           ...context,
           { role: 'system', content: PROMPT_SHOP },
@@ -3935,7 +4300,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
 
       case 'boardGameEvent': {
         const { sceneText } = config as BoardGameEventConfig;
-        const context = await buildSecondApiContext({ maxChatHistory: 20 });
+        const context = await buildSecondApiContext({ task: 'boardGameEvent', maxChatHistory: 20 });
         const ordered_prompts: OrderedPrompt[] = [
           ...context,
           { role: 'system', content: PROMPT_BOARD_GAME_EVENT_POOL },
@@ -3953,6 +4318,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
         const { systemPrompt } = config as RoleProfileConfig;
         // roleProfile 任务没有 caller 提供的剧情上下文，必须依赖聊天历史让 LLM 理解当前角色互动
         const context = await buildSecondApiContext({
+          task: 'roleProfile',
           includeChatHistory: true,
           maxChatHistory: 20,
         });
@@ -3987,7 +4353,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
           if (!silent) showToast('未找到指定人格');
           return '';
         }
-        const contextPrompts = await buildSecondApiContext({ includeChatHistory: false });
+        const contextPrompts = await buildSecondApiContext({ task: 'system', includeChatHistory: false });
         const ordered_prompts: OrderedPrompt[] = [
           ...contextPrompts,
           { role: 'system', content: personality.systemPrompt },
@@ -4011,7 +4377,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
 
       case 'workshopOrder': {
         const { userPrompt } = config as WorkshopOrderConfig;
-        const context = await buildSecondApiContext({ includeWorldbook: true });
+        const context = await buildSecondApiContext({ task: 'workshopOrder', includeWorldbook: true });
         const ordered_prompts: OrderedPrompt[] = [
           ...context,
           { role: 'system', content: PROMPT_WORKSHOP_ORDERS },
@@ -4150,6 +4516,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
    *
    * 所有世界书条目的过滤都在调用时**临时**决定，不持久化到世界书的 `enabled` 字段。
    *
+   * @param options.task - 当前任务的标识符，用于检查条目的 excludeFromTasks 排除列表
    * @param options.worldbookFilter - 过滤世界书条目的函数，默认按 targetApi 过滤
    * @param options.maxChatHistory - 聊天历史最大条数，默认 20
    * @param options.includeWorldbook - 是否包含世界书，默认 true
@@ -4161,6 +4528,8 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
    */
   async function buildSecondApiContext(
     options: {
+      /** 当前任务的标识符，用于检查条目的 excludeFromTasks 排除列表 */
+      task?: string;
       worldbookFilter?: (entry: WorldbookEntryEnhanced) => boolean;
       maxChatHistory?: number;
       includeWorldbook?: boolean;
@@ -4180,7 +4549,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
       respectEnabled?: boolean;
     } = {},
   ): Promise<{ role: 'system'; content: string }[]> {
-    const { maxChatHistory = 20, includeWorldbook = true, includeChatHistory = false, respectEnabled = true } = options;
+    const { task, maxChatHistory = 20, includeWorldbook = true, includeChatHistory = false, respectEnabled = true } = options;
 
     const prompts: { role: 'system'; content: string }[] = [];
 
@@ -4205,9 +4574,21 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
             const feature = e.linkedFeature;
             return !feature || feature === 'universal';
           });
-        const filtered = respectEnabled ? entries.filter(filter).filter(e => e.enabled) : entries.filter(filter);
-        if (filtered.length > 0) {
-          const worldbookText = filtered.map(e => `【${e.name}】\n${e.content}`).join('\n\n');
+        const filtered = entries.filter(filter).filter(e => {
+          // 检查 excludeFromTasks 排除列表
+          if (task && e.excludeFromTasks && e.excludeFromTasks.length > 0) {
+            // 支持多种标识符格式：'imageTag'、'imageTagOnly'、'生图' 等
+            const excludeNormalized = e.excludeFromTasks.map(t => normalizeTaskId(t));
+            const taskNormalized = normalizeTaskId(task);
+            if (excludeNormalized.includes(taskNormalized)) {
+              return false;
+            }
+          }
+          return true;
+        });
+        const finalFiltered = respectEnabled ? filtered.filter(e => e.enabled) : filtered;
+        if (finalFiltered.length > 0) {
+          const worldbookText = finalFiltered.map(e => `【${e.name}】\n${e.content}`).join('\n\n');
           prompts.push({ role: 'system', content: worldbookText });
         }
       } catch (e) {
@@ -4234,6 +4615,57 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
     }
 
     return prompts;
+  }
+
+  /**
+   * 规范化任务标识符，支持中英文和别名。
+   * 用于 excludeFromTasks 排除列表的匹配。
+   */
+  function normalizeTaskId(taskId: string): string {
+    const normalized = taskId.toLowerCase().trim();
+    const aliasMap: Record<string, string> = {
+      // imageTag 相关
+      imagetag: 'imagetag',
+      'image tag': 'imagetag',
+      imagetagonly: 'imagetag',
+      生图: 'imagetag',
+      生图标签: 'imagetag',
+      cg: 'imagetag',
+      background: 'imagetag',
+      // danmaku 相关
+      danmaku: 'danmaku',
+      弹幕: 'danmaku',
+      弹幕生成: 'danmaku',
+      // shop 相关
+      shop: 'shop',
+      商店: 'shop',
+      商店商品: 'shop',
+      // workshopOrder 相关
+      workshoporder: 'workshoporder',
+      workshop_order: 'workshoporder',
+      工坊订单: 'workshoporder',
+      工坊: 'workshoporder',
+      // boardGameEvent 相关
+      boardgameevent: 'boardgameevent',
+      board_game_event: 'boardgameevent',
+      行路事件: 'boardgameevent',
+      事件: 'boardgameevent',
+      // roleProfile 相关
+      roleprofile: 'roleprofile',
+      role_profile: 'roleprofile',
+      角色生成: 'roleprofile',
+      角色档案: 'roleprofile',
+      // dispatchStory 相关
+      dispatchstory: 'dispatchstory',
+      dispatch_story: 'dispatchstory',
+      派遣总结: 'dispatchstory',
+      派遣: 'dispatchstory',
+      // system 相关
+      system: 'system',
+      末世通讯: 'system',
+      npc聊天: 'system',
+    };
+    return aliasMap[normalized] ?? normalized;
   }
 
   /** Called from index.ts on GENERATION_ENDED; runs danmaku request and queues push with 200ms–3s spacing */
@@ -4524,6 +4956,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
             enabled: entry.enabled,
             targetApi: (entry.extra?.targetApi as 'main' | 'second' | 'both') ?? 'main',
             linkedFeature: entry.extra?.linkedFeature,
+            excludeFromTasks: entry.extra?.excludeFromTasks ?? [],
             _worldbookName: name,
           });
         }
@@ -4536,7 +4969,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
 
   /** Update worldbook entry enhancement fields */
   async function updateWorldbookEntry(uid: number, worldbookName: string, updates: Partial<WorldbookEntryEnhanced>) {
-    const { targetApi, linkedFeature, enabled } = updates;
+    const { targetApi, linkedFeature, excludeFromTasks, enabled } = updates;
     try {
       await updateWorldbookWith(
         worldbookName,
@@ -4546,6 +4979,7 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
             const extra = { ...e.extra };
             if (targetApi !== undefined) extra.targetApi = targetApi;
             if (linkedFeature !== undefined) extra.linkedFeature = linkedFeature;
+            if (excludeFromTasks !== undefined) extra.excludeFromTasks = excludeFromTasks;
             const result: any = { ...e, extra };
             if (enabled !== undefined) result.enabled = enabled;
             return result;
@@ -6089,6 +6523,11 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
     getEnhancedWorldbook,
     updateWorldbookEntry,
     applyMainApiWorldbookFilter,
+    // Worldbook stable snapshot
+    buildStableSnapshot,
+    setWorldbookSnapshot,
+    getWorldbookSnapshot,
+    clearWorldbookSnapshot,
     // Character system
     roleMaxId,
     roles,
@@ -6139,5 +6578,11 @@ ${run.事件历史.map(e => `- ${e.描述}`).join('\n')}
     // 版本检查
     versionState,
     setVersionState,
+    // 存储管理 API
+    storageStats,
+    refreshStorageStats,
+    clearAllStorage,
+    exportBindingsBackup,
+    importBindingsBackup,
   };
 });

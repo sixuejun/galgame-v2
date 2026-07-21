@@ -69,10 +69,7 @@ export function mountStreamingMessages(
     }
 
     const message = stream_message ?? getChatMessages(message_id)[0].message ?? '';
-<<<<<<< HEAD
-    // filter 拒绝时：彻底销毁之前可能残留的挂载、恢复 mes_text 原生显示，
-    // 然后立刻退出 —— **绝不能**碰 $message_element 上的 .mes_text / .TH-streaming 隐藏类，
-    // 否则该楼层会变成空白（mes_text 被隐藏但又没有 streaming iframe 接管）。
+
     if (filter && !filter(message_id, message)) {
       const $message_element = $(`.mes[mesid='${message_id}']`);
       // 恢复原生显示：先恢复 mes_text，再恢复 TH-streaming（如果存在）
@@ -89,10 +86,6 @@ export function mountStreamingMessages(
           $host.closest('.mes_streaming').remove();
         }
       }
-=======
-    if (filter && !filter(message_id, message)) {
-      states.get(message_id)?.destroy();
->>>>>>> a4d60f52b8b1b0f872a80088ba7e339b0933eeb2
       return;
     }
 

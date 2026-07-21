@@ -113,8 +113,13 @@ const store = useVNStore();
 /** 当前背景图 */
 const currentBackgroundImage = computed(() => {
   if (props.backgroundImage) return props.backgroundImage;
-  // 舞台背景由 store.getCurrentDisplayBackground() 提供（包含绑定图更新）
-  return store.currentBlock?.sceneImageUrl || store.getCurrentDisplayBackground();
+  // 修复3：绑定图（stageBackgroundImage）优先级高于世界书资源图
+  // 因为用户绑定的图片应该始终显示，覆盖世界书资源
+  const bindingBg = store.getCurrentDisplayBackground();
+  if (bindingBg) return bindingBg;
+
+  // 无绑定图时，显示世界书资源图
+  return store.currentBlock?.sceneImageUrl ?? null;
 });
 
 /** 大气背景渐变 */
